@@ -33,6 +33,23 @@ replace-secrets.txt
 bot-wasap/.env
 bot-wasap/.env.local
 
+# Additional sensitive artifacts
+service_account_decoded.json
+repo-backup.bundle
+sensitive-backup*.zip
+service_account.json.bak.backup
+filter-repo-output.txt
+gitleaks-report.json
+replace-secrets.txt
+
+# Ignore tmp logs created by local tests
+/tmp/
+tmp/
+
+# Ensure Baileys session folder is ignored at repo root and inside bot-wasap
+auth_info_baileys/
+bot-wasap/auth_info_baileys/
+
 # Logs and local artifacts
 logs/
 bot-wasap/conversations.log
