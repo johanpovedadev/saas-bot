@@ -41,6 +41,10 @@ service_account.json.bak.backup
 filter-repo-output.txt
 gitleaks-report.json
 replace-secrets.txt
+backoups.json
+bot-wasap/backoups.json
+service_account_decoded.json
+bot-wasap/service_account_decoded.json
 
 # Ignore tmp logs created by local tests
 /tmp/
