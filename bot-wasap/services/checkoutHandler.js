@@ -10,6 +10,9 @@ const { money } = require('../utils/util');
 const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const CONFIG = require('../config.json');
+// Prefer environment or centralized secrets for API base. Fall back to CONFIG or a safe default.
+const SECRETS = require('../config.secrets');
+const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 
 // =================================================================================
 // CAMBIO 1: SE CREA UNA FUNCIÓN INTERNA PARA GENERAR EL RESUMEN DEL CARRITO.
@@ -33,6 +36,7 @@ function generateCartSummary(userSession) {
             itemText += `\n  sabores: _${item.sabores.map(s => s.NombreProducto).join(', ')}_`;
         }
         if (item.toppings && item.toppings.length > 0) {
+            // fixed: use arrow function to access NombreProducto
             itemText += `\n  toppings: _${item.toppings.map(t => t.NombreProducto).join(', ')}_`;
         }
         return itemText;
@@ -190,7 +194,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
     const finalAction = input.toLowerCase().trim();
 
     if (validateInput(finalAction, 'confirmation')) {
-        logger.info(`[${jid}] -> Pedido confirmado. Enviando al backend en ${CONFIG.API_BASE}`);
+        logger.info(`[${jid}] -> Pedido confirmado. Enviando al backend en ${API_BASE}`);
 
         // Construir resumen legible y payload para el backend
         const summary = generateCartSummary(userSession);
@@ -217,7 +221,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         };
 
         const endpoint = (CONFIG.ENDPOINTS && CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION) ? CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION : '/registrar_entrega/';
-        const url = `${CONFIG.API_BASE}${endpoint}`;
+        const url = `${API_BASE}${endpoint}`;
 
         try {
             const resp = await axios.post(url, payload, { timeout: 10000 });

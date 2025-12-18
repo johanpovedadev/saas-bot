@@ -12,14 +12,29 @@ const CONFIG = require('../config.json');
 const SECRETS = require('../config.secrets');
 
 async function getSaboresYToppings(ctx) {
+    const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
+    const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
+    let endpoints = null;
     try {
-        const response = await axios.get(CONFIG.API_BASE + CONFIG.ENDPOINTS.LISTAR_SABORES_TOPPINGS);
-        if (response.data) {
+        if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
+    } catch(e) { endpoints = null; }
+    endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
+    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';
+
+    try {
+        const url = `${apiBase}${listEndpoint}`;
+        const response = await axios.get(url);
+        if (response && response.data) {
             ctx.saboresYToppings = response.data;
             console.log("✅ Sabores y toppings cargados.");
+        } else {
+            ctx.saboresYToppings = { sabores: [], toppings: [] };
+            console.warn('getSaboresYToppings: empty response data from', url);
         }
     } catch (e) {
-        console.error('Error al obtener sabores y toppings de la API:', e.response?.data || e.message);
+        console.error('Error al obtener sabores y toppings de la API:', e.response?.data || e.message || e);
+        // ensure downstream code doesn't crash if toppings are missing
+        ctx.saboresYToppings = { sabores: [], toppings: [] };
     }
 }
 
@@ -91,7 +106,22 @@ async function say(sock, jid, text, ctx) {
     console.log(`[${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}] 🤖 Bot: "${text.split('\n')[0]}..."`);
     logConversation(jid, text, true);
     await sock.sendPresenceUpdate('composing', jid);
-    await sleep(CONFIG.TIME.WRITING_SIMULATION_MS);
+
+    // Determine writing simulation timeout from several sources (env, secrets, config) with fallback
+    const writingMs = Number(
+        (SECRETS && (SECRETS.TIME_WRITING_SIMULATION_MS || SECRETS.WRITING_SIMULATION_MS)) ||
+        (CONFIG && CONFIG.TIME && CONFIG.TIME.WRITING_SIMULATION_MS) ||
+        process.env.TIME_WRITING_SIMULATION_MS ||
+        process.env.WRITING_SIMULATION_MS ||
+        1
+    ) || 1;
+
+    try {
+        await sleep(writingMs);
+    } catch (err) {
+        console.warn('sleep failed in say():', err && err.message ? err.message : err);
+    }
+
     await sock.sendMessage(jid, { text });
     await sock.sendPresenceUpdate('paused', jid);
 }
@@ -109,12 +139,26 @@ async function sendImage(sock, jid, imagePath, caption, ctx) {
 }
 
 async function askGemini(ctx, question) {
+    // If the runtime context explicitly marks Gemini as unavailable, skip any network calls
+    try {
+        if (ctx && typeof ctx.geminiAvailable !== 'undefined' && !ctx.geminiAvailable) {
+            console.warn('askGemini: skipped because ctx.geminiAvailable=false');
+            return null;
+        }
+        if (process.env.FORCE_DISABLE_GEMINI === '1') {
+            console.warn('askGemini: skipped because FORCE_DISABLE_GEMINI=1');
+            return null;
+        }
+    } catch (e) {
+        // proceed normally if check fails
+        console.warn('askGemini: error checking geminiAvailable flag:', e && e.message);
+    }
+
     // Resolve API key from centralized secrets, fallback to config.json
     const key = SECRETS.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY;
     if (!key) {
-        console.error('askGemini: Gemini API key missing (check .env or config).');
-        // Return a safe human-friendly JSON so the bot can continue without throwing
-        return JSON.stringify({ "respuesta_texto": "Lo siento, el servicio de IA no está disponible en este momento." });
+        console.error('askGemini: Gemini API key missing (check .env or config). Skipping Gemini.');
+        return null; // return null so handler can continue deterministic flows
     }
 
     const genAI = new GoogleGenerativeAI(key);
@@ -142,9 +186,9 @@ async function askGemini(ctx, question) {
 
     `;
 
-    // Resilient call with retries and timeout
-    const MAX_ATTEMPTS = 3;
-    const TIMEOUT_MS = 15000;
+    // Resilient call with retries and timeout (shorter to avoid blocking flow)
+    const MAX_ATTEMPTS = 2;
+    const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 8000);
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             // model.generateContent may return an object; race with timeout
@@ -168,14 +212,14 @@ async function askGemini(ctx, question) {
             console.error(`askGemini attempt ${attempt} failed:`, error.message || error);
             if (attempt < MAX_ATTEMPTS) {
                 // exponential backoff
-                const backoff = 500 * Math.pow(2, attempt);
+                const backoff = 300 * Math.pow(2, attempt);
                 await sleep(backoff);
                 continue;
             }
 
-            // On final failure, return human-friendly JSON to the bot
-            console.error('askGemini: all attempts failed.');
-            return JSON.stringify({ "respuesta_texto": "¡Uy! No entiendo, por favor indícame tu solicitud con más detalle o escribe *menú* para ver opciones." });
+            // On final failure, DO NOT return a canned respuesta that may block deterministic flows.
+            console.error('askGemini: all attempts failed. Returning null so handler can continue deterministic flows.');
+            return null;
         }
     }
 }

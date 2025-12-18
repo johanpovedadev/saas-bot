@@ -35,10 +35,41 @@ def _get_service_account_file():
 # --- Configuración de la API de Google Sheets ---
 SERVICE_ACCOUNT_FILE = _get_service_account_file()
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
-)
-client = gspread.authorize(creds)
+
+# Inicializar cliente gspread de forma segura: validar JSON y soportar base64 en env
+client = None
+try:
+    # 1) Si existe variable con JSON en B64 o la versión 'GOOGLE_SERVICE_ACCOUNT', usarla directamente
+    sa_b64 = os.environ.get('GOOGLE_SERVICE_ACCOUNT_B64') or os.environ.get('GOOGLE_SERVICE_ACCOUNT')
+    if sa_b64:
+        try:
+            decoded = base64.b64decode(sa_b64)
+            sa_info = json.loads(decoded.decode('utf8'))
+        except Exception:
+            # intentar parsear como texto JSON sin base64
+            try:
+                sa_info = json.loads(sa_b64)
+            except Exception as e:
+                raise ValueError(f'GOOGLE_SERVICE_ACCOUNT_B64/GOOGLE_SERVICE_ACCOUNT no es JSON válido: {e}')
+        creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+        client = gspread.authorize(creds)
+    else:
+        # 2) si SERVICE_ACCOUNT_FILE es una ruta, validar que exista y contenga JSON
+        if SERVICE_ACCOUNT_FILE and os.path.exists(str(SERVICE_ACCOUNT_FILE)) and os.path.getsize(str(SERVICE_ACCOUNT_FILE)) > 10:
+            # validar contenido JSON antes de pasar al cliente de Google
+            with open(str(SERVICE_ACCOUNT_FILE), 'r', encoding='utf8') as f:
+                try:
+                    json.load(f)
+                except Exception as e:
+                    raise ValueError(f'El archivo de credenciales {SERVICE_ACCOUNT_FILE} no contiene JSON válido: {e}')
+            creds = service_account.Credentials.from_service_account_file(str(SERVICE_ACCOUNT_FILE), scopes=SCOPES)
+            client = gspread.authorize(creds)
+        else:
+            raise FileNotFoundError('Service account file no existe o está vacío y no se proporcionó GOOGLE_SERVICE_ACCOUNT_B64')
+except Exception as e:
+    # No romper la importación de Django; dejar client en None y las vistas retornarán errores 500 manejables
+    print('WARNING: Google credentials failed to load:', e)
+    client = None
 
 # ID de la hoja de cálculo de PRODUCTOS, SABORES Y TOPPINGS
 PRODUCTS_SHEET_ID = '10twtfwsAbyxZ4D_0ChD34oFkwa_EWKAWPGVfk1FdEHM'
@@ -56,6 +87,10 @@ def _norm(s: str) -> str:
 
 # ---------- Funciones de la API de Google Sheets ----------
 def _get_sheet_data(sheet_id, sheet_name):
+    # Si el cliente no está configurado, no intentar llamar a gspread
+    if client is None:
+        print('ERROR: gspread client no configurado. Revise credenciales.')
+        return None
     try:
         sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
         data = sheet.get_all_values()
