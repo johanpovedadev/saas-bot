@@ -143,7 +143,9 @@ function parseOrderText(text) {
             const flavors = ['vainilla','chocolate','fresa','coco','mango'];
             const hasFlavor = flavors.some(f => parsed.product_name.includes(f));
             if (!hasFlavor) {
-                parsed.product_name = (parsed.product_name + ' vainilla').trim();
+                // Do NOT mutate product_name (avoid concatenating observaciones/sabores into the product string)
+                // Record the default flavor in a dedicated field so it doesn't mix with the product name
+                parsed.sabor = parsed.sabor || 'vainilla';
                 parsed.notes = (parsed.notes ? parsed.notes + '; ' : '') + 'sabor por defecto: vainilla';
             }
         }

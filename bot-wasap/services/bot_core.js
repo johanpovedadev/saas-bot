@@ -25,8 +25,60 @@ async function getSaboresYToppings(ctx) {
         const url = `${apiBase}${listEndpoint}`;
         const response = await axios.get(url);
         if (response && response.data) {
-            ctx.saboresYToppings = response.data;
-            console.log("✅ Sabores y toppings cargados.");
+            // Normalize entries so downstream code can rely on NombreProducto, CodigoProducto and numeric Precio_Venta
+            const data = response.data;
+            const normalizeList = (arr) => {
+                if (!Array.isArray(arr)) return [];
+                return arr.map(it => {
+                    const obj = Object.assign({}, it);
+                    // Normalize name and code fields
+                    obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
+                    obj.CodigoProducto = obj.CodigoProducto || obj.codigo || obj.Code || obj.Codigo || null;
+
+                    // Detect price in various fields and parse to number (handles '1.000' or '1,000.50')
+                    const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
+                    let priceRaw = null;
+                    for (const p of priceCandidates) {
+                        if (typeof p !== 'undefined' && p !== null && String(p).toString().trim() !== '') { priceRaw = p; break; }
+                    }
+                    if (priceRaw !== null) {
+                        try {
+                            // Convert to string and remove non-numeric punctuation except decimal comma/dot
+                            let s = String(priceRaw).trim();
+                            // If like '1.000' treat '.' as thousands separator: remove dots and replace comma with dot
+                            // Heuristics: if more than one dot and no comma, remove all dots; if comma present and dot present, remove dots then replace comma
+                            if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
+                                s = s.replace(/\./g, '');
+                            }
+                            // Replace thousands separator dot when pattern like '1.000' (single dot and no comma)
+                            if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
+                                // assume dot is thousands separator if there are three digits after it
+                                const parts = s.split('.');
+                                if (parts[1] && parts[1].length === 3) {
+                                    s = parts.join('');
+                                }
+                            }
+                            // Replace comma decimal with dot
+                            s = s.replace(/,/g, '.');
+                            const parsed = parseFloat(s);
+                            obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
+                        } catch (e) {
+                            obj.Precio_Venta = null;
+                        }
+                    } else {
+                        obj.Precio_Venta = null;
+                    }
+
+                    return obj;
+                });
+            };
+
+            ctx.saboresYToppings = {
+                sabores: normalizeList(data.sabores || []),
+                toppings: normalizeList(data.toppings || [])
+            };
+
+            console.log(`✅ Sabores y toppings cargados. Sabores: ${ctx.saboresYToppings.sabores.length}, Toppings: ${ctx.saboresYToppings.toppings.length}`);
         } else {
             ctx.saboresYToppings = { sabores: [], toppings: [] };
             console.warn('getSaboresYToppings: empty response data from', url);
@@ -83,6 +135,10 @@ function addToCart(ctx, jid, item, quantity = 1) {
         cart[itemIndex].cantidad += quantity;
         if (item.sabores && item.sabores.length > 0) cart[itemIndex].sabores = item.sabores;
         if (item.toppings && item.toppings.length > 0) cart[itemIndex].toppings = item.toppings;
+        // Nuevo: soportar sabor individual y observaciones (campo 'sabor' y 'observaciones')
+        if (item.sabor) cart[itemIndex].sabor = item.sabor;
+        if (item.notes) cart[itemIndex].observaciones = item.notes;
+        if (item.observaciones) cart[itemIndex].observaciones = item.observaciones;
     } else {
         // Si es un item nuevo, lo añade al carrito
         cart.push({
@@ -91,7 +147,10 @@ function addToCart(ctx, jid, item, quantity = 1) {
             precio: item.precio,
             cantidad: quantity,
             sabores: item.sabores,
-            toppings: item.toppings
+            toppings: item.toppings,
+            // Nuevo: registrar sabor individual y observaciones si vienen desde el parser
+            sabor: item.sabor || null,
+            observaciones: item.notes || item.observaciones || null
         });
     }
     console.log(`Item añadido al carrito de ${jid}: ${quantity}x ${item.nombre}`);
@@ -235,9 +294,16 @@ async function handleProductSelection(sock, jid, producto, ctx) {
     const productSabores = Array.isArray(producto.sabores) ? producto.sabores : [];
     const productToppings = Array.isArray(producto.toppings) ? producto.toppings : [];
 
-    // Determinar número de sabores/toppings esperados
-    const numSabores = productSabores.length > 0 ? productSabores.length : parseInt(producto.Numero_de_Sabores || 0);
-    const numToppings = productToppings.length > 0 ? productToppings.length : parseInt(producto.Numero_de_Toppings || 0);
+    // Prefer the explicit Numero_de_Sabores / Numero_de_Toppings declared on the product
+    // If it's not provided or invalid, fall back to the product-specific list length, then the global cache.
+    const declaredNumSabores = Number.parseInt(producto.Numero_de_Sabores || producto.Numero_de_Sabores === 0 ? producto.Numero_de_Sabores : NaN, 10);
+    const declaredNumToppings = Number.parseInt(producto.Numero_de_Toppings || producto.Numero_de_Toppings === 0 ? producto.Numero_de_Toppings : NaN, 10);
+    const numSabores = Number.isFinite(declaredNumSabores) && declaredNumSabores > 0
+        ? declaredNumSabores
+        : (productSabores.length > 0 ? productSabores.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores.length : 0));
+    const numToppings = Number.isFinite(declaredNumToppings) && declaredNumToppings > 0
+        ? declaredNumToppings
+        : (productToppings.length > 0 ? productToppings.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings.length : 0));
 
     // Si el producto requiere sabores pero no tenemos la lista global, intentar cargarla
     if ((numSabores > 0) && (!ctx.saboresYToppings || !Array.isArray(ctx.saboresYToppings.sabores))) {
@@ -254,14 +320,16 @@ async function handleProductSelection(sock, jid, producto, ctx) {
 
     // 3. Añade la sección de SABORES si el producto los requiere
     if (numSabores > 0 && saboresList.length > 0) {
-        mensaje += `\n\n*Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista (ej: S1, S3):*\n`;
-        mensaje += saboresList.map((s, i) => `*S${i + 1})* ${s.NombreProducto || s}`).join('\n');
+        mensaje += `\n\n🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
+        // Mostrar con número y emoji por opción para mejor UX
+        mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');
     }
 
     // 4. Añade la sección de TOPPINGS si el producto los requiere
     if (numToppings > 0 && toppingsList.length > 0) {
-        mensaje += `\n\n*Elige hasta ${numToppings} topping${numToppings > 1 ? 's' : ''} (ej: T1, T2):*\n`;
-        mensaje += toppingsList.map((t, i) => `*T${i + 1})* ${t.NombreProducto || t}`).join('\n');
+        mensaje += `\n\n🍬 *Toppings (costo adicional).* Si no deseas ninguno, responde "sin" o indica la cantidad para continuar.\n`;
+        // Mostrar número, nombre y precio (si está disponible) y emoji
+        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');
     }
 
     // 5. Añade las instrucciones finales

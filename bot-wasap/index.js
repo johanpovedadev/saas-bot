@@ -13,6 +13,8 @@ const { say, getSaboresYToppings } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
 
 const { logger } = require('./utils/logger');
+const { spawnSync } = require('child_process');
+
 // Install console filter to suppress noisy outputs coming directly from Baileys or other libs
 function installConsoleFilter() {
     // Allow developers to disable the noisy filter temporarily by setting LOG_FILTER_VERBOSE=1
@@ -140,8 +142,37 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // logger is imported from utils/logger and includes redaction for sensitive buffers
 
+async function maybeCleanAppStateOnStartup() {
+    try {
+        const shouldClean = String(process.env.CLEAN_APPSTATE_ON_STARTUP || '').trim() === '1';
+        if (!shouldClean) return;
+
+        const perform = String(process.env.CLEAN_APPSTATE_PERFORM || '').trim() === '1';
+        const scriptPath = path.join(__dirname, '..', 'scripts', 'clean_appstate.ps1');
+        console.log(`CLEAN_APPSTATE_ON_STARTUP=1 detected. Running cleanup script in ${perform ? 'PERFORM' : 'WhatIf (preview)'} mode: ${scriptPath}`);
+
+        const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath];
+        if (!perform) args.push('-WhatIf'); else args.push('-Perform');
+
+        const res = spawnSync('powershell.exe', args, { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+        if (res.error) {
+            console.error('Error ejecutando clean_appstate.ps1:', res.error.message || res.error);
+            return;
+        }
+        if (res.stdout && res.stdout.trim()) console.log('clean_appstate stdout:', res.stdout.trim());
+        if (res.stderr && res.stderr.trim()) console.warn('clean_appstate stderr:', res.stderr.trim());
+
+        console.log('Clean appstate script finished.');
+    } catch (e) {
+        console.error('maybeCleanAppStateOnStartup error (non-fatal):', e && e.stack ? e.stack : e);
+    }
+}
+
 const startBot = async () => {
     console.log('Inicializando servicios...');
+
+    // Si se solicita limpieza de app-state al inicio, ejecútala antes de inicializar el estado de Baileys
+    await maybeCleanAppStateOnStartup();
 
     const ctx = {
         sessions: {},
@@ -152,6 +183,7 @@ const startBot = async () => {
         order: {},
         geminiKey: (process.env.GEMINI_API_KEY || (SECRETS && SECRETS.GEMINI_API_KEY) || CONFIG.GEMINI_API_KEY) || null,
         geminiAvailable: false
+        // Note: per-session MIA disable flags are stored on each session (userSession.miaDisabled)
     };
 
     try {
@@ -180,7 +212,9 @@ const startBot = async () => {
         auth: state,
         logger,
         browser: Browsers.macOS('Desktop'),
-        shouldSyncHistoryMessage: false
+        // Provide a function rather than a boolean. Some Baileys internals expect a function and
+        // calling code will invoke it; returning false disables history sync.
+        shouldSyncHistoryMessage: () => false
     });
 
     sock.ev.on('creds.update', saveCreds);
