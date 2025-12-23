@@ -1353,7 +1353,7 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
         const normalizedQuery = normalizeText(text);
         let productos = [];
 
-        // Intentar buscar en cache primero
+        // Intentar buscar en cache primero (si está disponible y tiene datos)
         if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
             logger.info(`[${jid}] -> Buscando "${normalizedQuery}" en cache de ${ctx.productsCache.length} productos`);
             
@@ -1366,21 +1366,16 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
             });
 
             logger.info(`[${jid}] -> Encontrados ${productos.length} productos en cache`);
+        }
 
-            // Si no encontramos nada en cache, intentar con la API como fallback
-            if (productos.length === 0) {
+        // Si no hay cache o no se encontró nada, usar API
+        if (productos.length === 0) {
+            if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
                 logger.warn(`[${jid}] -> No se encontraron productos en cache, intentando con API...`);
-                const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: normalizedQuery } });
-                
-                if (response.data.matches) {
-                    productos = response.data.matches;
-                } else if (response.data.CodigoProducto) {
-                    productos = [response.data];
-                }
+            } else {
+                logger.info(`[${jid}] -> Cache no disponible, usando API directamente`);
             }
-        } else {
-            // Si no hay cache, usar API directamente
-            logger.warn(`[${jid}] -> Cache de productos no disponible, usando API directamente`);
+            
             const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: normalizedQuery } });
             
             if (response.data.matches) {

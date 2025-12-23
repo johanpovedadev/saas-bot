@@ -119,8 +119,18 @@ async function getSaboresYToppings(ctx) {
 /**
  * Carga TODOS los productos desde la API y los guarda en cache
  * para evitar llamadas repetidas durante la operación del bot
+ * 
+ * NOTA: Temporalmente deshabilitado porque el endpoint /api/listar_productos/
+ * no existe en Django. Necesitamos crear este endpoint o modificar
+ * buscar_producto_por_nombre para aceptar un query especial que devuelva todos.
  */
 async function loadAllProductsCache(ctx) {
+    // TODO: Crear endpoint /api/listar_productos/ en Django
+    console.log('⚠️ Cache de productos deshabilitado temporalmente - endpoint no disponible');
+    ctx.productsCache = [];
+    return;
+    
+    /* CÓDIGO ORIGINAL - Descomentar cuando se cree el endpoint
     const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
     const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
     let endpoints = null;
@@ -161,7 +171,7 @@ async function loadAllProductsCache(ctx) {
                                 s = parts.join('');
                             }
                         }
-                        s = s.replace(/,/g, '.'); 
+                        s = s.replace(/,/g, '.');
                         const parsed = parseFloat(s);
                         obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
                     } catch (e) {
@@ -189,6 +199,7 @@ async function loadAllProductsCache(ctx) {
         console.error('❌ Error al cargar productos en cache:', e.response?.data || e.message || e);
         ctx.productsCache = [];
     }
+    */
 }
 
 function resetChat(jid, ctx) {
