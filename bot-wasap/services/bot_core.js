@@ -238,7 +238,7 @@ async function askGemini(ctx, question) {
         -   **Ubicación y horario:** "¡Claro! Estamos en la Cra 7h n 34 b 08 y abrimos todos los días de 2:00 PM a 10:00 PM. ¡Te esperamos! 🍦"
         -   **Disponibilidad de productos:** "La mejor forma de saberlo es viendo el menú. Si un producto no aparece en la lista, no está disponible hoy. ¿Quieres que te lo muestre?"
         -   **Métodos de pago:** "Por el momento solo aceptamos pagos en Efectivo o por Transferencia (Nequi) 😊."
-        -   **Tiempo del domicilio:** "El domicilio normalmente tarda entre 20 y 40 minutos."
+        -   **Tiempo del domicilio:** "Ya te confirmaran de acuerdo a tu producto"
         -   **Charla casual (Gracias, Ok, Hola):** Responde amigablemente y sugiere ver el menú. Ejemplo: "¡Con gusto! 😊 ¿Te puedo ayudar con algo más o te gustaría ver el menú?"
         ---
         Petición del cliente: "${question}"
@@ -318,25 +318,35 @@ async function handleProductSelection(sock, jid, producto, ctx) {
     const saboresList = productSabores.length > 0 ? productSabores : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores : []);
     const toppingsList = productToppings.length > 0 ? productToppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);
 
-    // 3. Añade la sección de SABORES si el producto los requiere
+    // 3. Añade la sección de SABORES y/o TOPPINGS separadas por pasos para mejor UX
     if (numSabores > 0 && saboresList.length > 0) {
         mensaje += `\n\n🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
         // Mostrar con número y emoji por opción para mejor UX
         mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');
-    }
 
-    // 4. Añade la sección de TOPPINGS si el producto los requiere
-    if (numToppings > 0 && toppingsList.length > 0) {
+        // Además, incluir la lista de toppings disponibles como referencia para que el usuario
+        // pueda ver los códigos T# y precios antes de elegir la cantidad (mejora UX requerida).
+        if (toppingsList && toppingsList.length > 0) {
+            mensaje += `\n\n🍬 *Toppings disponibles (referencia).* Puedes añadirlos luego o en el mismo mensaje separando sabores y toppings con ` + "'|'" + ` (ej: S1 | T2,T3).\n`;
+            mensaje += toppingsList.map((t, i) => {
+                const precio = (t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ` — COP$${money(t.Precio_Venta)}` : '';
+                return `*T${i + 1}.* ${t.NombreProducto || t}${precio} 🍬`;
+            }).join('\n');
+            mensaje += `\n\n_Si deseas, después de seleccionar sabores puedes indicar toppings (ej: T1,T2) o indicar la cantidad para continuar._`;
+        } else {
+            // Indicamos que primero pedimos sabores; luego, si hay toppings, preguntaremos por ellos en un paso separado.
+            mensaje += `\n\n_Indica únicamente los sabores ahora. Después te preguntaré por los toppings (si aplica) y finalmente por la cantidad._`;
+        }
+
+        // Marcamos que ahora esperamos la selección de sabores
+        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'sabores';
+    } else if (numToppings > 0 && toppingsList.length > 0) {
+        // Si no hay sabores pero sí toppings, pedimos directamente los toppings
         mensaje += `\n\n🍬 *Toppings (costo adicional).* Si no deseas ninguno, responde "sin" o indica la cantidad para continuar.\n`;
-        // Mostrar número, nombre y precio (si está disponible) y emoji
         mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');
-    }
 
-    // 5. Añade las instrucciones finales
-    if ((numSabores > 0 && saboresList.length > 0) || (numToppings > 0 && toppingsList.length > 0)) {
-        mensaje += `\n\n_Para elegir, escribe los códigos separados por comas o espacio (ej: S1, T2). Si no deseas ninguno, escribe **sin nada**._`;
-        // Indicamos que ahora esperamos los detalles (sabores/toppings)
-        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'details';
+        mensaje += `\n\n_Indica los toppings ahora. Después te preguntaré por la cantidad._`;
+        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'toppings';
     } else {
         // Si el producto no tiene opciones, preguntamos directamente la cantidad
         mensaje += `\n\n🔢 ¿Cuántas unidades de este producto quieres?`;

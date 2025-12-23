@@ -111,6 +111,7 @@ process.on('uncaughtException', (err) => {
     try {
         logger.error({ err: err && err.stack ? err.stack : String(err) }, '⚠️ Se ha producido una excepción no capturada');
     } catch (e) { /* best effort */ }
+
 });
 
 process.on('unhandledRejection', (reason, promise) => {

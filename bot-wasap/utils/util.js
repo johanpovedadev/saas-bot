@@ -63,8 +63,57 @@ async function getDeliveryCost(address) {
 }
 
 function isGreeting(t) {
-    const greetings = ['hola', 'holas', 'buenas', 'hi', 'hey', 'hello', 'que mas'];
-    return greetings.some(greeting => t.includes(greeting));
+    try {
+        if (!t || typeof t !== 'string') return false;
+        const s = normalizarMensaje(t);
+        // Split into tokens keeping words
+        const tokens = s.split(/[^a-z0-9]+/).filter(Boolean);
+
+        const greetings = ['hola', 'buenas', 'buenos dias', 'buenos días', 'buenosdías', 'buenosdias', 'buen dia', 'buen día', 'buenas tardes', 'buenas noches', 'hi', 'hey', 'hello', 'que mas', 'qué mas', 'qué hubo', 'q mas'];
+
+        // small Levenshtein with early exit for performance
+        function levenshteinLimited(a, b, maxDist = 1) {
+            if (a === b) return 0;
+            if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+            const m = a.length, n = b.length;
+            const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+            for (let i = 0; i <= m; i++) dp[i][0] = i;
+            for (let j = 0; j <= n; j++) dp[0][j] = j;
+            for (let i = 1; i <= m; i++) {
+                let rowMin = Infinity;
+                for (let j = 1; j <= n; j++) {
+                    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                    dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+                    if (dp[i][j] < rowMin) rowMin = dp[i][j];
+                }
+                if (rowMin > maxDist) return maxDist + 1;
+            }
+            return dp[m][n];
+        }
+
+        for (const token of tokens) {
+            // direct includes
+            for (const g of greetings) {
+                if (token.includes(g.replace(/\s+/g, '')) || g.includes(token)) return true;
+                // fuzzy for short tokens (<=6 chars) to catch typos like 'hl', 'holla', 'holaa'
+                if (token.length <= 6) {
+                    const dist = levenshteinLimited(token, g.replace(/\s+/g, ''), 1);
+                    if (dist <= 1) return true;
+                }
+            }
+        }
+
+        // Also catch phrases that start with greeting words
+        const starts = ['hola', 'buen', 'buenos', 'buenas', 'hi', 'hey', 'hello', 'q', 'qué', 'que'];
+        for (const st of starts) {
+            if (s.startsWith(st)) return true;
+        }
+
+        return false;
+    } catch (e) {
+        console.warn('isGreeting error:', e && e.message ? e.message : e);
+        return false;
+    }
 }
 
 function wantsMenu(t) {
