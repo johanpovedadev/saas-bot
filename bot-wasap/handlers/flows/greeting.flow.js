@@ -12,7 +12,7 @@ const { logger } = require('../../utils/logger');
 function isGreeting(text) {
     if (!text) return false;
     const t = text.toLowerCase().trim();
-    const greetings = ['hola', 'menu', 'menú', 'inicio', 'empezar', 'hi', 'hello', 'hey', 'buenas', 'buenos dias', 'buenas tardes'];
+    const greetings = ['hola', 'menu', 'menú', 'inicio', 'empezar', 'hi', 'hello', 'hey', 'buenas', 'buenos dias', 'hl', 'ola', 'buenas noches', 'buenas tardes'];
     return greetings.some(g => t.includes(g));
 }
 
