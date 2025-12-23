@@ -1053,8 +1053,7 @@ if (userSession.awaitingField === 'confirm_reserva') {
                     }
                 } catch (e) { logger.error(`Error notifying user about session MIA disable: ${e.message}`); }
                 return;
-            }
-            // If we don't have Gemini key, inform user only when the message looks like an order
+            }            // If we don't have Gemini key, inform user only when the message looks like an order
             if (!geminiKey) {
                 logger.info(`[${jid}] -> Gemini API key missing. Skipping IA for this message.`);
 
@@ -1062,10 +1061,21 @@ if (userSession.awaitingField === 'confirm_reserva') {
                 const orderLikeRegex = /\b(\d+\s*(caja|cajas|unidad|unidades|docena|kg|kilo|litro|l)|caja de|helad|vainilla|copa|volcán|volcan|encargo|pedido)\b/i;
                 const looksLikeOrder = orderLikeRegex.test(text);
 
+                // Check if this is a greeting from a new user (no previous interactions)
+                const isGreeting = /^(hola|hi|hello|buenas|hey|buenos|ola)$/i.test(text.trim());
+                const isNewUser = (userSession.errorCount || 0) === 0;
+
                 // Increment general error counter so admins can be alerted after repeated unhandled messages
                 try {
                     userSession.errorCount = (userSession.errorCount || 0) + 1;
                 } catch (e) { userSession.errorCount = 1; }
+
+                // If it's a greeting from a new user, send the menu automatically
+                if (isGreeting && isNewUser) {
+                    logger.info(`[${jid}] -> Usuario nuevo saludando sin Gemini disponible. Enviando menú automáticamente.`);
+                    await say(sock, jid, '¡Hola! 👋 Estos son nuestros productos:\n\n*1.* Ver menú de productos 📋\n*2.* Dirección y horarios 📍\n*3.* Encargos y eventos 🎉\n\nEscribe el número de la opción que desees o escribe tu pedido directamente (ej: "3 cajas vainilla").', ctx);
+                    return;
+                }
 
                 // Notify admins if repeated failures from this user and not already notified
                 if ((userSession.errorCount || 0) >= 2 && !userSession.adminNotified) {
