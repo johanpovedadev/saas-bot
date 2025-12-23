@@ -11,6 +11,7 @@ from .models import Producto
 import os
 import tempfile
 import base64
+from pathlib import Path
 
 # Resolve SERVICE_ACCOUNT_FILE: prefer env path, then base64 JSON, then default file
 def _get_service_account_file():
@@ -36,46 +37,102 @@ def _get_service_account_file():
 SERVICE_ACCOUNT_FILE = _get_service_account_file()
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
-# Inicializar cliente gspread de forma segura: validar JSON y soportar base64 en env
-client = None
-try:
-    # 1) Si existe variable con JSON en B64 o la versión 'GOOGLE_SERVICE_ACCOUNT', usarla directamente
+# Lazy gspread client initialization: try env (base64), then file path, and load .env files if necessary
+global_gs_client = None
+
+def _load_dotenv_files_if_present():
+    """Load .env files found in project root and bot-wasap into os.environ if keys are missing.
+    This is a permissive loader that won't overwrite existing env vars."""
+    try:
+        candidates = [str(settings.BASE_DIR / '.env'), str(settings.BASE_DIR / 'bot-wasap' / '.env')]
+        for p in candidates:
+            if os.path.exists(p):
+                try:
+                    with open(p, 'r', encoding='utf8') as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line or line.startswith('#') or line.startswith('//'):
+                                continue
+                            if '=' not in line:
+                                continue
+                            k, v = line.split('=', 1)
+                            k = k.strip(); v = v.strip().strip('"').strip("'")
+                            if k and (k not in os.environ or not os.environ.get(k)):
+                                os.environ[k] = v
+                except Exception:
+                    # ignore per-file errors
+                    continue
+    except Exception:
+        pass
+
+def get_gs_client(force_reload=False):
+    """Return a cached gspread client or attempt to initialize it using env/file.
+    This function tolerates missing credentials and returns None in that case."""
+    global global_gs_client
+    if global_gs_client is not None and not force_reload:
+        return global_gs_client
+
+    # Attempt to load .env into process env so Docker/Windows local .env are honored
+    _load_dotenv_files_if_present()
+
+    # 1) Try base64 JSON in env
     sa_b64 = os.environ.get('GOOGLE_SERVICE_ACCOUNT_B64') or os.environ.get('GOOGLE_SERVICE_ACCOUNT')
     if sa_b64:
         try:
-            decoded = base64.b64decode(sa_b64)
-            sa_info = json.loads(decoded.decode('utf8'))
-        except Exception:
-            # intentar parsear como texto JSON sin base64
             try:
-                sa_info = json.loads(sa_b64)
-            except Exception as e:
-                raise ValueError(f'GOOGLE_SERVICE_ACCOUNT_B64/GOOGLE_SERVICE_ACCOUNT no es JSON válido: {e}')
-        creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-        client = gspread.authorize(creds)
-    else:
-        # 2) si SERVICE_ACCOUNT_FILE es una ruta, validar que exista y contenga JSON
-        if SERVICE_ACCOUNT_FILE and os.path.exists(str(SERVICE_ACCOUNT_FILE)) and os.path.getsize(str(SERVICE_ACCOUNT_FILE)) > 10:
-            # validar contenido JSON antes de pasar al cliente de Google
-            with open(str(SERVICE_ACCOUNT_FILE), 'r', encoding='utf8') as f:
-                try:
-                    json.load(f)
-                except Exception as e:
-                    raise ValueError(f'El archivo de credenciales {SERVICE_ACCOUNT_FILE} no contiene JSON válido: {e}')
-            creds = service_account.Credentials.from_service_account_file(str(SERVICE_ACCOUNT_FILE), scopes=SCOPES)
+                raw = base64.b64decode(sa_b64)
+            except Exception:
+                raw = sa_b64.encode('utf8')
+            sa_info = json.loads(raw.decode('utf8'))
+            creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
             client = gspread.authorize(creds)
-        else:
-            raise FileNotFoundError('Service account file no existe o está vacío y no se proporcionó GOOGLE_SERVICE_ACCOUNT_B64')
-except Exception as e:
-    # No romper la importación de Django; dejar client en None y las vistas retornarán errores 500 manejables
-    print('WARNING: Google credentials failed to load:', e)
-    client = None
+            global_gs_client = client
+            return client
+        except Exception as e:
+            print('WARNING: failed to init gspread from GOOGLE_SERVICE_ACCOUNT_B64:', e)
+
+    # 2) Try file path from env or resolved SERVICE_ACCOUNT_FILE
+    sa_file = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS') or str(SERVICE_ACCOUNT_FILE)
+    if sa_file and os.path.exists(str(sa_file)) and os.path.getsize(str(sa_file)) > 10:
+        try:
+            creds = service_account.Credentials.from_service_account_file(str(sa_file), scopes=SCOPES)
+            client = gspread.authorize(creds)
+            global_gs_client = client
+            return client
+        except Exception as e:
+            print('WARNING: failed to init gspread from file:', e)
+
+    # If we reach here, gspread client cannot be created
+    global_gs_client = None
+    return None
 
 # ID de la hoja de cálculo de PRODUCTOS, SABORES Y TOPPINGS
 PRODUCTS_SHEET_ID = '10twtfwsAbyxZ4D_0ChD34oFkwa_EWKAWPGVfk1FdEHM'
 
 # ID de la hoja de cálculo de ENTREGAS
 DELIVERIES_SHEET_ID = '1479sKgwA2ES503noFusdM-rOYv412-ogcqEouI6zQgI'
+
+# Local fallback file (useful when gspread client can't be initialized)
+LOCAL_SABORES_PATH = os.path.join(str(settings.BASE_DIR), 'tmp', 'resp_sabores.json')
+
+def _load_local_sabores_toppings():
+    """Attempt to load a local JSON fallback for sabores/toppings.
+    The file may contain a leading comment line produced by tools; strip leading '//' lines before parsing."""
+    try:
+        if not os.path.exists(LOCAL_SABORES_PATH):
+            return None
+        raw = open(LOCAL_SABORES_PATH, 'r', encoding='utf8').read()
+        # Remove leading lines that start with '//' (some debug dumps include a filepath comment)
+        lines = raw.splitlines()
+        while lines and lines[0].strip().startswith('//'):
+            lines.pop(0)
+        cleaned = '\n'.join(lines).strip()
+        if not cleaned:
+            return None
+        return json.loads(cleaned)
+    except Exception as e:
+        print('WARN: Failed to load local sabores/toppings fallback:', e)
+        return None
 
 # ---------- Helpers de normalización ----------
 def _strip_accents(s: str) -> str:
@@ -87,12 +144,25 @@ def _norm(s: str) -> str:
 
 # ---------- Funciones de la API de Google Sheets ----------
 def _get_sheet_data(sheet_id, sheet_name):
-    # Si el cliente no está configurado, no intentar llamar a gspread
-    if client is None:
+    # Attempt to ensure the client is initialized lazily
+    client_local = get_gs_client()
+    if client_local is None:
+        # Try local fallback file
+        fallback = _load_local_sabores_toppings()
+        if fallback:
+            print('INFO: gspread client no configurado, usando fallback local tmp/resp_sabores.json')
+            # If caller expects 'Productos' sheet, we return flattened list
+            if sheet_name.lower().startswith('producto') or sheet_name.lower() in ('productos', 'productos'):
+                data = []
+                data.extend(fallback.get('sabores', []))
+                data.extend(fallback.get('toppings', []))
+                return data
+            # Otherwise, return fallback dict
+            return fallback
         print('ERROR: gspread client no configurado. Revise credenciales.')
         return None
     try:
-        sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
+        sheet = client_local.open_by_key(sheet_id).worksheet(sheet_name)
         data = sheet.get_all_values()
         if not data:
             return None
@@ -104,13 +174,35 @@ def _get_sheet_data(sheet_id, sheet_name):
         return None
 
 def obtener_inventario():
-    data = _get_sheet_data(PRODUCTS_SHEET_ID, 'Productos')
-    if not data:
-        return None
+    # If gspread client isn't configured, try to use local fallback for offline testing
+    client = get_gs_client()
+    if client is None:
+        fallback = _load_local_sabores_toppings()
+        if fallback and isinstance(fallback, dict) and 'sabores' in fallback:
+            # Build a flattened inventory from the sample data: combine sabores + toppings
+            data = []
+            data.extend(fallback.get('sabores', []))
+            data.extend(fallback.get('toppings', []))
+        else:
+            return None
+    else:
+        data = _get_sheet_data(PRODUCTS_SHEET_ID, 'Productos')
+        if not data:
+            return None
     productos = [row for row in data if _norm(row.get('Categoria', '')) not in ['sabores_helado', 'toppings']]
     return productos
 
 def obtener_sabores_y_toppings():
+    # Prefer live Google Sheets, but fall back to local sample JSON when client is not available
+    client = get_gs_client()
+    if client is None:
+        fallback = _load_local_sabores_toppings()
+        if fallback and isinstance(fallback, dict):
+            return {
+                'sabores': fallback.get('sabores', []),
+                'toppings': fallback.get('toppings', [])
+            }
+        return None
     data = _get_sheet_data(PRODUCTS_SHEET_ID, 'Productos')
     if not data:
         return None
@@ -118,9 +210,9 @@ def obtener_sabores_y_toppings():
     toppings = [row for row in data if _norm(row.get('Categoria', '')) == 'toppings']
     return {"sabores": sabores, "toppings": toppings}
 
-
 def agregar_entrega(data):
     try:
+        client = get_gs_client()
         sheet = client.open_by_key(DELIVERIES_SHEET_ID).worksheet('Entregas')
         
         # Obtenemos la fecha y hora actuales
