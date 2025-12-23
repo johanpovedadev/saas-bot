@@ -53,6 +53,32 @@ function getAdminJids() {
     return notificationService.getAdminJids();
 }
 
+/**
+ * Calcula el indicador de progreso basado en los pasos del producto
+ * @param {Object} producto - Producto seleccionado
+ * @param {string} currentStep - Paso actual: 'sabores', 'toppings', 'quantity'
+ * @returns {string} - Indicador de progreso (ej: "📍 Paso 2 de 3:")
+ */
+function getProgressIndicator(producto, currentStep) {
+    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
+    const numToppings = parseInt(producto.Numero_de_Toppings || 0, 10);
+    
+    // Determinar cuántos pasos totales hay
+    const steps = [];
+    if (numSabores > 0) steps.push('sabores');
+    if (numToppings > 0) steps.push('toppings');
+    steps.push('quantity'); // Siempre hay paso de cantidad
+    
+    const totalSteps = steps.length;
+    const currentStepIndex = steps.indexOf(currentStep) + 1;
+    
+    if (currentStepIndex > 0 && totalSteps > 1) {
+        return `📍 *Paso ${currentStepIndex} de ${totalSteps}:*`;
+    }
+    
+    return ''; // Si solo hay 1 paso, no mostrar indicador
+}
+
 // --- FUNCIONES AUXILIARES (Sin cambios) ---
 function normalizeText(text) {
     if (!text) return '';
@@ -1472,14 +1498,17 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
     // SABORES flow (only run when we are explicitly expecting sabores)
     if (numSabores > 0 && userSession.saboresSeleccionados.length < numSabores && (!userSession.awaitingField || userSession.awaitingField === 'sabores' || userSession.awaitingField === 'details' || userSession.phase === PHASE.SELECT_DETAILS)) {
         if (noKeywordsRegex.test(normalizedInput)) {
-            userSession.saboresSeleccionados = [];
-            // If there are toppings required next, ask for them, otherwise go to quantity
+            userSession.saboresSeleccionados = [];            // If there are toppings required next, ask for them, otherwise go to quantity
             if (numToppings > 0) {
                 // Move to toppings step (two-step flow). User can still send a number to indicate quantity.
                 userSession.awaitingField = 'toppings';
-                await say(sock, jid, `✅ Sin sabores seleccionados. Ahora puedes elegir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                const progressIndicator = getProgressIndicator(currentProduct, 'toppings');
+                const progressText = progressIndicator ? `${progressIndicator} ` : '';
+                await say(sock, jid, `✅ Sin sabores seleccionados. ${progressText}Ahora puedes elegir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
             } else {
                 userSession.awaitingField = 'quantity';
+                const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+                const progressText = progressIndicator ? `${progressIndicator} ` : '';
                 // If we are in per-unit mode, assume this unit is complete and add it with quantity=1
                 if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
                     userSession.awaitingField = null;
@@ -1487,7 +1516,7 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
                     await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                     return;
                 }
-                await say(sock, jid, `✅ Sin sabores seleccionados. ¿Cuántas unidades deseas?`, ctx);
+                await say(sock, jid, `✅ Sin sabores seleccionados. ${progressText}¿Cuántas unidades deseas?`, ctx);
             }
             return;
         }
@@ -1534,17 +1563,20 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
 
         if (added.length === 0) {
             // nothing new added (maybe duplicates or over the limit)
-            if (userSession.saboresSeleccionados.length >= numSabores) {
-                // already completed
+            if (userSession.saboresSeleccionados.length >= numSabores) {                // already completed
                 // If user already provided toppings in the same message (addedToppings), consider them
                 if (numToppings > 0) {
                     // Switch to toppings step so user can add optional toppings, or send a number to indicate quantity
                     userSession.awaitingField = 'toppings';
+                    const progressIndicator = getProgressIndicator(currentProduct, 'toppings');
+                    const progressText = progressIndicator ? `${progressIndicator} ` : '';
                     const toppingsText = userSession.toppingsSeleccionados.length > 0 ? `Toppings: ${userSession.toppingsSeleccionados.join(', ')}.` : 'No se añadieron toppings.';
-                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${toppingsText} Ahora puedes añadir toppings opcionales (ej: T1) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${toppingsText} ${progressText}Ahora puedes añadir toppings opcionales (ej: T1) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
                 } else {
                     userSession.awaitingField = 'quantity';
-                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ¿Cuántas unidades deseas?`, ctx);
+                    const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+                    const progressText = progressIndicator ? `${progressIndicator} ` : '';
+                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
                 }
                 return;
             }
@@ -1560,22 +1592,25 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             } else {
                 await say(sock, jid, `✅ Sabores añadidos: ${added.join(', ')}. Selecciona otro sabor (${userSession.saboresSeleccionados.length}/${numSabores}).`, ctx);
             }
-        } else {
-            // completed required sabores
+        } else {            // completed required sabores
             // If some toppings were already provided in the same message, evaluate them
             if (numToppings > 0) {
                 // Move to toppings step so user can add optional toppings, or send a number to indicate quantity
                 userSession.awaitingField = 'toppings';
-                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. Ahora puedes añadir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                const progressIndicator = getProgressIndicator(currentProduct, 'toppings');
+                const progressText = progressIndicator ? `${progressIndicator} ` : '';
+                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
             } else {
                 userSession.awaitingField = 'quantity';
+                const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+                const progressText = progressIndicator ? `${progressIndicator} ` : '';
                 // Auto-add in per-unit mode
                 if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
                     userSession.awaitingField = null;
                     await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                     return;
                 }
-                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ¿Cuántas unidades deseas?`, ctx);
+                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
             }
         }
         return;
@@ -1586,17 +1621,18 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
         // Only run toppings flow if we are explicitly expecting toppings (two-step flow), or if awaitingField is not set
         if (userSession.awaitingField && !['toppings', null].includes(userSession.awaitingField)) {
             // If we are not expecting toppings right now, forward to quantity handler or ignore
-        } 
-        if (noKeywordsRegex.test(normalizedInput)) {
+        }        if (noKeywordsRegex.test(normalizedInput)) {
             userSession.toppingsSeleccionados = [];
             userSession.awaitingField = 'quantity';
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressText = progressIndicator ? `${progressIndicator} ` : '';
             // Auto-add in per-unit mode
             if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
                 userSession.awaitingField = null;
                 await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                 return;
             }
-            await say(sock, jid, `✅ Sin toppings seleccionados. ¿Cuántas unidades deseas?`, ctx);
+            await say(sock, jid, `✅ Sin toppings seleccionados. ${progressText}¿Cuántas unidades deseas?`, ctx);
             return;
         }
         // If user directly sent a number while still in toppings, treat it as quantity and proceed
@@ -1605,20 +1641,20 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             // Delegate to quantity handler to reuse validation and add-to-cart
             await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
             return;
-        }
-
-        userSession.toppingsSeleccionados.push(input);
+        }        userSession.toppingsSeleccionados.push(input);
         if (userSession.toppingsSeleccionados.length < numToppings) {
             await say(sock, jid, `✅ Topping "${input}" añadido. Selecciona otro topping (${userSession.toppingsSeleccionados.length + 1}/${numToppings}) o responde "sin" si no deseas más.`, ctx);
         } else {
             userSession.awaitingField = 'quantity';
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressText = progressIndicator ? `${progressIndicator} ` : '';
             // Auto-add in per-unit mode
             if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
                 userSession.awaitingField = null;
                 await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                 return;
             }
-            await say(sock, jid, `✅ Toppings seleccionados: ${userSession.toppingsSeleccionados.join(', ')}. ¿Cuántas unidades deseas?`, ctx);
+            await say(sock, jid, `✅ Toppings seleccionados: ${userSession.toppingsSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
         }
         return;
     }

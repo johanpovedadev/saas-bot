@@ -11,6 +11,32 @@ const CONFIG = require('../config.json');
 // Centralized secrets loader (loads .env in development)
 const SECRETS = require('../config.secrets');
 
+/**
+ * Calcula el indicador de progreso basado en los pasos del producto
+ * @param {Object} producto - Producto seleccionado
+ * @param {string} currentStep - Paso actual: 'sabores', 'toppings', 'quantity'
+ * @returns {string} - Indicador de progreso (ej: "📍 Paso 1 de 3")
+ */
+function getProgressIndicator(producto, currentStep) {
+    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
+    const numToppings = parseInt(producto.Numero_de_Toppings || 0, 10);
+    
+    // Determinar cuántos pasos totales hay
+    const steps = [];
+    if (numSabores > 0) steps.push('sabores');
+    if (numToppings > 0) steps.push('toppings');
+    steps.push('quantity'); // Siempre hay paso de cantidad
+    
+    const totalSteps = steps.length;
+    const currentStepIndex = steps.indexOf(currentStep) + 1;
+    
+    if (currentStepIndex > 0 && totalSteps > 1) {
+        return `📍 *Paso ${currentStepIndex} de ${totalSteps}*`;
+    }
+    
+    return ''; // Si solo hay 1 paso, no mostrar indicador
+}
+
 async function getSaboresYToppings(ctx) {
     const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
     const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
@@ -391,11 +417,11 @@ async function handleProductSelection(sock, jid, producto, ctx) {
 
     // Build actual lists to show: prefer product-specific lists, else fallback to ctx.saboresYToppings
     const saboresList = productSabores.length > 0 ? productSabores : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores : []);
-    const toppingsList = productToppings.length > 0 ? productToppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);
-
-    // 3. Añade la sección de SABORES y/o TOPPINGS separadas por pasos para mejor UX
+    const toppingsList = productToppings.length > 0 ? productToppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);    // 3. Añade la sección de SABORES y/o TOPPINGS separadas por pasos para mejor UX
     if (numSabores > 0 && saboresList.length > 0) {
-        mensaje += `\n\n🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
+        const progressIndicator = getProgressIndicator(producto, 'sabores');
+        const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+        mensaje += `\n\n${progressText}🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
         // Mostrar con número y emoji por opción para mejor UX
         mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');
 
@@ -411,20 +437,20 @@ async function handleProductSelection(sock, jid, producto, ctx) {
         } else {
             // Indicamos que primero pedimos sabores; luego, si hay toppings, preguntaremos por ellos en un paso separado.
             mensaje += `\n\n_Indica únicamente los sabores ahora. Después te preguntaré por los toppings (si aplica) y finalmente por la cantidad._`;
-        }
-
-        // Marcamos que ahora esperamos la selección de sabores
+        }        // Marcamos que ahora esperamos la selección de sabores
         if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'sabores';
     } else if (numToppings > 0 && toppingsList.length > 0) {
         // Si no hay sabores pero sí toppings, pedimos directamente los toppings
-        mensaje += `\n\n🍬 *Toppings (costo adicional).* Si no deseas ninguno, responde "sin" o indica la cantidad para continuar.\n`;
-        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');
-
-        mensaje += `\n\n_Indica los toppings ahora. Después te preguntaré por la cantidad._`;
+        const progressIndicator = getProgressIndicator(producto, 'toppings');
+        const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+        mensaje += `\n\n${progressText}🍬 *Toppings (costo adicional).* Si no deseas ninguno, responde "sin" o indica la cantidad para continuar.\n`;
+        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');        mensaje += `\n\n_Indica los toppings ahora. Después te preguntaré por la cantidad._`;
         if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'toppings';
     } else {
         // Si el producto no tiene opciones, preguntamos directamente la cantidad
-        mensaje += `\n\n🔢 ¿Cuántas unidades de este producto quieres?`;
+        const progressIndicator = getProgressIndicator(producto, 'quantity');
+        const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+        mensaje += `\n\n${progressText}🔢 ¿Cuántas unidades de este producto quieres?`;
         // Indicamos que ahora esperamos la cantidad
         if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'quantity';
     }
