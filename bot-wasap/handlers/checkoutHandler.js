@@ -1,42 +1,22 @@
-// RUTA: services/checkoutHandler.js - CORREGIDO Y ACTUALIZADO
+// RUTA: handlers/checkoutHandler.js - CORREGIDO Y ACTUALIZADO
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { say, sendImage, resetChat } = require('./bot_core');
+const { say, sendImage, resetChat } = require('../services/bot_core');
 const { money } = require('../utils/util');
 const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const CONFIG = require('../config.json');
 const SECRETS = require('../config.secrets');
+const notificationService = require('../services/notificationService');
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 
-// Resolve admin JIDs robustly (prefers env, then secrets, then config)
+// Resolve admin JIDs - delegado a notificationService
 function getAdminJids() {
-    try {
-        if (process.env.ADMIN_JIDS && String(process.env.ADMIN_JIDS).trim()) {
-            return String(process.env.ADMIN_JIDS).split(',').map(s => s.trim()).filter(Boolean);
-        }
-    } catch (e) { /* ignore */ }
-
-    try {
-        if (Array.isArray(SECRETS && SECRETS.ADMIN_JIDS) && SECRETS.ADMIN_JIDS.length > 0) return SECRETS.ADMIN_JIDS;
-        if (typeof SECRETS?.ADMIN_JIDS === 'string' && SECRETS.ADMIN_JIDS.trim()) return SECRETS.ADMIN_JIDS.split(',').map(s => s.trim()).filter(Boolean);
-    } catch (e) { /* ignore */ }
-
-    try {
-        if (Array.isArray(CONFIG && CONFIG.ADMIN_JIDS) && CONFIG.ADMIN_JIDS.length > 0) return CONFIG.ADMIN_JIDS;
-        if (typeof CONFIG?.ADMIN_JIDS === 'string' && CONFIG.ADMIN_JIDS.trim()) return CONFIG.ADMIN_JIDS.split(',').map(s => s.trim()).filter(Boolean);
-    } catch (e) { /* ignore */ }
-
-    const candidates = [];
-    const adminCandidate = process.env.ADMIN_JID || (SECRETS && SECRETS.ADMIN_JID) || CONFIG.ADMIN_JID;
-    const sociaCandidate = process.env.SOCIA_JID || (SECRETS && SECRETS.SOCIA_JID) || CONFIG.SOCIA_JID;
-    if (adminCandidate) candidates.push(String(adminCandidate).trim());
-    if (sociaCandidate) candidates.push(String(sociaCandidate).trim());
-    return candidates.length > 0 ? candidates : [];
+    return notificationService.getAdminJids();
 }
 
 function generateCartSummary(userSession) {
