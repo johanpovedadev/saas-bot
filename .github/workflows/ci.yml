@@ -9,6 +9,8 @@ on:
 jobs:
   test-and-scan:
     runs-on: ubuntu-latest
+    env:
+      GOOGLE_SERVICE_ACCOUNT_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}
     steps:
       - uses: actions/checkout@v4
         with:
