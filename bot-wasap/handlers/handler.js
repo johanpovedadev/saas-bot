@@ -37,6 +37,7 @@ const { parseOrderText } = require('../services/parseOrderText');
 const cartService = require('../services/cartService');
 const sessionService = require('../services/sessionService');
 const notificationService = require('../services/notificationService');
+const frustrationService = require('../services/frustrationService');
 // Resolve API_BASE and ENDPOINTS robustly: prefer env, then centralized secrets, then config.json, then sensible defaults
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 let ENDPOINTS = null;
@@ -469,240 +470,239 @@ async function processIncomingMessage(sock, msg, ctx) {
             return;
         }
 
+        // ADMIN / special handlers
         if (jid === CONFIG.ADMIN_JID || jid === CONFIG.SOCIA_JID) {
+            // Helper to resolve target JID from token or lastCustomerJid
+            const resolveTargetJid = (token) => {
+            if (token && /\d{7,15}/.test(token)) {
+                const digits = token.replace(/[^\d]/g, '');
+                return `${digits}@s.whatsapp.net`;
+            }
+            const adminSess = ctx.sessions && ctx.sessions[jid] ? ctx.sessions[jid] : initializeUserSession(jid, ctx);
+            return adminSess.lastCustomerJid || null;
+            };
+
+            // Unmute / desilenciar
             if (t.startsWith('desilenciar ') || t.startsWith('unmute ')) {
-                const parts = t.split(/\s+/);
-                const target = parts[1] ? parts[1].replace(/[^0-9]/g, '') : null;
-                if (!target) {
-                    await say(sock, jid, 'Uso: desilenciar 573XXXXXXXXX', ctx);
-                    return;
-                }
-                const targetJid = `${target}@s.whatsapp.net`;
-                const success = unmuteChat(targetJid, ctx);
-                if (success) {
-                    await say(sock, jid, `✅ Chat ${target} desilenciado.` , ctx);
-                    try { await say(sock, targetJid, '✅ Unimos el bot de nuevo en este chat. Puedes continuar.', ctx); } catch (e) { /* ignore */ }
-                } else {
-                    await say(sock, jid, `ℹ️ El chat ${target} no estaba silenciado.`, ctx);
-                }
+            const parts = t.split(/\s+/);
+            const targetDigits = parts[1] || '';
+            const target = targetDigits.replace(/[^0-9]/g, '');
+            if (!target) {
+                await say(sock, jid, 'Uso: desilenciar 573XXXXXXXXX', ctx);
                 return;
             }
+            const targetJid = `${target}@s.whatsapp.net`;
+            const success = unmuteChat(targetJid, ctx);
+            if (success) {
+                await say(sock, jid, `✅ Chat ${target} desilenciado.`, ctx);
+                try { await say(sock, targetJid, '✅ El bot fue reactivado en este chat. Puedes continuar.', ctx); } catch (e) { /* noop */ }
+            } else {
+                await say(sock, jid, `ℹ️ El chat ${target} no estaba silenciado.`, ctx);
+            }
+            return;
+            }
 
+            // List muted chats
             if (t === 'listar silenciados' || t === 'muted list' || t === 'lista silenciados') {
-                const list = Array.from((ctx.mutedChats || new Set())).slice(0,50);
-                if (list.length === 0) {
-                    await say(sock, jid, 'No hay chats silenciados actualmente.', ctx);
-                } else {
-                    await say(sock, jid, `Chats silenciados:\n${list.join('\n')}`, ctx);
-                }
-                return;
+            const list = Array.from((ctx.mutedChats || new Set())).slice(0, 50);
+            if (list.length === 0) {
+                await say(sock, jid, 'No hay chats silenciados actualmente.', ctx);
+            } else {
+                await say(sock, jid, `Chats silenciados:\n${list.join('\n')}`, ctx);
+            }
+            return;
             }
 
+            // Take over ("yo continuo") - mark last customer so admin can act
             if (t === 'yo continuo') {
-                const customerJid = userSession.lastCustomerJid;
-                if (customerJid) {
-                    ctx.mutedChats.add(customerJid);
-                    await say(sock, jid, `✅ Bot silenciado para el chat con ${customerJid.split('@')[0]}. Ya puedes hablar.`, ctx);
-                }
-                return;
+            const customerJid = userSession.lastCustomerJid;
+            if (customerJid) {
+                if (!ctx.mutedChats) ctx.mutedChats = new Set();
+                ctx.mutedChats.add(customerJid);
+                await say(sock, jid, `✅ Bot silenciado para el chat con ${customerJid.split('@')[0]}. Ya puedes hablar.`, ctx);
+            } else {
+                await say(sock, jid, 'No hay un cliente seleccionado previamente (usa "yo continuo" después de seleccionar uno).', ctx);
             }
+            return;
+            }
+
+            // Reactivate MIA for last customer and reset state
             if (t === 'mia activa' || t === 'mia continua') {
-                const customerJid = userSession.lastCustomerJid;
-                if (customerJid && ctx.mutedChats.has(customerJid)) {
-                    ctx.mutedChats.delete(customerJid);
-                    await say(sock, jid, `✅ Bot reactivado para el chat con ${customerJid.split('@')[0]}.`, ctx);
-                    await say(sock, customerJid, '¡Hola! Soy MIA y estoy de vuelta para ayudarte. Escribe *menú* si lo necesitas.', ctx);
+            const customerJid = userSession.lastCustomerJid;
+            if (customerJid && ctx.mutedChats && ctx.mutedChats.has(customerJid)) {
+                ctx.mutedChats.delete(customerJid);
+                await say(sock, jid, `✅ Bot reactivado para el chat con ${customerJid.split('@')[0]}.`, ctx);
+                try { await say(sock, customerJid, '¡Hola! Soy MIA y estoy de vuelta para ayudarte. Escribe *menú* si lo necesitas.', ctx); } catch (e) { /* noop */ }
 
-                    // --- NEW: ensure customer's session is unblocked and reset critical flags ---
-                    try {
-                        const custSession = ctx.sessions[customerJid] || initializeUserSession(customerJid, ctx);
-                        logger.info(`[DEBUG] before reset - ${customerJid} adminNotified=${custSession.adminNotified} errorCount=${custSession.errorCount} erroresMIA=${custSession.erroresMIA}`);
-                        // Directly set fields to avoid relying on defaults
-                        custSession.adminNotified = false;
-                        custSession.errorCount = 0;
-                        custSession.erroresMIA = 0;
-                        custSession.miaActivo = true;
-                        custSession.miaDisabled = false;
-                        custSession.lastPromptAt = Date.now();
-                        // Persist back just in case
-                        ctx.sessions[customerJid] = custSession;
-                        logger.info(`[DEBUG] after reset - ${customerJid} adminNotified=${custSession.adminNotified} errorCount=${custSession.errorCount} erroresMIA=${custSession.erroresMIA}`);
-
-                        logger.info(`[${customerJid}] -> Admin reactivó el chat. adminNotified reset, errorCount cleared, MIA re-enabled.`);
-                    } catch (e) {
-                        logger.error(`Error al resetear la sesión del cliente ${customerJid}: ${e.message}`);
-                    }
+                try {
+                const custSession = ctx.sessions && ctx.sessions[customerJid] ? ctx.sessions[customerJid] : initializeUserSession(customerJid, ctx);
+                custSession.adminNotified = false;
+                custSession.errorCount = 0;
+                custSession.erroresMIA = 0;
+                custSession.miaActivo = true;
+                custSession.miaDisabled = false;
+                custSession.lastPromptAt = Date.now();
+                ctx.sessions = ctx.sessions || {};
+                ctx.sessions[customerJid] = custSession;
+                logger.info(`[${customerJid}] -> Admin reactivó el chat. adminNotified reset, errorCount cleared, MIA re-enabled.`);
+                } catch (e) {
+                logger.error(`Error al resetear la sesión del cliente ${customerJid}: ${e.message}`);
                 }
-                return;
+            } else {
+                await say(sock, jid, 'No encontré un cliente silenciado asociado a ti.', ctx);
+            }
+            return;
             }
 
-            // Admin command to reactivate MIA for a specific user session (by phone or lastCustomerJid)
+            // Reactivar MIA for a specific session (admin command)
             if (t.startsWith('reactivar mia') || t.startsWith('mia reactivar') || t.startsWith('activar mia') || t.startsWith('mia activar')) {
-                try {
-                    const tokens = t.split(/\s+/);
-                    let target = null;
-                    // If admin supplied a phone number after command, use it
-                    const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
-                    const adminSession = ctx.sessions[jid] || initializeUserSession(jid, ctx);
-                    if (possibleNumber && /\d{7,15}/.test(possibleNumber)) {
-                        const digits = possibleNumber.replace(/[^\d]/g, '');
-                        target = `${digits}@s.whatsapp.net`;
-                    } else {
-                        target = adminSession.lastCustomerJid || null;
-                    }
-                    if (!target) {
-                        await say(sock, jid, 'No encontré un chat objetivo. Usa: "reactivar mia 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo" y luego usa el comando.', ctx);
-                        return;
-                    }
-                    const sess = ctx.sessions[target];
-                    if (!sess) {
-                        await say(sock, jid, `No hay una sesión activa para ${target}.`, ctx);
-                        return;
-                    }
-                    sess.miaActivo = true;
-                    sess.miaDisabled = false;
-                    sess.adminNotified = false;
-                    sess.erroresMIA = 0;
-                    sess._miaDisabledNotified = false;
-                    await say(sock, jid, `✅ MIA reactivada para ${target.split('@')[0]}.`, ctx);
-                    try { await say(sock, target, '✅ Un administrador reactivó MIA para este chat. Puedes continuar.'); } catch (e) { /* ignore */ }
-                } catch (e) {
-                    logger.error(`Error reactivando MIA via admin command: ${e.message}`);
-                    await say(sock, jid, `⚠️ No se pudo reactivar MIA: ${e.message}`, ctx);
-                }
+            try {
+                const tokens = t.split(/\s+/);
+                const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
+                const target = resolveTargetJid(possibleNumber);
+                if (!target) {
+                await say(sock, jid, 'No encontré un chat objetivo. Usa: "reactivar mia 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo".', ctx);
                 return;
+                }
+                const sess = ctx.sessions && ctx.sessions[target];
+                if (!sess) {
+                await say(sock, jid, `No hay una sesión activa para ${target.split('@')[0]}.`, ctx);
+                return;
+                }
+                sess.miaActivo = true;
+                sess.miaDisabled = false;
+                sess.adminNotified = false;
+                sess.erroresMIA = 0;
+                sess._miaDisabledNotified = false;
+
+                if (frustrationService && frustrationService.isWaitingForHuman && frustrationService.reactivateBot) {
+                if (frustrationService.isWaitingForHuman(sess)) {
+                    frustrationService.reactivateBot(sess);
+                    logger.info(`[${target}] -> Admin reactivó bot después de atender frustración`);
+                }
+                }
+
+                await say(sock, jid, `✅ MIA reactivada para ${target.split('@')[0]}.`, ctx);
+                try { await say(sock, target, '✅ Un administrador reactivó MIA para este chat. Puedes continuar.'); } catch (e) { /* noop */ }
+            } catch (e) {
+                logger.error(`Error reactivando MIA via admin command: ${e.message}`);
+                await say(sock, jid, `⚠️ No se pudo reactivar MIA: ${e.message}`, ctx);
+            }
+            return;
             }
 
-            // Admin command to deactivate MIA for a specific user session
+            // Deactivate MIA for a specific session
             if (t.startsWith('mia desactivar') || t.startsWith('desactivar mia') || t.startsWith('mia bloquear') || t.startsWith('bloquear mia')) {
-                try {
-                    const tokens = t.split(/\s+/);
-                    let target = null;
-                    const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
-                    const adminSession = ctx.sessions[jid] || initializeUserSession(jid, ctx);
-                    if (possibleNumber && /\d{7,15}/.test(possibleNumber)) {
-                        const digits = possibleNumber.replace(/[^\d]/g, '');
-                        target = `${digits}@s.whatsapp.net`;
-                    } else {
-                        target = adminSession.lastCustomerJid || null;
-                    }
-                    if (!target) {
-                        await say(sock, jid, 'No encontré un chat objetivo. Usa: "mia desactivar 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo" y luego usa el comando.', ctx);
-                        return;
-                    }
-                    const sess = ctx.sessions[target] || initializeUserSession(target, ctx);
-                    sess.miaActivo = false;
-                    sess.miaDisabled = true;
-                    sess.adminNotified = true;
-                    await say(sock, jid, `✅ MIA desactivada para ${target.split('@')[0]}.`, ctx);
-                    try { await say(sock, target, '⚠️ Un administrador ha desactivado el servicio de IA (MIA) para este chat. Puedes continuar enviando pedidos en formato simple.', ctx); } catch (e) { /* ignore */ }
-                } catch (e) {
-                    logger.error(`Error desactivando MIA via admin command: ${e.message}`);
-                    await say(sock, jid, `⚠️ No se pudo desactivar MIA: ${e.message}`, ctx);
-                }
+            try {
+                const tokens = t.split(/\s+/);
+                const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
+                const target = resolveTargetJid(possibleNumber);
+                if (!target) {
+                await say(sock, jid, 'No encontré un chat objetivo. Usa: "mia desactivar 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo".', ctx);
                 return;
+                }
+                const sess = ctx.sessions && ctx.sessions[target] ? ctx.sessions[target] : initializeUserSession(target, ctx);
+                sess.miaActivo = false;
+                sess.miaDisabled = true;
+                sess.adminNotified = true;
+                ctx.sessions = ctx.sessions || {};
+                ctx.sessions[target] = sess;
+                await say(sock, jid, `✅ MIA desactivada para ${target.split('@')[0]}.`, ctx);
+                try { await say(sock, target, '⚠️ Un administrador ha desactivado el servicio de IA (MIA) para este chat. Puedes continuar enviando pedidos en formato simple.', ctx); } catch (e) { /* noop */ }
+            } catch (e) {
+                logger.error(`Error desactivando MIA via admin command: ${e.message}`);
+                await say(sock, jid, `⚠️ No se pudo desactivar MIA: ${e.message}`, ctx);
+            }
+            return;
             }
 
-            // Admin command to check MIA status for a session
+            // Check MIA status for a session
             if (t.startsWith('mia status') || t.startsWith('status mia') || t === 'mia estado' || t === 'estado mia') {
-                try {
-                    const tokens = t.split(/\s+/);
-                    let target = null;
-                    const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
-                    const adminSession = ctx.sessions[jid] || initializeUserSession(jid, ctx);
-                    if (possibleNumber && /\d{7,15}/.test(possibleNumber)) {
-                        const digits = possibleNumber.replace(/[^\d]/g, '');
-                        target = `${digits}@s.whatsapp.net`;
-                    } else {
-                        target = adminSession.lastCustomerJid || null;
-                    }
-                    if (!target) {
-                        await say(sock, jid, 'No encontré un chat objetivo. Usa: "mia status 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo" y luego usa el comando.', ctx);
-                        return;
-                    }
-                    const sess = ctx.sessions[target];
-                    if (!sess) {
-                        await say(sock, jid, `No hay una sesión activa para ${target.split('@')[0]}.` , ctx);
-                        return;
-                    }
-                    const statusLines = [];
-                    statusLines.push(`Chat: ${target.split('@')[0]}`);
-                    statusLines.push(`MIA activa: ${!!sess.miaActivo}`);
-                    statusLines.push(`MIA desactivada por admin: ${!!sess.miaDisabled}`);
-                    statusLines.push(`Errores consecutivos MIA: ${sess.erroresMIA || 0}`);
-                    statusLines.push(`Admin notificado: ${!!sess.adminNotified}`);
-                    await say(sock, jid, `📋 Estado de MIA para ${target.split('@')[0]}:\n` + statusLines.join('\n'), ctx);
-                } catch (e) {
-                    logger.error(`Error consultando estado MIA via admin command: ${e.message}`);
-                    await say(sock, jid, `⚠️ No se pudo obtener el estado de MIA: ${e.message}`, ctx);
-                }
+            try {
+                const tokens = t.split(/\s+/);
+                const possibleNumber = tokens.length >= 3 ? tokens[2] : null;
+                const target = resolveTargetJid(possibleNumber);
+                if (!target) {
+                await say(sock, jid, 'No encontré un chat objetivo. Usa: "mia status 573XXXXXXXXX" o primero selecciona un cliente con "yo continuo".', ctx);
                 return;
-            }
-
-        }
-        
-        if (ctx.mutedChats.has(jid)) {
-            const adminSession = initializeUserSession(CONFIG.ADMIN_JID, ctx);
-            adminSession.lastCustomerJid = jid;
-            return;
-        }
-        
-        if (!ctx.botEnabled) return;
-        
-        if (processedMessages.has(key.id)) return;
-        processedMessages.set(key.id, Date.now());
-
-        if (isGreeting(t) || wantsMenu(t)) {
-            resetChat(jid, ctx);
-            await sendMainMenu(sock, jid, ctx);
-            return;
-        }
-
-        // Check for pending parser confirmation
-        if (userSession.awaitingField === 'confirm_parser_order') {
-            const reply = t.trim();
-            if (reply === 'si' || reply === 'sí' || reply === 's') {
-                const pending = userSession.pendingParserOrder;
-                if (pending && pending.parsed) {
-                    const parsed = pending.parsed;
-                    try {
-                        const searchResp = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: parsed.product_name } });
-                        const producto = chooseProductFromSearch(searchResp.data, parsed.product_name);
-                        if (!producto) {
-                            await say(sock, jid, `❌ No encontré el producto "${parsed.product_name}" en nuestro catálogo. Por favor escribe el nombre exacto.`, ctx);
-                            userSession.awaitingField = null;
-                            userSession.pendingParserOrder = null;
-                            return;
-                        }                        if (producto.Precio_Venta) producto.Precio_Venta = parseFloat(String(producto.Precio_Venta).replace('.', ''));
-                        cartService.addToCart(ctx, jid, {
-                            codigo: producto.CodigoProducto || producto.codigo || producto.id,
-                            nombre: producto.NombreProducto || parsed.product_name,
-                            precio: producto.Precio_Venta || 0,
-                            sabores: [],
-                            toppings: Array.isArray(parsed.toppings) ? parsed.toppings : [],
-                            observaciones: parsed.notes || ''
-                        }, parsed.quantity);
-                        await say(sock, jid, `✅ ¡Agregado! ${parsed.quantity}x ${producto.NombreProducto || parsed.product_name}${Array.isArray(parsed.toppings) && parsed.toppings.length === 0 ? ' (sin toppings)' : ''}${parsed.notes ? ('\nObservaciones: ' + parsed.notes) : ''}`, ctx);
-                        userSession.phase = PHASE.BROWSE_IMAGES;
-                        userSession.awaitingField = null;
-                        userSession.pendingParserOrder = null;
-                        return;
-                    } catch (err) {
-                        logger.error(`Error confirming parser order: ${err.message}`);
-                        await say(sock, jid, '⚠️ Ocurrió un error al confirmar tu pedido. Por favor intenta nuevamente.', ctx);
-                        userSession.awaitingField = null;
-                        userSession.pendingParserOrder = null;
-                        return;
-                    }
                 }
-            } else if (reply === 'no' || reply === 'n') {
+                const sess = ctx.sessions && ctx.sessions[target];
+                if (!sess) {
+                await say(sock, jid, `No hay una sesión activa para ${target.split('@')[0]}.`, ctx);
+                return;
+                }
+                const lines = [
+                `JID: ${target}`,
+                `Fase: ${sess.phase || 'N/A'}`,
+                `awaitingField: ${sess.awaitingField || 'N/A'}`,
+                `adminNotified: ${!!sess.adminNotified}`,
+                `miaActivo: ${!!sess.miaActivo}`,
+                `miaDisabled: ${!!sess.miaDisabled}`,
+                `erroresMIA: ${sess.erroresMIA || 0}`,
+                `errorCount: ${sess.errorCount || 0}`,
+                `lastPromptAt: ${sess.lastPromptAt ? new Date(sess.lastPromptAt).toISOString() : 'N/A'}`
+                ];
+                await say(sock, jid, `Estado de MIA para ${target.split('@')[0]}:\n${lines.join('\n')}`, ctx);
+            } catch (e) {
+                logger.error(`Error consultando estado de MIA: ${e.message}`);
+                await say(sock, jid, `⚠️ No se pudo obtener el estado: ${e.message}`, ctx);
+            }
+            return;
+            }
+        }
+
+        // USER: confirm parser-detected order (si aplica)
+        if (userSession.awaitingField === 'confirm_parser_order') {
+            const reply = (text || '').trim().toLowerCase();
+            const pending = userSession.pendingParserOrder;
+            if (!pending || !pending.parsed) {
+            userSession.awaitingField = null;
+            userSession.pendingParserOrder = null;
+            await say(sock, jid, 'No tengo un pedido pendiente para confirmar. Intenta de nuevo.', ctx);
+            return;
+            }
+            if (reply === 'si' || reply === 'sí' || reply === 's') {
+            try {
+                const parsed = pending.parsed;
+                // Buscar producto
+                const searchResp = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: parsed.product_name } });
+                const producto = chooseProductFromSearch(searchResp.data, parsed.product_name);
+                if (!producto) {
+                await say(sock, jid, `❌ No encontré el producto "${parsed.product_name}" en nuestro catálogo. Por favor escribe el nombre exacto.`, ctx);
                 userSession.awaitingField = null;
                 userSession.pendingParserOrder = null;
-                await say(sock, jid, 'Ok, entendido. ¿Puedes escribir el pedido con más detalle o escribir *menú* para ver opciones?', ctx);
                 return;
+                }
+                if (producto.Precio_Venta) producto.Precio_Venta = parseFloat(String(producto.Precio_Venta).replace('.', ''));
+                cartService.addToCart(ctx, jid, {
+                codigo: producto.CodigoProducto || producto.codigo || producto.id,
+                nombre: producto.NombreProducto || parsed.product_name,
+                precio: producto.Precio_Venta || 0,
+                sabores: [],
+                toppings: Array.isArray(parsed.toppings) ? parsed.toppings : [],
+                observaciones: parsed.notes || ''
+                }, parsed.quantity || 1);
+                await say(sock, jid, `✅ ¡Agregado al carrito! ${parsed.quantity || 1}x ${producto.NombreProducto || parsed.product_name}${Array.isArray(parsed.toppings) && parsed.toppings.length === 0 ? ' (sin toppings)' : ''}${parsed.notes ? ('\nObservaciones: ' + parsed.notes) : ''}`, ctx);
+                userSession.phase = PHASE.BROWSE_IMAGES;
+                userSession.awaitingField = null;
+                userSession.pendingParserOrder = null;
+                await sendAfterAddOptions(sock, jid, ctx);
+                return;
+            } catch (err) {
+                logger.error(`Error confirming parser order: ${err.message}`);
+                await say(sock, jid, '⚠️ Ocurrió un error al confirmar tu pedido. Por favor intenta nuevamente.', ctx);
+                userSession.awaitingField = null;
+                userSession.pendingParserOrder = null;
+                return;
+            }
+            } else if (reply === 'no' || reply === 'n') {
+            userSession.awaitingField = null;
+            userSession.pendingParserOrder = null;
+            await say(sock, jid, 'Ok, entendido. Puedes escribir el pedido con más detalle o escribir *menú* para ver opciones.', ctx);
+            return;
             } else {
-                await say(sock, jid, 'Por favor responde *si* o *no*.', ctx);
-                return;
+            await say(sock, jid, 'Por favor responde *si* o *no*.', ctx);
+            return;
             }
         }
 

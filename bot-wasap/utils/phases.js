@@ -20,12 +20,13 @@ const PHASE = {
 
     // Confirmación/Finalización
     CONFIRM_ORDER: 'confirm_order',
-    FINALIZE_ORDER: 'finalize_order',
-
-    // Ediciones y encargos
+    FINALIZE_ORDER: 'finalize_order',    // Ediciones y encargos
     EDIT_OPTIONS: 'edit_options',
     EDIT_CART_SELECTION: 'edit_cart_selection',
-    ENCARGO: 'encargo'
+    ENCARGO: 'encargo',
+
+    // Derivación a atención humana
+    WAITING_HUMAN: 'waiting_human'
 };
 
 module.exports = PHASE;
