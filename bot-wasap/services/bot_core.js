@@ -90,6 +90,81 @@ async function getSaboresYToppings(ctx) {
     }
 }
 
+/**
+ * Carga TODOS los productos desde la API y los guarda en cache
+ * para evitar llamadas repetidas durante la operación del bot
+ */
+async function loadAllProductsCache(ctx) {
+    const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
+    const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
+    let endpoints = null;
+    try {
+        if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
+    } catch(e) { endpoints = null; }
+    endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
+    const listEndpoint = (endpoints && endpoints.LISTAR_PRODUCTOS) ? endpoints.LISTAR_PRODUCTOS : '/listar_productos/';
+
+    try {
+        const url = `${apiBase}${listEndpoint}`;
+        console.log(`🔄 Cargando todos los productos desde: ${url}`);
+        const response = await axios.get(url);
+        
+        if (response && response.data && Array.isArray(response.data)) {
+            // Normalizar productos igual que sabores y toppings
+            const normalizedProducts = response.data.map(product => {
+                const obj = Object.assign({}, product);
+                obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
+                obj.CodigoProducto = obj.CodigoProducto || obj.codigo || obj.Code || obj.Codigo || null;
+
+                // Normalizar precio
+                const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
+                let priceRaw = null;
+                for (const p of priceCandidates) {
+                    if (typeof p !== 'undefined' && p !== null && String(p).toString().trim() !== '') { priceRaw = p; break; }
+                }
+                if (priceRaw !== null) {
+                    try {
+                        let s = String(priceRaw).trim();
+                        // Manejar separador de miles como punto (ej: 1.000 -> 1000)
+                        if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
+                            s = s.replace(/\./g, '');
+                        }
+                        if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
+                            const parts = s.split('.');
+                            if (parts[1] && parts[1].length === 3) {
+                                s = parts.join('');
+                            }
+                        }
+                        s = s.replace(/,/g, '.'); 
+                        const parsed = parseFloat(s);
+                        obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
+                    } catch (e) {
+                        obj.Precio_Venta = null;
+                    }
+                } else {
+                    obj.Precio_Venta = null;
+                }
+
+                return obj;
+            });
+
+            ctx.productsCache = normalizedProducts;
+            console.log(`✅ ${normalizedProducts.length} productos cargados en cache`);
+            
+            // Log de categorías/tipos de productos encontrados
+            const categories = [...new Set(normalizedProducts.map(p => p.Categoria || p.Tipo || 'Sin categoría'))];
+            console.log(`📦 Categorías cargadas: ${categories.join(', ')}`);
+            
+        } else {
+            ctx.productsCache = [];
+            console.warn('loadAllProductsCache: respuesta vacía desde', url);
+        }
+    } catch (e) {
+        console.error('❌ Error al cargar productos en cache:', e.response?.data || e.message || e);
+        ctx.productsCache = [];
+    }
+}
+
 function resetChat(jid, ctx) {
     // En lugar de borrar, sobreescribimos la sesión con un estado limpio y por defecto.
     // Esto asegura que la sesión SIEMPRE exista después de un reseteo.
@@ -418,6 +493,6 @@ module.exports = {
     startEncargoBrowse,
     askGemini,
     sleep,
-    getSaboresYToppings
-    
+    getSaboresYToppings,
+    loadAllProductsCache
 };

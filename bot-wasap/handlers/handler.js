@@ -1325,13 +1325,43 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleBrowseImages. Búsqueda: "${text}"`);
     try {
         const normalizedQuery = normalizeText(text);
-        const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: normalizedQuery } });
         let productos = [];
 
-        if (response.data.matches) {
-            productos = response.data.matches;
-        } else if (response.data.CodigoProducto) {
-            productos = [response.data];
+        // Intentar buscar en cache primero
+        if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
+            logger.info(`[${jid}] -> Buscando "${normalizedQuery}" en cache de ${ctx.productsCache.length} productos`);
+            
+            // Búsqueda simple por coincidencia en nombre
+            const queryLower = normalizedQuery.toLowerCase();
+            productos = ctx.productsCache.filter(p => {
+                const nombre = (p.NombreProducto || '').toLowerCase();
+                const codigo = (p.CodigoProducto || '').toLowerCase();
+                return nombre.includes(queryLower) || codigo.includes(queryLower);
+            });
+
+            logger.info(`[${jid}] -> Encontrados ${productos.length} productos en cache`);
+
+            // Si no encontramos nada en cache, intentar con la API como fallback
+            if (productos.length === 0) {
+                logger.warn(`[${jid}] -> No se encontraron productos en cache, intentando con API...`);
+                const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: normalizedQuery } });
+                
+                if (response.data.matches) {
+                    productos = response.data.matches;
+                } else if (response.data.CodigoProducto) {
+                    productos = [response.data];
+                }
+            }
+        } else {
+            // Si no hay cache, usar API directamente
+            logger.warn(`[${jid}] -> Cache de productos no disponible, usando API directamente`);
+            const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: normalizedQuery } });
+            
+            if (response.data.matches) {
+                productos = response.data.matches;
+            } else if (response.data.CodigoProducto) {
+                productos = [response.data];
+            }
         }
 
         // Normalización de precios y números (sin cambios)

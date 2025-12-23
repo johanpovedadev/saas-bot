@@ -9,7 +9,7 @@ const {
     toBuffer
 } = require('@whiskeysockets/baileys');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { say, getSaboresYToppings } = require('./services/bot_core');
+const { say, getSaboresYToppings, loadAllProductsCache } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
 
 const { logger } = require('./utils/logger');
@@ -185,13 +185,19 @@ const startBot = async () => {
         geminiKey: (process.env.GEMINI_API_KEY || (SECRETS && SECRETS.GEMINI_API_KEY) || CONFIG.GEMINI_API_KEY) || null,
         geminiAvailable: false
         // Note: per-session MIA disable flags are stored on each session (userSession.miaDisabled)
-    };
-
-    try {
+    };    try {
         await getSaboresYToppings(ctx);
         console.log('✅ Sabores y toppings cargados.');
     } catch (e) {
         console.warn('Warning: no se pudieron cargar sabores y toppings, continuando de todos modos:', e && e.message ? e.message : e);
+    }
+
+    // Cargar TODOS los productos en cache para evitar llamadas repetidas a Google Sheets
+    try {
+        await loadAllProductsCache(ctx);
+        console.log('✅ Cache de productos cargada.');
+    } catch (e) {
+        console.warn('Warning: no se pudieron cargar productos en cache, continuando de todos modos:', e && e.message ? e.message : e);
     }
 
     if (ctx.geminiKey) {
