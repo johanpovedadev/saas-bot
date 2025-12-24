@@ -185,8 +185,18 @@ Bot: ❌ No encontré exactamente "volkan".
 - ✅ Logs mejorados con emojis (líneas 50-115)
 - ✅ Eliminado código comentado residual (líneas 209-281 eliminadas)
 - ✅ Debug detallado de carga de sabores/toppings
+- ✅ Precios de toppings mostrados durante selección (línea 464)
 
 **Líneas totales:** ~557 líneas (reducidas desde ~613)
+
+### **3. `handlers/checkoutHandler.js`**
+
+**Cambios:**
+- ✅ Fix domicilio "Por confirmar" en resumen (líneas 187-198)
+- ✅ Fix domicilio "Por confirmar" en resumen final (líneas 274-286)
+- ✅ Validación condicional de `deliveryCost` para mostrar precio o texto
+
+**Líneas totales:** ~477 líneas
 
 ---
 
@@ -231,6 +241,13 @@ Bot: ❌ No encontré exactamente "volkan".
 - **Solución:** Logs mejorados - Confirmado que SÍ carga correctamente (9 sabores, 23 toppings)
 - **Estado:** ✅ VERIFICADO (No era bug real, solo falta de visibilidad)
 
+### **Bug #4: Domicilio Muestra "$ 0" en Resumen de Pedido**
+- **Error:** Resumen mostraba "Domicilio: $ 0" cuando aún no se había confirmado
+- **Causa:** Siempre mostraba el valor de `deliveryCost` formateado como dinero
+- **Solución:** Validación condicional: si `deliveryCost > 0` muestra precio, sino "Por confirmar"
+- **Archivos:** `handlers/checkoutHandler.js` (líneas 187-198 y 274-286)
+- **Estado:** ✅ RESUELTO
+
 ---
 
 ## 📊 MÉTRICAS FINALES
@@ -243,7 +260,7 @@ Bot: ❌ No encontré exactamente "volkan".
 
 ### **Archivos Afectados:**
 - **Nuevos:** 7 archivos
-- **Modificados:** 2 archivos
+- **Modificados:** 3 archivos (handler.js, bot_core.js, checkoutHandler.js)
 - **Tests:** 2 suites (35 tests totales)
 
 ### **Cobertura de Tests:**
@@ -285,6 +302,62 @@ Bot: ❌ No encontré exactamente "volkan".
 
 ---
 
+## 🎯 MEJORAS COMPLETADAS EN RESUMEN DE PEDIDO
+
+### **1. ✅ Precios de Toppings Durante Selección**
+**Estado:** Ya implementado previamente en `bot_core.js` (línea 464)
+
+**Código:**
+```javascript
+const precio = (t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) 
+    ? ` — COP$${money(t.Precio_Venta)}` 
+    : '';
+return `*T${i + 1}.* ${t.NombreProducto || t}${precio} 🍬`;
+```
+
+**Ejemplo:**
+```
+🍬 Toppings disponibles:
+*T1.* Chispas de Chocolate — COP$1.000 🍬
+*T2.* Almendras — COP$1.500 🍬
+*T3.* Arequipe — COP$800 🍬
+```
+
+### **2. ✅ Domicilio "Por confirmar" en Lugar de "$ 0"**
+**Estado:** Implementado en esta sesión
+
+**Archivos:** `handlers/checkoutHandler.js`
+
+**Código:**
+```javascript
+const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
+    ? money(userSession.order.deliveryCost) 
+    : 'Por confirmar';
+
+const summaryText = `📝 *Resumen final del pedido*\n\n` +
+    `*Productos:*\n${summary.text}\n\n` +
+    `Subtotal: ${money(summary.total)}\n` +
+    `Domicilio: ${deliveryText}\n` +  // ← AQUÍ EL CAMBIO
+    `*Total a pagar: ${money(orderTotal)}*\n\n` +
+    // ...resto del mensaje
+```
+
+**Antes:**
+```
+Subtotal: $25.000
+Domicilio: $ 0           ← MAL
+Total a pagar: $25.000
+```
+
+**Después:**
+```
+Subtotal: $25.000
+Domicilio: Por confirmar  ← BIEN
+Total a pagar: $25.000
+```
+
+---
+
 ## 🎯 COMANDO PARA COMMIT
 
 ```powershell
@@ -303,6 +376,7 @@ git add bot-wasap/SESSION_COMPLETE_SUMMARY.md
 # 3. Agregar archivos modificados
 git add bot-wasap/handlers/handler.js
 git add bot-wasap/services/bot_core.js
+git add bot-wasap/handlers/checkoutHandler.js
 
 # 4. Commit con mensaje descriptivo
 git commit -m "feat: Implementar búsqueda fuzzy y fix flujo per-unit
@@ -316,6 +390,7 @@ git commit -m "feat: Implementar búsqueda fuzzy y fix flujo per-unit
 
 🐛 Bugs Corregidos:
 - Fix flujo per-unit: auto-agregar unidades sin re-pedir cantidad
+- Fix domicilio \"Por confirmar\" en resumen de pedido
 - Eliminado código comentado residual en bot_core.js
 - Logs mejorados para sabores/toppings con emojis
 
@@ -332,7 +407,7 @@ git commit -m "feat: Implementar búsqueda fuzzy y fix flujo per-unit
 📊 Métricas:
 - +950 líneas de código
 - 7 archivos nuevos
-- 2 archivos modificados
+- 3 archivos modificados
 - 100% tests pasados"
 
 # 5. Push a repositorio

@@ -183,12 +183,14 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         userSession.phase = PHASE.FINALIZE_ORDER;
         const summary = generateCartSummary(userSession);
         userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
-        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
-
+        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
+            ? money(userSession.order.deliveryCost) 
+            : 'Por confirmar';
+        
         const summaryText = `📝 *Resumen final del pedido*\n\n` +
             `*Productos:*\n${summary.text}\n\n` +
             `Subtotal: ${money(summary.total)}\n` +
-            `Domicilio: ${money(userSession.order.deliveryCost)}\n` +
+            `Domicilio: ${deliveryText}\n` +
             `*Total a pagar: ${money(orderTotal)}*\n\n` +
             `*Datos de entrega:*\n` +
             `👤 Nombre: ${userSession.order.name}\n` +
@@ -267,16 +269,19 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         logger.error(`[${jid}] -> ERROR CRÍTICO: La fase 'FINALIZE_ORDER' no está definida en utils/phases.js. El flujo se romperá.`);
         await say(sock, jid, '⚠️ Ocurrió un error crítico de configuración. Por favor, contacta a soporte.', ctx);
         return;
-    }
-    userSession.phase = PHASE.FINALIZE_ORDER;
+    }    userSession.phase = PHASE.FINALIZE_ORDER;
     const summary = generateCartSummary(userSession);
     userSession.order.deliveryCost = 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
 
+    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
+        ? money(userSession.order.deliveryCost) 
+        : 'Por confirmar';
+
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
         `Subtotal: ${money(summary.total)}\n` +
-        `Domicilio: ${money(userSession.order.deliveryCost)}\n` +
+        `Domicilio: ${deliveryText}\n` +
         `*Total a pagar: ${money(orderTotal)}*\n\n` +
         `*Datos de entrega:*\n` +
         `👤 Nombre: ${userSession.order.name}\n` +
