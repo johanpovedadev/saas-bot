@@ -45,16 +45,25 @@ async function getSaboresYToppings(ctx) {
         if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
     } catch(e) { endpoints = null; }
     endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
-    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';
-
-    try {
+    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';    try {
         const url = `${apiBase}${listEndpoint}`;
+        console.log(`🔍 Consultando sabores y toppings desde: ${url}`);
         const response = await axios.get(url);
+        
+        console.log(`📦 Respuesta recibida. Status: ${response?.status}`);
+        console.log(`📦 Data keys:`, response?.data ? Object.keys(response.data) : 'NO DATA');
+        console.log(`📦 Sabores raw length:`, response?.data?.sabores?.length || 0);
+        console.log(`📦 Toppings raw length:`, response?.data?.toppings?.length || 0);
+        
         if (response && response.data) {
             // Normalize entries so downstream code can rely on NombreProducto, CodigoProducto and numeric Precio_Venta
             const data = response.data;
             const normalizeList = (arr) => {
-                if (!Array.isArray(arr)) return [];
+                if (!Array.isArray(arr)) {
+                    console.warn(`⚠️  normalizeList recibió un no-array:`, typeof arr);
+                    return [];
+                }
+                console.log(`🔄 Normalizando ${arr.length} items...`);
                 return arr.map(it => {
                     const obj = Object.assign({}, it);
                     // Normalize name and code fields
@@ -105,32 +114,30 @@ async function getSaboresYToppings(ctx) {
             };
 
             console.log(`✅ Sabores y toppings cargados. Sabores: ${ctx.saboresYToppings.sabores.length}, Toppings: ${ctx.saboresYToppings.toppings.length}`);
+            
+            // Mostrar primeros 3 sabores para debug
+            if (ctx.saboresYToppings.sabores.length > 0) {
+                console.log(`📋 Primeros 3 sabores:`, ctx.saboresYToppings.sabores.slice(0, 3).map(s => s.NombreProducto));
+            }
+            if (ctx.saboresYToppings.toppings.length > 0) {
+                console.log(`📋 Primeros 3 toppings:`, ctx.saboresYToppings.toppings.slice(0, 3).map(t => t.NombreProducto));
+            }
         } else {
             ctx.saboresYToppings = { sabores: [], toppings: [] };
-            console.warn('getSaboresYToppings: empty response data from', url);
+            console.warn('⚠️  getSaboresYToppings: empty response data from', url);
         }
     } catch (e) {
-        console.error('Error al obtener sabores y toppings de la API:', e.response?.data || e.message || e);
+        console.error('❌ Error al obtener sabores y toppings de la API:', e.response?.data || e.message || e);
         // ensure downstream code doesn't crash if toppings are missing
         ctx.saboresYToppings = { sabores: [], toppings: [] };
     }
 }
 
 /**
- * Carga TODOS los productos desde la API y los guarda en cache
+ * Carga TODOS los productos desde la API usando búsquedas con términos comunes
  * para evitar llamadas repetidas durante la operación del bot
- * 
- * NOTA: Temporalmente deshabilitado porque el endpoint /api/listar_productos/
- * no existe en Django. Necesitamos crear este endpoint o modificar
- * buscar_producto_por_nombre para aceptar un query especial que devuelva todos.
  */
 async function loadAllProductsCache(ctx) {
-    // TODO: Crear endpoint /api/listar_productos/ en Django
-    console.log('⚠️ Cache de productos deshabilitado temporalmente - endpoint no disponible');
-    ctx.productsCache = [];
-    return;
-    
-    /* CÓDIGO ORIGINAL - Descomentar cuando se cree el endpoint
     const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
     const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
     let endpoints = null;
@@ -138,68 +145,83 @@ async function loadAllProductsCache(ctx) {
         if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
     } catch(e) { endpoints = null; }
     endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
-    const listEndpoint = (endpoints && endpoints.LISTAR_PRODUCTOS) ? endpoints.LISTAR_PRODUCTOS : '/listar_productos/';
+    const searchEndpoint = (endpoints && endpoints.BUSCAR_PRODUCTO) ? endpoints.BUSCAR_PRODUCTO : '/buscar_producto_por_nombre/';
 
     try {
-        const url = `${apiBase}${listEndpoint}`;
-        console.log(`🔄 Cargando todos los productos desde: ${url}`);
-        const response = await axios.get(url);
+        // Estrategia: Hacer búsquedas con términos comunes para obtener la mayor cantidad de productos
+        const searchTerms = ['caja', 'copa', 'paleta', 'litro', 'helado', 'volcan', 'topping'];
+        const allProducts = new Map(); // Usar Map para evitar duplicados por CodigoProducto
         
-        if (response && response.data && Array.isArray(response.data)) {
-            // Normalizar productos igual que sabores y toppings
-            const normalizedProducts = response.data.map(product => {
-                const obj = Object.assign({}, product);
-                obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
-                obj.CodigoProducto = obj.CodigoProducto || obj.codigo || obj.Code || obj.Codigo || null;
-
-                // Normalizar precio
-                const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
-                let priceRaw = null;
-                for (const p of priceCandidates) {
-                    if (typeof p !== 'undefined' && p !== null && String(p).toString().trim() !== '') { priceRaw = p; break; }
+        console.log(`🔄 Cargando productos en cache usando búsquedas múltiples...`);
+        
+        for (const term of searchTerms) {
+            try {
+                const url = `${apiBase}${searchEndpoint}?q=${encodeURIComponent(term)}`;
+                const response = await axios.get(url);
+                
+                let products = [];
+                if (response.data.matches) {
+                    products = response.data.matches;
+                } else if (response.data.CodigoProducto) {
+                    products = [response.data];
                 }
-                if (priceRaw !== null) {
-                    try {
-                        let s = String(priceRaw).trim();
-                        // Manejar separador de miles como punto (ej: 1.000 -> 1000)
-                        if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
-                            s = s.replace(/\./g, '');
+                
+                // Agregar al Map usando CodigoProducto como key para evitar duplicados
+                products.forEach(p => {
+                    const codigo = p.CodigoProducto || p.codigo || p.Code || p.Codigo || Math.random().toString();
+                    if (!allProducts.has(codigo)) {
+                        // Normalizar producto
+                        const obj = Object.assign({}, p);
+                        obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
+                        obj.CodigoProducto = codigo;
+
+                        // Normalizar precio
+                        const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
+                        let priceRaw = null;
+                        for (const pr of priceCandidates) {
+                            if (typeof pr !== 'undefined' && pr !== null && String(pr).toString().trim() !== '') { priceRaw = pr; break; }
                         }
-                        if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
-                            const parts = s.split('.');
-                            if (parts[1] && parts[1].length === 3) {
-                                s = parts.join('');
+                        if (priceRaw !== null) {
+                            try {
+                                let s = String(priceRaw).trim();
+                                if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
+                                    s = s.replace(/\./g, '');
+                                }
+                                if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
+                                    const parts = s.split('.');
+                                    if (parts[1] && parts[1].length === 3) {
+                                        s = parts.join('');
+                                    }
+                                }
+                                s = s.replace(/,/g, '.');
+                                const parsed = parseFloat(s);
+                                obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
+                            } catch (e) {
+                                obj.Precio_Venta = null;
                             }
+                        } else {
+                            obj.Precio_Venta = null;
                         }
-                        s = s.replace(/,/g, '.');
-                        const parsed = parseFloat(s);
-                        obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
-                    } catch (e) {
-                        obj.Precio_Venta = null;
+
+                        allProducts.set(codigo, obj);
                     }
-                } else {
-                    obj.Precio_Venta = null;
-                }
-
-                return obj;
-            });
-
-            ctx.productsCache = normalizedProducts;
-            console.log(`✅ ${normalizedProducts.length} productos cargados en cache`);
-            
-            // Log de categorías/tipos de productos encontrados
-            const categories = [...new Set(normalizedProducts.map(p => p.Categoria || p.Tipo || 'Sin categoría'))];
-            console.log(`📦 Categorías cargadas: ${categories.join(', ')}`);
-            
-        } else {
-            ctx.productsCache = [];
-            console.warn('loadAllProductsCache: respuesta vacía desde', url);
+                });
+                
+            } catch (e) {
+                console.warn(`⚠️ Error buscando productos con término "${term}":`, e.message);
+            }
         }
-    } catch (e) {
-        console.error('❌ Error al cargar productos en cache:', e.response?.data || e.message || e);
+        
+        ctx.productsCache = Array.from(allProducts.values());
+        console.log(`✅ ${ctx.productsCache.length} productos únicos cargados en cache`);
+        
+        // Log de categorías/tipos de productos encontrados
+        const categories = [...new Set(ctx.productsCache.map(p => p.Categoria || p.Tipo || 'Sin categoría'))];
+        console.log(`📦 Categorías cargadas: ${categories.join(', ')}`);
+        
+    } catch (e) {        console.error('❌ Error al cargar productos en cache:', e.message || e);
         ctx.productsCache = [];
     }
-    */
 }
 
 function resetChat(jid, ctx) {

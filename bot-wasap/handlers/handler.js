@@ -38,6 +38,7 @@ const cartService = require('../services/cartService');
 const sessionService = require('../services/sessionService');
 const notificationService = require('../services/notificationService');
 const frustrationService = require('../services/frustrationService');
+const { fuzzySearchProducts, fuzzySearchSabores, fuzzySearchToppings } = require('../utils/fuzzySearch');
 // Resolve API_BASE and ENDPOINTS robustly: prefer env, then centralized secrets, then config.json, then sensible defaults
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 let ENDPOINTS = null;
@@ -1351,13 +1352,11 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleBrowseImages. Búsqueda: "${text}"`);
     try {
         const normalizedQuery = normalizeText(text);
-        let productos = [];
-
-        // Intentar buscar en cache primero (si está disponible y tiene datos)
+        let productos = [];        // Intentar buscar en cache primero (si está disponible y tiene datos)
         if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
             logger.info(`[${jid}] -> Buscando "${normalizedQuery}" en cache de ${ctx.productsCache.length} productos`);
             
-            // Búsqueda simple por coincidencia en nombre
+            // Búsqueda exacta primero por coincidencia en nombre
             const queryLower = normalizedQuery.toLowerCase();
             productos = ctx.productsCache.filter(p => {
                 const nombre = (p.NombreProducto || '').toLowerCase();
@@ -1365,7 +1364,17 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
                 return nombre.includes(queryLower) || codigo.includes(queryLower);
             });
 
-            logger.info(`[${jid}] -> Encontrados ${productos.length} productos en cache`);
+            logger.info(`[${jid}] -> Encontrados ${productos.length} productos con búsqueda exacta`);
+            
+            // Si no hay resultados exactos, usar fuzzy search
+            if (productos.length === 0) {
+                logger.info(`[${jid}] -> Intentando búsqueda fuzzy...`);
+                productos = fuzzySearchProducts(normalizedQuery, ctx.productsCache, {
+                    threshold: 0.4,
+                    maxResults: 10
+                });
+                logger.info(`[${jid}] -> Encontrados ${productos.length} productos con fuzzy search`);
+            }
         }
 
         // Si no hay cache o no se encontró nada, usar API
@@ -1414,16 +1423,31 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
                 userSession.awaitingField = 'toppings';
             } else {
                 userSession.awaitingField = 'quantity';
-            }
-        } else if (productos.length > 1) {
+            }        } else if (productos.length > 1) {
             userSession.phase = PHASE.SELECCION_PRODUCTO;
             userSession.lastMatches = productos;
             const list = productos.slice(0, 10).map((p, i) => `*${i + 1}.* ${p.NombreProducto}`).join('\n');
             await say(sock, jid, `🤔 Encontré varios productos similares (es normal 😊):\n${list}\n_(elige el número correcto)_`, ctx);
             userSession.errorCount = 0;
         } else {
-            userSession.errorCount++;
-            await say(sock, jid, `❌ No encontré el producto *"${text}"*. Intenta con una palabra clave.`, ctx);
+            // No se encontraron productos, intentar sugerencias con fuzzy search muy tolerante
+            let sugerencias = [];
+            if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
+                sugerencias = fuzzySearchProducts(normalizedQuery, ctx.productsCache, {
+                    threshold: 0.3, // Umbral más bajo para sugerencias
+                    maxResults: 5
+                });
+            }
+            
+            if (sugerencias.length > 0) {
+                const sugerenciasList = sugerencias.map((p, i) => `*${i + 1}.* ${p.NombreProducto}`).join('\n');
+                await say(sock, jid, `❌ No encontré exactamente *"${text}"*.\n\n💡 ¿Tal vez buscabas alguno de estos?\n${sugerenciasList}\n\n_Escribe el número o intenta con otra palabra clave._`, ctx);
+                userSession.phase = PHASE.SELECCION_PRODUCTO;
+                userSession.lastMatches = sugerencias;
+            } else {
+                userSession.errorCount++;
+                await say(sock, jid, `❌ No encontré el producto *"${text}"*. Intenta con una palabra clave diferente (ej: copa, paleta, caja, litro).`, ctx);
+            }
         }
     } catch (error) {
         logger.error('[browse] error:', error.response?.data || error.message);
@@ -1586,15 +1610,21 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
                 await say(sock, jid, `✅ Sabor "${added[0]}" añadido. Selecciona otro sabor (${userSession.saboresSeleccionados.length}/${numSabores}).`, ctx);
             } else {
                 await say(sock, jid, `✅ Sabores añadidos: ${added.join(', ')}. Selecciona otro sabor (${userSession.saboresSeleccionados.length}/${numSabores}).`, ctx);
-            }
-        } else {            // completed required sabores
+            }        } else {
+            // completed required sabores
             // If some toppings were already provided in the same message, evaluate them
             if (numToppings > 0) {
                 // Move to toppings step so user can add optional toppings, or send a number to indicate quantity
                 userSession.awaitingField = 'toppings';
                 const progressIndicator = getProgressIndicator(currentProduct, 'toppings');
                 const progressText = progressIndicator ? `${progressIndicator} ` : '';
-                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                
+                // Mensaje especial si estamos en modo per_unit
+                if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o responder "sin" o "listo" para finalizar esta unidad.`, ctx);
+                } else {
+                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                }
             } else {
                 userSession.awaitingField = 'quantity';
                 const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
@@ -1629,14 +1659,20 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             }
             await say(sock, jid, `✅ Sin toppings seleccionados. ${progressText}¿Cuántas unidades deseas?`, ctx);
             return;
-        }
-        // If user directly sent a number while still in toppings, treat it as quantity and proceed
+        }        // If user directly sent a number while still in toppings, treat it as quantity and proceed
         if (looksLikeNumber) {
+            // IMPORTANTE: Si estamos en modo per_unit, NO pedir cantidad. Auto-agregar con cantidad=1
+            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+                userSession.awaitingField = null;
+                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+                return;
+            }
+            
             userSession.awaitingField = 'quantity';
             // Delegate to quantity handler to reuse validation and add-to-cart
             await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
             return;
-        }        userSession.toppingsSeleccionados.push(input);
+        }userSession.toppingsSeleccionados.push(input);
         if (userSession.toppingsSeleccionados.length < numToppings) {
             await say(sock, jid, `✅ Topping "${input}" añadido. Selecciona otro topping (${userSession.toppingsSeleccionados.length + 1}/${numToppings}) o responde "sin" si no deseas más.`, ctx);
         } else {
@@ -1682,9 +1718,7 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
 
     // MAPEO: convertir sabores/toppings seleccionados (códigos S1/T1 o nombres) a objetos con NombreProducto y Precio_Venta si están disponibles
     const productSaboresList = Array.isArray(currentProduct.sabores) && currentProduct.sabores.length > 0 ? currentProduct.sabores : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores : []);
-    const productToppingsList = Array.isArray(currentProduct.toppings) && currentProduct.toppings.length > 0 ? currentProduct.toppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);
-
-    const mapCodeToItem = (token, list, prefix) => {
+    const productToppingsList = Array.isArray(currentProduct.toppings) && currentProduct.toppings.length > 0 ? currentProduct.toppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);    const mapCodeToItem = (token, list, prefix) => {
         if (!token) return null;
         const t = String(token).trim().toLowerCase();
         const m = t.match(new RegExp(`^${prefix}(\\d+)$`, 'i'));
@@ -1693,10 +1727,20 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
             if (idx >= 0 && list && list[idx]) return list[idx];
             return null;
         }
-        // If it's not a code, try to match by name (case-insensitive)
+        // If it's not a code, try to match by name (case-insensitive exact match first)
         if (list && list.length) {
             const found = list.find(i => (i.NombreProducto || String(i)).toString().toLowerCase().includes(t));
             if (found) return found;
+            
+            // Si no hay coincidencia exacta, intentar fuzzy match
+            const fuzzyMatches = prefix === 's' 
+                ? fuzzySearchSabores(t, list, { threshold: 0.6, maxResults: 1 })
+                : fuzzySearchToppings(t, list, { threshold: 0.6, maxResults: 1 });
+            
+            if (fuzzyMatches && fuzzyMatches.length > 0) {
+                logger.info(`[${jid}] -> Fuzzy match para "${t}": ${fuzzyMatches[0].NombreProducto || fuzzyMatches[0]}`);
+                return fuzzyMatches[0];
+            }
         }
         // fallback: return token as plain string
         return token;
