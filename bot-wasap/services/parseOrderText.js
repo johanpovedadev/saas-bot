@@ -49,18 +49,23 @@ function detectNoToppings(normalized) {
 }
 
 function extractProductCandidate(normalized) {
-    const stopwords = /\b(necesito|quiero|me|por|para|de|una|un|el|la|los|las|y|con|sin|porfavor|por favor|favor|hola|buenos|dias|tengo)\b/g;
-    // Remove quantity tokens
-    let cleaned = normalized.replace(/(\d+)\s*(caja|cajas|unidad|unidades|docena|docenas|kg|kilo|kilos|l|litro|litros)?\b/gi, ' ');
+    const stopwords = /\b(necesito|quiero|me|por|para|de|una|un|el|la|los|las|y|porfavor|por favor|favor|hola|buenos|dias|tengo)\b/g;
+    // Remove quantity tokens BUT preserve the rest
+    let cleaned = normalized.replace(/^(\d+)\s*/i, ' '); // Remove leading number
+    cleaned = cleaned.replace(/\s+(caja|cajas|unidad|unidades|docena|docenas|kg|kilo|kilos|l|litro|litros)\b/gi, ' '); // Remove units
+    
     // Remove any 'con ...' or 'sin ...' phrases (up to punctuation or end) so they don't become part of product name
     cleaned = cleaned.replace(/\b(con|sin)\b\s+([a-z0-9\s,]+?)(?:$|[.,;])/gi, ' ');
-    // Remove remaining stopwords and non-alphanum characters
-    cleaned = cleaned.replace(stopwords, ' ')
-        .replace(/[^a-z0-9\s]/g, ' ')
+    // Remove remaining stopwords
+    cleaned = cleaned.replace(stopwords, ' ');
+    
+    // Keep alphanumeric and spaces (preserve product names like "copa buho")
+    cleaned = cleaned.replace(/[^a-z0-9\s]/g, ' ')
         .split(/\s+/)
         .filter(Boolean)
         .join(' ')
         .trim();
+    
     return cleaned || null;
 }
 
@@ -114,12 +119,20 @@ function parseOrderText(text) {
     const productCandidate = extractProductCandidate(normalized);
 
     // Extract additions/exclusions
-    const { additions, exclusions } = extractAdditionsAndExclusions(normalized);
-
-    let confidence = 0;
-    if (quantity && productCandidate) confidence = 0.95;
-    else if (productCandidate) confidence = 0.6;
-    else if (quantity) confidence = 0.5;
+    const { additions, exclusions } = extractAdditionsAndExclusions(normalized);    let confidence = 0;
+    // Aumentar confidence si tenemos cantidad Y producto con al menos 2 palabras (ej: "2 copa buho")
+    if (quantity && productCandidate) {
+        const wordCount = productCandidate.split(/\s+/).length;
+        if (wordCount >= 2) {
+            confidence = 0.98; // Alta confianza para productos multi-palabra
+        } else {
+            confidence = 0.95; // Confianza normal para productos de 1 palabra
+        }
+    } else if (productCandidate) {
+        confidence = 0.6;
+    } else if (quantity) {
+        confidence = 0.5;
+    }
 
     const notesParts = [];
     if (exclusions && exclusions.length > 0) notesParts.push('sin: ' + exclusions.join(', '));

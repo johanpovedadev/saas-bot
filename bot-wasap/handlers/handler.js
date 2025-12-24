@@ -466,9 +466,7 @@ async function processIncomingMessage(sock, msg, ctx) {
             }
         }
         userSession.lastMessage = { text, at: now };
-        logger.info(`[${jid}] -> Fase actual: ${userSession.phase}. Mensaje recibido: "${text}"`);
-
-        // Si el usuario ha tenido 2 o más errores consecutivos, notificar a los administradores
+        logger.info(`[${jid}] -> Fase actual: ${userSession.phase}. Mensaje recibido: "${text}"`);        // Si el usuario ha tenido 2 o más errores consecutivos, notificar a los administradores
         if (userSession.errorCount >= 2 && !userSession.adminNotified) {
             userSession.adminNotified = true;
             const admins = getAdminJids();
@@ -483,21 +481,27 @@ async function processIncomingMessage(sock, msg, ctx) {
                 }
             }
 
-            // Silenciar el bot para este chat para que el humano se haga cargo
+            // Silenciar el bot AUTOMÁTICAMENTE para este chat para que el humano se haga cargo
             try {
+                if (!ctx.mutedChats) ctx.mutedChats = new Set();
+                ctx.mutedChats.add(jid);
                 scheduleAutoUnmute(jid, ctx);
                 // Also disable MIA for this session until an admin reactivates
                 userSession.miaActivo = false;
+                logger.info(`[${jid}] -> Bot silenciado automáticamente después de ${userSession.errorCount} errores`);
             } catch (e) {
                 logger.error(`Error al añadir chat a mutedChats: ${e.message}`);
             }
 
             // Avisar al usuario que un agente humano ha sido notificado
             try {
-                await say(sock, jid, 'Lo siento, parece que necesitas ayuda. Un agente humano ha sido notificado y te ayudará en breve.', ctx);
+                await say(sock, jid, 'Lo siento, parece que necesitas ayuda. Un agente humano ha sido notificado y te ayudará en breve. 👤', ctx);
             } catch (e) {
                 logger.error(`Error enviando notificación al usuario ${jid}: ${e.message}`);
             }
+            
+            // IMPORTANTE: Salir inmediatamente después de silenciar
+            return;
         }
 
         // Si el chat está silenciado, no procesar mensajes (pero registrar que el admin puede reactivar)
@@ -1048,15 +1052,13 @@ if (userSession.awaitingField === 'confirm_reserva') {
                     logger.error(`Error en guard proactivo de MIA: ${e.message}`);
                 }
                 // DO NOT return here — let deterministic parser / normal flow continue
-            }
-
-            // First: try deterministic parser (no IA) for simple structured orders
+            }            // First: try deterministic parser (no IA) for simple structured orders
             try {
                 const parserResult = parseOrderText(text);
                 if (parserResult && parserResult.parsed) {
                     const { confidence, parsed } = parserResult;
-                    // High confidence: proceed without IA
-                    if (confidence >= 0.95 && parsed.product_name && parsed.quantity) {
+                    // High confidence: proceed without IA (threshold lowered to 0.9)
+                    if (confidence >= 0.9 && parsed.product_name && parsed.quantity) {
                         logger.info(`[${jid}] -> Parser determinista matched (confidence=${confidence}). Product="${parsed.product_name}" qty=${parsed.quantity}`);
                         try {
                             const searchResp = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, { params: { q: parsed.product_name } });
@@ -1089,7 +1091,7 @@ if (userSession.awaitingField === 'confirm_reserva') {
                     }
 
                     // Medium confidence: ask user to confirm before adding
-                    if (confidence >= 0.6 && confidence < 0.95 && parsed.product_name && parsed.quantity) {
+                    if (confidence >= 0.6 && confidence < 0.9 && parsed.product_name && parsed.quantity) {
                         // Store pending order in session and prompt confirmation
                         userSession.pendingParserOrder = { parsed, confidence };
                         userSession.awaitingField = 'confirm_parser_order';
