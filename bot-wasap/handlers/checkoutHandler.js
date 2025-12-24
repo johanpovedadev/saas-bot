@@ -103,11 +103,26 @@ async function handleCartSummary(sock, jid, userSession, ctx) {
         await say(sock, jid, `🛒 Tu carrito está vacío. Escribe *menú* para empezar a comprar.`, ctx);
         userSession.phase = PHASE.SELECCION_OPCION;
         return;
-    }
+    }    const summary = generateCartSummary(userSession);
 
-    const summary = generateCartSummary(userSession);
+    const fullMessage = `📝 *Resumen de tu pedido:*
 
-    const fullMessage = `📝 *Este es tu pedido actual:*\n\n${summary.text}\n\n*Total del pedido: ${money(summary.total)}*\n\n¿Qué deseas hacer?\n\n*1)* ✅ Confirmar y finalizar pedido\n*2)* ➕ Seguir comprando\n🍨 Escribe el nombre o una palabra de tu helado favorito para seguir comprando`;
+${summary.text}
+
+━━━━━━━━━━━━━━━━━━━
+💰 *Total: ${money(summary.total)}*
+━━━━━━━━━━━━━━━━━━━
+
+¿Qué deseas hacer?
+
+1️⃣ ✅ *Confirmar pedido*
+   Escribe *1* o *confirmar*
+
+2️⃣ ➕ *Seguir comprando*
+   Escribe *2* o el nombre del producto
+
+3️⃣ ❌ *Cancelar pedido*
+   Escribe *3* o *cancelar*`;
 
     await say(sock, jid, fullMessage, ctx);
     userSession.phase = PHASE.CONFIRM_ORDER;
@@ -409,27 +424,39 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
 }
 
 async function handleConfirmOrder(sock, jid, input, userSession, ctx) {
+    logger.info(`[${jid}] -> handleConfirmOrder, input: "${input}"`);
+    if (!userSession.order || userSession.order.items.length === 0) {
+        await say(sock, jid, '❌ No tienes un pedido activo. Escribe *menú* para empezar.', ctx);
+        userSession.phase = PHASE.SELECCION_OPCION;
+        return;
+    }
+
     const confirmation = input.toLowerCase().trim();
 
-    const isConfirmation = validateInput(confirmation, 'confirmation');
-
-    if (isConfirmation) {
+    // Opción 1: Confirmar pedido
+    if (confirmation === '1' || validateInput(confirmation, 'confirmation')) {
         await handleEnterAddress(sock, jid, null, userSession, ctx, true);
-    } else if (confirmation === '2' || confirmation === 'seguir comprando') {
+    } 
+    // Opción 2: Seguir comprando
+    else if (confirmation === '2' || /^(seguir|seguir\s*comprando|mas|más)$/i.test(confirmation)) {
         userSession.phase = PHASE.BROWSE_IMAGES;
-        await say(sock, jid, '¡Claro! Escribe el nombre del siguiente producto que deseas añadir.', ctx);
-    } else if (confirmation === '3' || confirmation === 'editar') {
+        await say(sock, jid, '🍨 ¡Perfecto! Escribe el nombre del producto que deseas añadir (ej: "Copa", "Volcán", "Paleta").', ctx);
+    } 
+    // Opción 3: Cancelar pedido
+    else if (confirmation === '3' || /^(cancelar|vaciar|borrar)$/i.test(confirmation)) {
         userSession.order.items = [];
         userSession.order.notes = [];
-        userSession.phase = PHASE.BROWSE_IMAGES;
-        await say(sock, jid, '✏️ Entendido. He vaciado tu carrito. Por favor, escribe el nombre del primer producto que deseas ordenar.', ctx);
-    } else if (confirmation === '4' || confirmation === 'vaciar' || confirmation === 'cancelar') {
-        const { resetChat } = require('./bot_core');
+        const { resetChat } = require('../services/bot_core');
         resetChat(jid, ctx);
-        await say(sock, jid, '🗑️ Tu pedido ha sido cancelado. Escribe *menú* para empezar de nuevo.', ctx);
-    } else {
-        logger.info(`[${jid}] -> El usuario no eligió opción, asumiendo búsqueda de producto: "${input}"`);
+        await say(sock, jid, '🗑️ *Pedido cancelado.*\n\nTu carrito ha sido vaciado. Escribe *menu* para empezar de nuevo.', ctx);
+    } 
+    // Si no es una opción válida, asumir que es un producto para seguir comprando
+    else {
+        logger.info(`[${jid}] -> Usuario escribió "${input}", asumiendo búsqueda de producto.`);
         userSession.phase = PHASE.BROWSE_IMAGES;
+        // Delegar a handler de búsqueda de productos
+        const { handleBrowseImages } = require('./handler');
+        await handleBrowseImages(sock, jid, input, userSession, ctx);
     }
 }
 

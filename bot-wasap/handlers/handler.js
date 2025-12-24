@@ -3,7 +3,7 @@
 const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
-const { parsePrice, money, isGreeting, wantsMenu } = require('../utils/util');
+const { parsePrice, money, wantsMenu } = require('../utils/util');
 const {
     say,
     sendImage,
@@ -39,6 +39,7 @@ const sessionService = require('../services/sessionService');
 const notificationService = require('../services/notificationService');
 const frustrationService = require('../services/frustrationService');
 const { fuzzySearchProducts, fuzzySearchSabores, fuzzySearchToppings } = require('../utils/fuzzySearch');
+const { handleGreeting } = require('../utils/greetings');
 // Resolve API_BASE and ENDPOINTS robustly: prefer env, then centralized secrets, then config.json, then sensible defaults
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 let ENDPOINTS = null;
@@ -274,16 +275,25 @@ async function notifyAndMuteOnMIAFailure(sock, jid, userSession, ctx, reason) {
 async function sendAfterAddOptions(sock, jid, ctx) {
     const msg = `¿Qué deseas hacer ahora? 🤔
 
-1️⃣  ➕ Seguir comprando — Escribe el *nombre* del producto que deseas añadir (ej: "Volcán").
-2️⃣  🛒 Ver carrito / Pagar — Escribe *pagar* o *carrito* para ver tu pedido y avanzar al pago.
-3️⃣  🔙 Volver al menú — Escribe *menu* para volver a las opciones.
+1️⃣ ➕ *Seguir comprando*
+   Escribe *1* o el nombre del producto (ej: "Volcán")
 
-💳 Formas de pago: *Transferencia* (envía comprobante) o *Efectivo* al recibir.
+2️⃣ 🛒 *Ver carrito / Pagar*
+   Escribe *2*, *pagar* o *carrito*
 
-Para pagar más rápido puedes enviar los datos en UN SOLO MENSAJE: *Dirección, Nombre, Teléfono, Método de pago*.
-Ejemplo: Cra 23 #10-05, Juan Pérez, 3139848800, transferencia
+3️⃣ 🔙 *Volver al menú*
+   Escribe *3* o *menu*
 
-Si necesitas ayuda escribe *hablar* y un agente te asistirá.`;
+4️⃣ 💬 *Hablar con agente*
+   Escribe *4* o *hablar*
+
+━━━━━━━━━━━━━━━━━━━
+💳 Formas de pago: Transferencia o Efectivo
+
+⚡ *Pago Express:* Envía todo en un mensaje:
+Dirección, Nombre, Teléfono, Método (1=efectivo, 2=transferencia)
+
+Ejemplo: Cra 23 #10-05, Juan Pérez, 3139848800, 1`;
     await say(sock, jid, msg, ctx);
     // UX: allow the next incoming message to be interpreted as a combined checkout payload
     try {
@@ -1149,7 +1159,7 @@ if (userSession.awaitingField === 'confirm_reserva') {
                     } else {
                         // For generic messages, give a short hint (non-spammy)
                         // Do not increment IA error counters here beyond the increment above.
-                        await say(sock, jid, 'Si quieres hacer un pedido escribe algo como: "3 cajas vainilla" o escribe *menú* para ver opciones.', ctx);
+                        await say(sock, jid, 'Si quieres hacer un pedido y recuerdas una palabra del nombre escribe cantidad y solo 1 palabra ejemplo: "1 buho" o escribe *menú* para ver opciones.', ctx);
                     }
                 }
                 return;
@@ -1204,9 +1214,7 @@ if (userSession.awaitingField === 'confirm_reserva') {
         
         // Don't change phase, keep user in BROWSE_IMAGES so they can continue shopping if they want
         return;
-    }
-
-    // If user recently received the post-add options message, allow a comma-separated address+name+phone+payment shortcut
+    }    // If user recently received the post-add options message, allow a comma-separated address+name+phone+payment shortcut
     if (userSession.awaitingField === 'post_add_options') {
         const looksLikeCombined = (typeof text === 'string' && text.includes(',')) && (
             /\b(cra|carrera|calle|cll|av|avenida|#)\b/i.test(text) ||
@@ -1219,14 +1227,43 @@ if (userSession.awaitingField === 'confirm_reserva') {
             await handleEnterAddress(sock, jid, text, userSession, ctx, false);
             return;
         }
+        
+        // Manejar opciones numeradas: 1=seguir, 2=pagar, 3=menu, 4=hablar
+        if (t === '1') {
+            userSession.awaitingField = null;
+            await say(sock, jid, '🍨 Perfecto! Escribe el nombre del producto que deseas añadir (ej: "Copa", "Volcán", "Paleta")', ctx);
+            return;
+        } else if (t === '2' || t === 'pagar' || t === 'carrito') {
+            userSession.awaitingField = null;
+            await handleCartSummary(sock, jid, userSession, ctx);
+            return;
+        } else if (t === '3' || t === 'menu') {
+            userSession.awaitingField = null;
+            resetChat(jid, ctx);
+            await sendMainMenu(sock, jid, ctx);
+            return;
+        } else if (t === '4' || t === 'hablar' || t === 'agente' || t === 'ayuda') {
+            userSession.awaitingField = null;
+            await say(sock, jid, '💬 Un momento, estoy contactando a un agente para que te asista...', ctx);
+            // Notificar a admins
+            if (ctx.config && Array.isArray(ctx.config.adminPhones)) {
+                for (const adminPhone of ctx.config.adminPhones) {
+                    try {
+                        await say(sock, adminPhone, `🔔 *Solicitud de atención*\n\nCliente: ${jid}\nMensaje: Solicitó hablar con un agente\n\nÚltimo estado: ${userSession.phase || 'N/A'}`, ctx);
+                    } catch (e) {
+                        logger.error(`Error notificando a admin ${adminPhone}:`, e);
+                    }
+                }
+            }
+            await say(sock, jid, '✅ Hemos notificado a nuestro equipo. Un agente te contactará en breve.\n\nMientras tanto, puedes seguir con tu pedido escribiendo el nombre de un producto.', ctx);
+            return;
+        }
     }
 
     if (postAddOptions.includes(t)) {
-        if (t === 'pagar' || t === 'carrito' || t === '1') {
+        if (t === 'pagar' || t === 'carrito') {
             await handleCartSummary(sock, jid, userSession, ctx);
-        } else if (t === '2') {
-            await say(sock, jid, '¡Perfecto! Escribe el nombre del siguiente producto que deseas añadir.', ctx);
-        } else if (t === 'menu' || t === '3') {
+        } else if (t === 'menu') {
             resetChat(jid, ctx);
             await sendMainMenu(sock, jid, ctx);
         }
@@ -1360,7 +1397,7 @@ function parseReservationText(text) {
 
 async function sendMainMenu(sock, jid, ctx) {
     const welcomeMessage = `Holiii ☺️
-Como estas? Somos heladeria mundo helados en riohacha🍦
+¿Cómo estás? Somos Mundo Helados en Riohacha 🍦
 
 *1)* 🛍️ Ver nuestro menú y hacer un pedido
 *2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
@@ -1369,7 +1406,6 @@ Como estas? Somos heladeria mundo helados en riohacha🍦
 ✨ Escribe solo el número de la opción (1, 2 o 3).
 Si te equivocas, no pasa nada 💛`;
     await say(sock, jid, welcomeMessage, ctx);
-  
 }
 
 async function handleSeleccionOpcion(sock, jid, input, userSession, ctx) {
@@ -1732,19 +1768,25 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             // Delegate to quantity handler to reuse validation and add-to-cart
             await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
             return;
-        }userSession.toppingsSeleccionados.push(input);
-        if (userSession.toppingsSeleccionados.length < numToppings) {
-            await say(sock, jid, `✅ Topping "${input}" añadido. Selecciona otro topping (${userSession.toppingsSeleccionados.length + 1}/${numToppings}) o responde "sin" si no deseas más.`, ctx);
+        }        userSession.toppingsSeleccionados.push(input);
+        
+        // IMPORTANTE: Los toppings son opcionales. Con 1 topping ya se puede avanzar.
+        // Siempre pasar a pedir cantidad después de agregar un topping
+        userSession.awaitingField = 'quantity';
+        const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+        const progressText = progressIndicator ? `${progressIndicator} ` : '';
+        
+        // Auto-add in per-unit mode
+        if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+            userSession.awaitingField = null;
+            await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+            return;
+        }
+        
+        // Mensaje adaptado: dejar claro que puede agregar cantidad directamente
+        if (userSession.toppingsSeleccionados.length === 1) {
+            await say(sock, jid, `✅ Topping "${input}" añadido. ${progressText}¿Cuántas unidades deseas? (o agrega más toppings si quieres, ej: T2)`, ctx);
         } else {
-            userSession.awaitingField = 'quantity';
-            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-            const progressText = progressIndicator ? `${progressIndicator} ` : '';
-            // Auto-add in per-unit mode
-            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
-                userSession.awaitingField = null;
-                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
-                return;
-            }
             await say(sock, jid, `✅ Toppings seleccionados: ${userSession.toppingsSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
         }
         return;

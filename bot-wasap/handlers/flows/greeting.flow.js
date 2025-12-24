@@ -3,17 +3,18 @@ const PHASE = require('../../utils/phases');
 const { say } = require('../../services/bot_core');
 const sessionService = require('../../services/sessionService');
 const { logger } = require('../../utils/logger');
+const { handleGreeting: detectGreeting } = require('../../utils/greetings');
 
 /**
  * Detecta si el texto es un saludo o comando de inicio
+ * NOTA: Esta función ahora usa el módulo de greetings.js para mejor detección
  * @param {string} text - Texto a analizar
  * @returns {boolean} - True si es saludo
  */
 function isGreeting(text) {
     if (!text) return false;
-    const t = text.toLowerCase().trim();
-    const greetings = ['hola', 'menu', 'menú', 'inicio', 'empezar', 'hi', 'hello', 'hey', 'buenas', 'buenos dias', 'hl', 'ola', 'buenas noches', 'buenas tardes'];
-    return greetings.some(g => t.includes(g));
+    const result = detectGreeting(text);
+    return result.isGreeting;
 }
 
 /**
@@ -26,8 +27,19 @@ function isGreeting(text) {
  */
 async function handle(sock, jid, text, userSession, ctx) {
     logger.info(`[${jid}] -> Saludo detectado, reseteando sesión y mostrando menú`);
+    
+    // Detectar tipo de saludo y obtener mensaje personalizado
+    const greetingInfo = detectGreeting(text);
+    
     sessionService.resetChat(jid, ctx);
-    await sendMainMenu(sock, jid, ctx);
+    
+    // Si hay mensaje de bienvenida personalizado, usarlo
+    if (greetingInfo.welcomeMessage) {
+        await say(sock, jid, greetingInfo.welcomeMessage, ctx);
+    } else {
+        // Fallback al menú estándar
+        await sendMainMenu(sock, jid, ctx);
+    }
 }
 
 /**
@@ -38,7 +50,7 @@ async function handle(sock, jid, text, userSession, ctx) {
  */
 async function sendMainMenu(sock, jid, ctx) {
     const welcomeMessage = `Holiii ☺️
-Como estas? Somos heladeria mundo helados en riohacha🍦
+¿Cómo estás? Somos Mundo Helados en Riohacha 🍦
 
 *1)* 🛍️ Ver nuestro menú y hacer un pedido
 *2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)

@@ -1,0 +1,242 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║         ✅ FIX: PRODUCTOS CON 0 SABORES Y 0 TOPPINGS - RESUELTO              ║
+║                                                                              ║
+║                          24 de Diciembre 2025                                ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🐛 PROBLEMA IDENTIFICADO                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  Producto: "Cajas de Helado frutos rojos 🍓 ó vainilla"
+  
+  Configuración en base de datos:
+  • Numero_de_Sabores = 0  (no requiere selección)
+  • Numero_de_Toppings = 0 (no requiere toppings)
+  
+  ❌ COMPORTAMIENTO INCORRECTO:
+     Cliente: "helado"
+     Bot: [Muestra "Cajas de Helado"]
+     Cliente: 1
+     Bot: 🍨 Elige 9 sabores... ← ERROR! No debería pedir sabores
+     Cliente: S1 S2 S3 S4 S5 S6 S7 S8 S9
+     Bot: ❌ Por favor, ingresa una cantidad válida ← ERROR!
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ✅ SOLUCIÓN IMPLEMENTADA                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  Archivo: services/bot_core.js (líneas 430-439)
+  
+  CAMBIO CLAVE:
+  ────────────
+  Eliminar condición && declaredNumSabores > 0
+  
+  ANTES:
+  const numSabores = Number.isFinite(declaredNumSabores) && declaredNumSabores > 0
+      ? declaredNumSabores  // Solo usa si > 0
+      : (fallback);         // Ignora 0 ← ERROR
+  
+  DESPUÉS:
+  const numSabores = Number.isFinite(declaredNumSabores)
+      ? declaredNumSabores  // ← Respeta 0 explícitamente ✅
+      : (fallback);
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ✨ NUEVO COMPORTAMIENTO CORRECTO                                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  Caso 1: 0 SABORES + 0 TOPPINGS
+  ───────────────────────────────
+  Cliente: "helado"
+  Bot: [Muestra "Cajas de Helado frutos rojos 🍓 ó vainilla" — $48.000]
+       
+       🔢 ¿Cuántas unidades de este producto quieres?
+  
+  Cliente: 2
+  Bot: ✅ ¡Agregado al carrito! 2x Cajas de Helado
+  
+  ✅ NO pide sabores
+  ✅ NO pide toppings
+  ✅ Va directo a cantidad
+
+
+  Caso 2: SABORES + 0 TOPPINGS
+  ─────────────────────────────
+  Cliente: "copa simple"
+  Bot: 🍨 Elige 4 sabores...
+  Cliente: s1 s2 s3 s4
+  Bot: ✅ Sabores seleccionados. ¿Cuántas unidades?
+  Cliente: 3
+  Bot: ✅ Agregado al carrito
+  
+  ✅ Pide sabores
+  ✅ NO pide toppings
+  ✅ Pide cantidad
+
+
+  Caso 3: 0 SABORES + TOPPINGS
+  ─────────────────────────────
+  Cliente: "base yogurt"
+  Bot: 🍬 Toppings disponibles (opcionales)...
+  Cliente: t1
+  Bot: ¿Cuántas unidades?
+  Cliente: 1
+  Bot: ✅ Agregado al carrito
+  
+  ✅ NO pide sabores
+  ✅ Pide toppings (opcionales)
+  ✅ Pide cantidad
+
+
+  Caso 4: SABORES + TOPPINGS
+  ───────────────────────────
+  Cliente: "copa gusanito"
+  Bot: 🍨 Elige 4 sabores...
+  Cliente: s1 s2 s3 s4
+  Bot: 🍬 Toppings opcionales...
+  Cliente: t1
+  Bot: ¿Cuántas unidades?
+  Cliente: 1
+  Bot: ✅ Agregado al carrito
+  
+  ✅ Pide sabores
+  ✅ Pide toppings (opcionales, con 1 ya continúa)
+  ✅ Pide cantidad
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📊 MATRIZ DE DECISIÓN                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────┬─────────────────┬──────────────────────────────────┐
+  │ Numero_Sabores  │ Numero_Toppings │ Comportamiento                   │
+  ├─────────────────┼─────────────────┼──────────────────────────────────┤
+  │ 0               │ 0               │ ✅ Directo a cantidad             │
+  │ 0               │ > 0             │ ✅ Toppings (opcional) → cantidad │
+  │ > 0             │ 0               │ ✅ Sabores → cantidad             │
+  │ > 0             │ > 0             │ ✅ Sabores → Toppings → cantidad  │
+  └─────────────────┴─────────────────┴──────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🧪 PRUEBAS RECOMENDADAS                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  TEST 1: Cajas de Helado (caso principal)
+  ─────────────────────────────────────────
+  1. Escribe: "helado"
+  2. Bot muestra opciones
+  3. Escribe: "1" (selecciona Cajas de Helado)
+  4. Bot pregunta: ¿Cuántas unidades? (sin pedir sabores/toppings)
+  5. Escribe: "2"
+  6. ✅ Agregado al carrito
+
+  TEST 2: Copa con sabores
+  ────────────────────────
+  1. Escribe: "copa"
+  2. Bot pide sabores
+  3. Escribe: "s1 s2 s3 s4"
+  4. Bot pregunta cantidad (sin pedir toppings)
+  5. Escribe: "1"
+  6. ✅ Agregado al carrito
+
+  TEST 3: Producto completo
+  ─────────────────────────
+  1. Escribe: "copa gusanito"
+  2. Bot pide sabores
+  3. Escribe: "s1 s2 s3 s4"
+  4. Bot ofrece toppings opcionales
+  5. Escribe: "t1"
+  6. Bot pregunta cantidad
+  7. Escribe: "1"
+  8. ✅ Agregado al carrito
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📂 ARCHIVOS MODIFICADOS                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ✅ services/bot_core.js
+     └─ Líneas 430-439: Lógica de numSabores y numToppings
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🚀 CÓMO APLICAR EL FIX                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  PASO 1: Los cambios ya están aplicados en el código
+  ────────────────────────────────────────────────────
+  ✅ services/bot_core.js modificado
+  
+  PASO 2: Reiniciar el bot
+  ────────────────────────
+  cd C:\Users\Administrador\Documents\Mundoherladosco\bot-wasap
+  node index.js
+  
+  PASO 3: Probar con "Cajas de Helado"
+  ────────────────────────────────────
+  Envía: "helado" → Selecciona "1" → ✅ Debe pedir cantidad directamente
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 💡 NOTAS IMPORTANTES                                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ℹ️  Base de Datos:
+     ───────────────
+     Si "Cajas de Helado" tiene valores distintos en Google Sheets,
+     el código ahora los RESPETARÁ correctamente.
+     
+     Recomendado tener en Google Sheets:
+     • Numero_de_Sabores = 0
+     • Numero_de_Toppings = 0
+  
+  ℹ️  Compatibilidad:
+     ───────────────
+     ✅ No afecta productos con sabores/toppings
+     ✅ Mantiene funcionalidad de toppings opcionales
+     ✅ Compatible con opciones numeradas (1,2,3,4)
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📊 RESUMEN DE FIXES IMPLEMENTADOS HOY                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  1️⃣  Dependencia link-preview-js
+      ✅ Instalada
+  
+  2️⃣  Toppings opcionales
+      ✅ Con 1 topping ya puedes continuar
+  
+  3️⃣  Productos con 0 sabores y 0 toppings
+      ✅ Van directo a cantidad (este fix)
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ⏳ PENDIENTE                                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ⏳ GEMINI_API_KEY
+     Agregar al archivo .env línea 29
+     (Opcional, el bot funciona sin Gemini AI)
+  
+  ⏳ Reiniciar bot
+     Para aplicar todos los fixes
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                        ✅ FIX IMPLEMENTADO                                   ║
+║                                                                              ║
+║       Productos con 0 sabores y 0 toppings ahora funcionan correctamente     ║
+║                                                                              ║
+║                       Listo para reiniciar y probar! 🚀                      ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📖 Documentación completa: FIX_ZERO_SABORES_TOPPINGS.md

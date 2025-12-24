@@ -1,0 +1,295 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║            ✅ IMPLEMENTACIÓN: SALUDOS COLOMBIANOS - COMPLETADO               ║
+║                                                                              ║
+║                          24 de Diciembre 2025                                ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🎯 OBJETIVO                                                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  Mejorar la experiencia del usuario reconociendo TODOS los saludos comunes
+  en Colombia y respondiendo con mensajes personalizados según la región.
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ✅ SALUDOS IMPLEMENTADOS (50+ variantes)                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  📱 1. SALUDOS INFORMALES (13 variantes)
+     ────────────────────────────────────
+     hola, ola, hol, holaa, holaaa, holaaaa
+     hl, hla, oli, olis
+     hey, hei, heey, hi
+     saludos, saludo
+
+  💬 2. SALUDOS COLOQUIALES (11 variantes)
+     ──────────────────────────────────────
+     q hubo, qubo, kubo, que hubo
+     q mas, que mas, q más, qué más, que más
+     q mas k, que mas ke
+     q tal, que tal, qué tal
+
+  🌅 3. VARIANTES DE "BUENAS" (10 variantes)
+     ────────────────────────────────────────
+     buenas, bnas, bns, buena
+     buenos dias, buen dia, buenos días, buen día
+     buenas tardes, buena tarde
+     buenas noches, buena noche
+
+  🏔️  4. SALUDOS PAISAS - Antioquia/Eje Cafetero (6 variantes)
+     ────────────────────────────────────────────────────────────
+     que mas pues, q mas pues, qué más pues
+     bien o que, bien o qué, bien o no
+     parce, parcero, parcerito
+     
+     Respuesta personalizada: "¡Qué más, pues! ☺️"
+
+  🌴 5. SALUDOS COSTEÑOS - Costa Caribe (7 variantes)
+     ───────────────────────────────────────────────────
+     aja y que, ajá y qué, aja
+     todo bien, todo bn
+     habla, habla pues
+     que cuentas, qué cuentas
+     
+     Respuesta personalizada: "¡Ajá! ¿Todo bien? 🌴"
+
+  😎 6. SALUDOS CALEÑOS - Valle del Cauca (5 variantes)
+     ───────────────────────────────────────────────────────
+     mira que mas, mirá qué más, mira
+     ois, oís, ois que tal
+     
+     Respuesta personalizada: "¡Ey, qué más! 😎"
+
+  🏛️  7. SALUDOS BOGOTANOS/ANDINOS (4 variantes)
+     ────────────────────────────────────────────────
+     como te ha ido, cómo te ha ido
+     que hay de nuevo, qué hay de nuevo
+     como estas, cómo estás, como está
+     
+     Respuesta personalizada: "¡Hola! ¿Cómo estás? ☺️"
+
+  ⛰️  8. SALUDOS SANTANDEREANOS (2 variantes)
+     ────────────────────────────────────────────
+     que mas mano, qué más mano
+     como va la joda, cómo va la joda
+     
+     Respuesta personalizada: "¡Qué más, mano! 👋"
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🧠 LÓGICA INTELIGENTE                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  1️⃣  NORMALIZACIÓN DE TEXTO
+      ─────────────────────────
+      • Ignora tildes (á → a, é → e)
+      • Ignora mayúsculas/minúsculas
+      • Ignora puntuación (¿?¡!.,;:)
+      • Trim de espacios
+
+      Ejemplo: "¿Qué más, pues?" → "que mas pues"
+
+  2️⃣  DETECCIÓN INTELIGENTE
+      ────────────────────────
+      • Coincidencia exacta: "hola" = "hola"
+      • Al inicio: "hola amigo" = saludo + mensaje
+      • Al final: "pues hola" = mensaje + saludo
+      
+  3️⃣  DIFERENCIACIÓN SOLO SALUDO vs SALUDO + PEDIDO
+      ────────────────────────────────────────────────
+      Solo saludo → Muestra menú completo
+      • "hola"
+      • "q mas"
+      • "buenas"
+      • "aja"
+      
+      Saludo + pedido → Detecta saludo pero NO muestra menú
+      • "hola quiero una copa"
+      • "q mas necesito helado"
+      • "buenas, dame 2 litros"
+
+  4️⃣  PRIORIZACIÓN REGIONAL
+      ──────────────────────
+      Se detecta primero saludos regionales (más específicos)
+      luego los genéricos, para dar respuestas personalizadas.
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📝 EJEMPLOS DE USO                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  CASO 1: Saludo Paisa
+  ────────────────────
+  Cliente: "que mas pues"
+  Bot: "¡Qué más, pues! ☺️
+        ¡Bienvenido a Mundo Helados! 🍦
+        
+        *1)* 🛍️ Ver nuestro menú y hacer un pedido
+        *2)* 📦 Pedidos por encargo (litros, eventos)
+        *3)* 📍 Dirección y horarios
+        
+        ✨ Escribe el número de la opción (1, 2 o 3)."
+
+  CASO 2: Saludo Costeño
+  ──────────────────────
+  Cliente: "aja"
+  Bot: "¡Ajá! ¿Todo bien? 🌴
+        ¡Bienvenido a Mundo Helados! 🍦
+        ..."
+
+  CASO 3: Saludo Informal
+  ───────────────────────
+  Cliente: "hl"
+  Bot: "Holiii ☺️
+        ¿Cómo estás? Somos Mundo Helados en Riohacha 🍦
+        ..."
+
+  CASO 4: Saludo + Pedido
+  ───────────────────────
+  Cliente: "hola quiero una copa"
+  Bot: [Procesa directamente el pedido sin mostrar menú]
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📂 ARCHIVOS CREADOS/MODIFICADOS                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ✅ NUEVO: utils/greetings.js
+     ├─ Módulo dedicado de saludos (300+ líneas)
+     ├─ isGreeting() - Detecta si es saludo
+     ├─ getGreetingType() - Detecta región/tipo
+     ├─ getWelcomeMessage() - Mensaje personalizado
+     ├─ isOnlyGreeting() - Diferencia solo saludo vs saludo + pedido
+     └─ handleGreeting() - Función principal
+
+  ✅ MODIFICADO: handlers/handler.js
+     ├─ Importa nuevo módulo de greetings
+     ├─ Elimina isGreeting() de util.js (duplicado)
+     └─ sendMainMenu() actualizado
+
+  ✅ MODIFICADO: handlers/flows/greeting.flow.js
+     ├─ Usa nuevo módulo de greetings
+     ├─ Detecta tipo de saludo
+     └─ Responde con mensaje personalizado
+
+  ✅ NUEVO: test_greetings.js
+     └─ Suite de pruebas completa (8 tests, 50+ variantes)
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🧪 TESTS IMPLEMENTADOS                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  TEST 1: Saludos Informales (hola, hl, oli, hey, hi)
+  TEST 2: Saludos Coloquiales (q hubo, q mas, q tal)
+  TEST 3: Variantes "Buenas" (bnas, bns, buenos días)
+  TEST 4: Saludos Paisas (que mas pues, bien o que, parce)
+  TEST 5: Saludos Costeños (aja, todo bien, habla)
+  TEST 6: Saludos Caleños (mira, ois)
+  TEST 7: Solo saludo vs saludo + pedido
+  TEST 8: Mensajes que NO son saludos
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📊 BENEFICIOS UX                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ✨ CERCANÍA REGIONAL
+     ─────────────────
+     • Cliente paisa se siente "en casa" con "¡Qué más, pues!"
+     • Cliente costeño reconoce "¡Ajá!"
+     • Cliente caleño se identifica con "¡Ey, qué más!"
+     
+  🎯 FLEXIBILIDAD
+     ────────────
+     • 50+ variantes de saludos reconocidos
+     • Tolerante a errores de tipeo (q mas = que mas = qué más)
+     • Ignora tildes y puntuación
+     
+  🚀 INTELIGENCIA
+     ────────────
+     • Detecta si es SOLO saludo → Muestra menú
+     • Detecta saludo + pedido → Procesa pedido directamente
+     • No interrumpe el flujo de compra
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🚀 PARA PROBAR                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  PASO 1: Ejecutar tests
+  ──────────────────────
+  cd C:\Users\Administrador\Documents\Mundoherladosco\bot-wasap
+  node test_greetings.js
+  
+  ✅ Debe pasar 8/8 tests
+
+  PASO 2: Reiniciar bot
+  ─────────────────────
+  node index.js
+
+  PASO 3: Probar saludos
+  ──────────────────────
+  Envía desde WhatsApp:
+  
+  • "hola" → Menú con "Holiii ☺️"
+  • "q mas" → Menú con saludo coloquial
+  • "que mas pues" → Menú con "¡Qué más, pues!" (paisa)
+  • "aja" → Menú con "¡Ajá! ¿Todo bien?" (costeño)
+  • "ois" → Menú con "¡Ey, qué más!" (caleño)
+  • "bnas" → Menú con "¡Buenas! ☺️"
+  • "hl" → Menú con "Holiii ☺️"
+  • "hola quiero copa" → Procesa pedido directamente (sin menú)
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 💡 CASOS DE USO VALIDADOS                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  ✅ Cliente escribe "q mas" → Reconocido y respondido
+  ✅ Cliente escribe "bnas" → Reconocido y respondido
+  ✅ Cliente escribe "que mas pues" → Respuesta paisa personalizada
+  ✅ Cliente escribe "aja" → Respuesta costeña personalizada
+  ✅ Cliente escribe "hola quiero copa" → Procesado sin menú
+  ✅ Cliente escribe "copa" → NO detectado como saludo, procesa pedido
+  ✅ Cliente escribe "2" → NO detectado como saludo, selecciona opción
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 📖 DOCUMENTACIÓN API                                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  const { handleGreeting } = require('./utils/greetings');
+  
+  // Usar en handler principal
+  const result = handleGreeting(messageText);
+  
+  if (result.isGreeting && result.welcomeMessage) {
+      // Es SOLO un saludo → Enviar menú personalizado
+      await say(sock, jid, result.welcomeMessage, ctx);
+  } else if (result.isGreeting && !result.welcomeMessage) {
+      // Es saludo + pedido → Procesar pedido sin menú
+      // ... procesar pedido
+  } else {
+      // No es saludo → Flujo normal
+      // ... procesamiento normal
+  }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                     ✅ IMPLEMENTACIÓN COMPLETA                               ║
+║                                                                              ║
+║             50+ saludos colombianos reconocidos correctamente                ║
+║                  Respuestas personalizadas por región                        ║
+║                                                                              ║
+║                      Sistema listo para producción 🚀                        ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📝 Documentación técnica: utils/greetings.js (300+ líneas con JSDoc)
+🧪 Suite de tests: test_greetings.js (8 tests, 50+ variantes)
+📖 Esta guía: GREETINGS_IMPLEMENTATION_SUMMARY.txt

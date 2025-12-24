@@ -426,17 +426,18 @@ async function handleProductSelection(sock, jid, producto, ctx) {
 
     // Preferir sabores/toppings embebidos en el producto, si existen; si no, usar el cache global ctx.saboresYToppings
     const productSabores = Array.isArray(producto.sabores) ? producto.sabores : [];
-    const productToppings = Array.isArray(producto.toppings) ? producto.toppings : [];
-
-    // Prefer the explicit Numero_de_Sabores / Numero_de_Toppings declared on the product
-    // If it's not provided or invalid, fall back to the product-specific list length, then the global cache.
+    const productToppings = Array.isArray(producto.toppings) ? producto.toppings : [];    // Prefer the explicit Numero_de_Sabores / Numero_de_Toppings declared on the product
+    // IMPORTANTE: Si está explícitamente en 0, respetar ese valor (no pedir sabores/toppings)
     const declaredNumSabores = Number.parseInt(producto.Numero_de_Sabores || producto.Numero_de_Sabores === 0 ? producto.Numero_de_Sabores : NaN, 10);
     const declaredNumToppings = Number.parseInt(producto.Numero_de_Toppings || producto.Numero_de_Toppings === 0 ? producto.Numero_de_Toppings : NaN, 10);
-    const numSabores = Number.isFinite(declaredNumSabores) && declaredNumSabores > 0
-        ? declaredNumSabores
+    
+    // Si el producto tiene Numero_de_Sabores/Toppings definido explícitamente (incluso si es 0), usarlo
+    // Si no está definido (NaN), hacer fallback a las listas
+    const numSabores = Number.isFinite(declaredNumSabores)
+        ? declaredNumSabores  // Usar valor explícito (puede ser 0)
         : (productSabores.length > 0 ? productSabores.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores.length : 0));
-    const numToppings = Number.isFinite(declaredNumToppings) && declaredNumToppings > 0
-        ? declaredNumToppings
+    const numToppings = Number.isFinite(declaredNumToppings)
+        ? declaredNumToppings  // Usar valor explícito (puede ser 0)
         : (productToppings.length > 0 ? productToppings.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings.length : 0));
 
     // Si el producto requiere sabores pero no tenemos la lista global, intentar cargarla
@@ -456,28 +457,25 @@ async function handleProductSelection(sock, jid, producto, ctx) {
         const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
         mensaje += `\n\n${progressText}🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
         // Mostrar con número y emoji por opción para mejor UX
-        mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');
-
-        // Además, incluir la lista de toppings disponibles como referencia para que el usuario
+        mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');        // Además, incluir la lista de toppings disponibles como referencia para que el usuario
         // pueda ver los códigos T# y precios antes de elegir la cantidad (mejora UX requerida).
         if (toppingsList && toppingsList.length > 0) {
-            mensaje += `\n\n🍬 *Toppings disponibles (referencia).* Puedes añadirlos luego o en el mismo mensaje separando sabores y toppings con ` + "'|'" + ` (ej: S1 | T2,T3).\n`;
+            mensaje += `\n\n🍬 *Toppings disponibles (opcionales).* Puedes añadirlos luego o en el mismo mensaje separando sabores y toppings con ` + "'|'" + ` (ej: S1 | T2,T3).\n`;
             mensaje += toppingsList.map((t, i) => {
                 const precio = (t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ` — COP$${money(t.Precio_Venta)}` : '';
                 return `*T${i + 1}.* ${t.NombreProducto || t}${precio} 🍬`;
             }).join('\n');
-            mensaje += `\n\n_Si deseas, después de seleccionar sabores puedes indicar toppings (ej: T1,T2) o indicar la cantidad para continuar._`;
+            mensaje += `\n\n_Después de seleccionar sabores, puedes añadir toppings opcionales (ej: T1) o responder "sin" para ir directo a la cantidad. Con 1 topping ya puedes continuar._`;
         } else {
             // Indicamos que primero pedimos sabores; luego, si hay toppings, preguntaremos por ellos en un paso separado.
-            mensaje += `\n\n_Indica únicamente los sabores ahora. Después te preguntaré por los toppings (si aplica) y finalmente por la cantidad._`;
-        }        // Marcamos que ahora esperamos la selección de sabores
-        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'sabores';
-    } else if (numToppings > 0 && toppingsList.length > 0) {
+            mensaje += `\n\n_Indica únicamente los sabores ahora. Después te preguntaré por los toppings opcionales (si aplica) y finalmente por la cantidad._`;
+        }// Marcamos que ahora esperamos la selección de sabores
+        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'sabores';    } else if (numToppings > 0 && toppingsList.length > 0) {
         // Si no hay sabores pero sí toppings, pedimos directamente los toppings
         const progressIndicator = getProgressIndicator(producto, 'toppings');
         const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
-        mensaje += `\n\n${progressText}🍬 *Toppings (costo adicional).* Si no deseas ninguno, responde "sin" o indica la cantidad para continuar.\n`;
-        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');        mensaje += `\n\n_Indica los toppings ahora. Después te preguntaré por la cantidad._`;
+        mensaje += `\n\n${progressText}🍬 *Toppings disponibles (opcionales).* Puedes añadir uno o varios, responder "sin" para ninguno, o indicar la cantidad directamente.\n`;
+        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');        mensaje += `\n\n_Con 1 topping ya puedes continuar indicando la cantidad. Los toppings son completamente opcionales._`;
         if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'toppings';
     } else {
         // Si el producto no tiene opciones, preguntamos directamente la cantidad
