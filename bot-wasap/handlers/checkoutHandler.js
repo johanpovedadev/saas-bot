@@ -22,14 +22,13 @@ function getAdminJids() {
 function generateCartSummary(userSession) {
     if (!userSession || !userSession.order || !userSession.order.items) {
         return { text: 'Tu carrito está vacío.', total: 0 };
-    }
-
-    let total = 0;
+    }    let total = 0;
     const summaryLines = userSession.order.items.map(item => {
         const precioNum = Number(item.precio || 0) || 0;
-        const itemTotal = precioNum * (Number(item.cantidad || 1) || 1);
+        const cantidad = Number(item.cantidad) || 1;
+        const itemTotal = precioNum * cantidad;
         total += itemTotal;
-        let itemText = `*${item.cantidad}x* ${item.nombre} - *${money(itemTotal)}*`;
+        let itemText = `*${cantidad}x* ${item.nombre} - *${money(itemTotal)}*`;
 
         // Fallback: use item.sabores (array de objetos) o item.sabor (string) para mostrar sabores
         let saboresArr = [];

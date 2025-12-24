@@ -968,10 +968,39 @@ if (userSession.awaitingField === 'confirm_reserva') {
         await say(sock, jid, 'Por favor responde *si* o *no*.', ctx);
         return;
     }
-}
-
-        switch (userSession.phase) {
+}        switch (userSession.phase) {
             case PHASE.SELECCION_OPCION:
+                // Handle "hablar" command globally
+                if (t === 'hablar' || t === 'agente' || t === 'operador' || t === 'ayuda humana') {
+                    logger.info(`[${jid}] -> Usuario solicitó hablar con agente humano desde menú principal`);
+                    
+                    // Notify admins
+                    const admins = getAdminJids() || [];
+                    const chatLink = `https://wa.me/${jid.split('@')[0]}`;
+                    const adminMsg = `🔔 *Cliente solicita asistencia humana*\n\n` +
+                        `Cliente: ${jid.split('@')[0]}\n` +
+                        `Mensaje: "hablar"\n` +
+                        `Abrir chat: ${chatLink}\n\n` +
+                        `Por favor, responde al cliente lo antes posible.`;
+                    
+                    for (const admin of admins) {
+                        try {
+                            if (admin) await say(sock, admin, adminMsg, ctx);
+                        } catch (notifyError) {
+                            logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
+                        }
+                    }
+                    
+                    // Notify user
+                    await say(sock, jid, '👤 *Conectando con un agente humano...*\n\n' +
+                        'Un miembro de nuestro equipo te atenderá en breve. Por favor, espera un momento. ⏳\n\n' +
+                        'Mientras tanto, puedes:\n' +
+                        '• Escribir *menú* para ver opciones\n' +
+                        '• Continuar navegando el catálogo', ctx);
+                    
+                    return;
+                }
+                
                 const normalCommands = {
                     'menu': '1', 'ver menu': '1', 'productos': '1', 'carta': '1',
                     'direccion': '2', 'horario': '2', 'ubicacion': '2',
@@ -1142,9 +1171,40 @@ if (userSession.awaitingField === 'confirm_reserva') {
             await say(sock, jid, "🤖 MIA está desactivada. Escribe *mia activa* si quieres que la IA continúe.", ctx);
         }
                 }
-                break;
-            case PHASE.BROWSE_IMAGES:
+                break;            case PHASE.BROWSE_IMAGES:
     const postAddOptions = ['pagar', 'carrito', 'menu', '1', '2', '3'];
+    
+    // Handle "hablar" command to connect with human agent
+    if (t === 'hablar' || t === 'agente' || t === 'operador' || t === 'ayuda humana') {
+        logger.info(`[${jid}] -> Usuario solicitó hablar con agente humano`);
+        
+        // Notify admins
+        const admins = getAdminJids() || [];
+        const chatLink = `https://wa.me/${jid.split('@')[0]}`;
+        const adminMsg = `🔔 *Cliente solicita asistencia humana*\n\n` +
+            `Cliente: ${jid.split('@')[0]}\n` +
+            `Mensaje: "hablar"\n` +
+            `Abrir chat: ${chatLink}\n\n` +
+            `Por favor, responde al cliente lo antes posible.`;
+        
+        for (const admin of admins) {
+            try {
+                if (admin) await say(sock, admin, adminMsg, ctx);
+            } catch (notifyError) {
+                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
+            }
+        }
+        
+        // Notify user
+        await say(sock, jid, '👤 *Conectando con un agente humano...*\n\n' +
+            'Un miembro de nuestro equipo te atenderá en breve. Por favor, espera un momento. ⏳\n\n' +
+            'Mientras tanto, puedes:\n' +
+            '• Escribir *menú* para ver opciones\n' +
+            '• Escribir *carrito* para ver tu pedido actual', ctx);
+        
+        // Don't change phase, keep user in BROWSE_IMAGES so they can continue shopping if they want
+        return;
+    }
 
     // If user recently received the post-add options message, allow a comma-separated address+name+phone+payment shortcut
     if (userSession.awaitingField === 'post_add_options') {

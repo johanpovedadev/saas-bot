@@ -248,6 +248,13 @@ Bot: ❌ No encontré exactamente "volkan".
 - **Archivos:** `handlers/checkoutHandler.js` (líneas 187-198 y 274-286)
 - **Estado:** ✅ RESUELTO
 
+### **Bug #5: Cantidad Muestra "undefined" en Resumen de Pedido**
+- **Error:** Resumen mostraba "undefinedx Copa Brownie" en lugar de "1x Copa Brownie"
+- **Causa:** Usaba `item.cantidad` directamente sin validar si existía
+- **Solución:** Validación con fallback a 1: `const cantidad = Number(item.cantidad) || 1;`
+- **Archivos:** `handlers/checkoutHandler.js` (línea 30)
+- **Estado:** ✅ RESUELTO
+
 ---
 
 ## 📊 MÉTRICAS FINALES
