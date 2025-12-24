@@ -1,0 +1,55 @@
+```mermaid
+graph TB
+    subgraph "Cliente"
+        A[Usuario WhatsApp]
+    end
+    
+    subgraph "Bot Server - Node.js"
+        B[WebSocket Handler<br/>Baileys SDK]
+        C[Session Manager<br/>Estado Conversacional]
+        D[Message Router<br/>Event Dispatcher]
+        
+        subgraph "Handlers Especializados"
+            E[Product Handler]
+            F[Checkout Handler]
+            G[Parser Handler]
+            H[Admin Handler]
+        end
+        
+        I[Fuzzy Search Engine<br/>Levenshtein Algorithm]
+        J[Validation Layer]
+    end
+    
+    subgraph "Servicios Externos"
+        K[Google Sheets API<br/>Inventario + Pedidos]
+        L[Gemini AI<br/>NLP Parser]
+        M[WhatsApp Business API<br/>Baileys Protocol]
+    end
+    
+    A -->|Mensaje| M
+    M -->|WebSocket| B
+    B --> C
+    C --> D
+    D --> E
+    D --> F
+    D --> G
+    D --> H
+    
+    E --> I
+    E --> J
+    F --> J
+    G --> L
+    
+    E --> K
+    F --> K
+    H --> K
+    
+    B -->|Respuesta| M
+    M -->|Entrega| A
+    
+    style A fill:#25D366,stroke:#128C7E,stroke-width:3px,color:#fff
+    style B fill:#339933,stroke:#333,stroke-width:2px,color:#fff
+    style C fill:#4285F4,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#FF6B6B,stroke:#333,stroke-width:2px,color:#fff
+    style L fill:#4285F4,stroke:#333,stroke-width:2px,color:#fff
+```

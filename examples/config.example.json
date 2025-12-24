@@ -1,0 +1,52 @@
+{
+  "whatsapp": {
+    "sessionName": "mundo-helados-bot",
+    "qrTimeout": 60000,
+    "browser": ["Ubuntu", "Chrome", "20.0.04"],
+    "connectTimeoutMs": 60000,
+    "keepAliveIntervalMs": 30000
+  },
+  "googleSheets": {
+    "spreadsheetId": "YOUR_GOOGLE_SPREADSHEET_ID_HERE",
+    "ranges": {
+      "products": "Productos!A:F",
+      "sabores": "Sabores!A:D",
+      "toppings": "Toppings!A:D",
+      "orders": "Pedidos!A:Z"
+    }
+  },
+  "ai": {
+    "provider": "gemini",
+    "model": "gemini-pro",
+    "temperature": 0.3,
+    "maxTokens": 1000,
+    "apiKey": "YOUR_GEMINI_API_KEY_HERE"
+  },
+  "cache": {
+    "products": {
+      "ttl": 300000,
+      "maxSize": 1000
+    },
+    "saboresYToppings": {
+      "ttl": 600000
+    }
+  },
+  "session": {
+    "timeout": 1800000,
+    "gcInterval": 300000
+  },
+  "logging": {
+    "level": "info",
+    "prettyPrint": true,
+    "destination": "logs/app.log"
+  },
+  "admin": {
+    "phoneNumbers": ["+573001234567"]
+  },
+  "features": {
+    "enableFuzzySearch": true,
+    "enableAIParser": true,
+    "enableFrustrationDetection": true,
+    "enableProgressIndicators": true
+  }
+}

@@ -1,0 +1,41 @@
+```mermaid
+stateDiagram-v2
+    [*] --> INICIO
+    INICIO --> SELECCION_OPCION: Usuario saluda
+    
+    SELECCION_OPCION --> SELECCION_SABOR: Producto seleccionado
+    SELECCION_OPCION --> BROWSE_IMAGES: Ver catálogo
+    SELECCION_OPCION --> FAQ: Ayuda
+    
+    SELECCION_SABOR --> SELECCION_TOPPING: Sabores confirmados
+    SELECCION_SABOR --> CANTIDAD_ITEM: Multi-unidad
+    
+    CANTIDAD_ITEM --> MODO_CONFIGURACION: Cantidad confirmada
+    MODO_CONFIGURACION --> SELECCION_SABOR: Configurar unidades
+    
+    SELECCION_TOPPING --> SOLICITUD_DIRECCION: Toppings confirmados
+    SELECCION_TOPPING --> CANTIDAD_ITEM: Añadir más
+    
+    SOLICITUD_DIRECCION --> CONFIRMACION_PEDIDO: Dirección válida
+    CONFIRMACION_PEDIDO --> PROCESANDO_PAGO: Usuario confirma
+    
+    PROCESANDO_PAGO --> PEDIDO_FINALIZADO: Pago exitoso
+    PEDIDO_FINALIZADO --> [*]
+    
+    SELECCION_OPCION --> CANCELAR: "cancelar"
+    SELECCION_SABOR --> CANCELAR: "cancelar"
+    SELECCION_TOPPING --> CANCELAR: "cancelar"
+    CANCELAR --> INICIO
+    
+    note right of SELECCION_OPCION
+        Sistema de frustración:
+        errores > 3 → Ofrecer agente humano
+    end note
+    
+    note right of CONFIRMACION_PEDIDO
+        Logs a Google Sheets:
+        - ID Pedido
+        - Items + Precios
+        - Cliente + Dirección
+    end note
+```
