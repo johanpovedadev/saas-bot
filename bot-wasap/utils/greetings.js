@@ -5,7 +5,8 @@
  * la experiencia del usuario con respuestas naturales y cercanas.
  */
 
-const logger = require('../services/logger');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
 /**
  * Patrones de saludos organizados por categorías
