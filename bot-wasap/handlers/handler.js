@@ -1726,9 +1726,9 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
                 
                 // Mensaje especial si estamos en modo per_unit
                 if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
-                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o responder "sin" o "listo" para finalizar esta unidad.`, ctx);
+                    await say(sock, jid, `✅ Sabores: ${userSession.saboresSeleccionados.join(', ')}.\n\n${progressText}*Opcionales:*\n• Toppings: T1, T2 (tienen costo adicional)\n• Observaciones: "sin papaya"\n\nO escribe la *cantidad* directamente (ej: *1*) para continuar.`, ctx);
                 } else {
-                    await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}Ahora puedes añadir toppings opcionales (ej: T1, T2) o indicar la cantidad para continuar. ¿Qué prefieres?`, ctx);
+                    await say(sock, jid, `✅ Sabores: ${userSession.saboresSeleccionados.join(', ')}.\n\n${progressText}*Opcionales:*\n• Toppings: T1, T2 (tienen costo adicional)\n• Observaciones: "sin papaya"\n\nO escribe la *cantidad* directamente (ej: *2*) para continuar.`, ctx);
                 }
             } else {
                 userSession.awaitingField = 'quantity';
@@ -1740,18 +1740,46 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
                     await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                     return;
                 }
-                await say(sock, jid, `✅ Sabores seleccionados: ${userSession.saboresSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
+                await say(sock, jid, `✅ Sabores: ${userSession.saboresSeleccionados.join(', ')}.\n\n${progressText}*Opcional:* Observaciones (ej: "sin papaya")\n\nO escribe la *cantidad* directamente (ej: *2*) para continuar.`, ctx);
             }
         }
         return;
-    }
-
-    // TOPPINGS flow: toppings are optional. Accept many 'no' variants and numeric input to jump to quantity.
+    }    // TOPPINGS flow: toppings are optional. Accept many 'no' variants and numeric input to jump to quantity.
     if (numToppings > 0 && userSession.toppingsSeleccionados.length < numToppings) {
         // Only run toppings flow if we are explicitly expecting toppings (two-step flow), or if awaitingField is not set
         if (userSession.awaitingField && !['toppings', null].includes(userSession.awaitingField)) {
             // If we are not expecting toppings right now, forward to quantity handler or ignore
-        }        if (noKeywordsRegex.test(normalizedInput)) {
+        }        
+        // Si el usuario envía un número directamente, tratarlo como cantidad
+        if (looksLikeNumber) {
+            // Guardar input como cantidad y procesar
+            userSession.awaitingField = 'quantity';
+            await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
+            return;
+        }
+        
+        // Si el usuario envía texto que NO es un código de topping (T1, T2), tratarlo como observación
+        const looksLikeTopping = /^t\d+$/i.test(normalizedInput.trim());
+        const looksLikeObservacion = !looksLikeTopping && !noKeywordsRegex.test(normalizedInput) && normalizedInput.length > 2;
+        
+        if (looksLikeObservacion) {
+            // Guardar como observación y pasar a cantidad
+            userSession.observaciones = normalizedInput;
+            userSession.awaitingField = 'quantity';
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressText = progressIndicator ? `${progressIndicator} ` : '';
+            
+            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+                userSession.awaitingField = null;
+                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+                return;
+            }
+            
+            await say(sock, jid, `✅ Observación guardada: "${normalizedInput}"\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
+            return;
+        }
+        
+        if (noKeywordsRegex.test(normalizedInput)) {
             userSession.toppingsSeleccionados = [];
             userSession.awaitingField = 'quantity';
             const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
@@ -1762,20 +1790,7 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
                 await handleSelectQuantity(sock, jid, '1', userSession, ctx);
                 return;
             }
-            await say(sock, jid, `✅ Sin toppings seleccionados. ${progressText}¿Cuántas unidades deseas?`, ctx);
-            return;
-        }        // If user directly sent a number while still in toppings, treat it as quantity and proceed
-        if (looksLikeNumber) {
-            // IMPORTANTE: Si estamos en modo per_unit, NO pedir cantidad. Auto-agregar con cantidad=1
-            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
-                userSession.awaitingField = null;
-                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
-                return;
-            }
-            
-            userSession.awaitingField = 'quantity';
-            // Delegate to quantity handler to reuse validation and add-to-cart
-            await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
+            await say(sock, jid, `✅ Sin toppings ni observaciones.\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
             return;
         }        userSession.toppingsSeleccionados.push(input);
         
@@ -1792,11 +1807,11 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             return;
         }
         
-        // Mensaje adaptado: dejar claro que puede agregar cantidad directamente
+        // Mensaje adaptado: dejar claro que puede agregar cantidad, más toppings u observaciones
         if (userSession.toppingsSeleccionados.length === 1) {
-            await say(sock, jid, `✅ Topping "${input}" añadido. ${progressText}¿Cuántas unidades deseas? (o agrega más toppings si quieres, ej: T2)`, ctx);
+            await say(sock, jid, `✅ Topping: ${input}\n\n${progressText}Escribe:\n• *Cantidad* (ej: *2*)\n• Más toppings (ej: T2)\n• Observación (ej: "sin papaya")`, ctx);
         } else {
-            await say(sock, jid, `✅ Toppings seleccionados: ${userSession.toppingsSeleccionados.join(', ')}. ${progressText}¿Cuántas unidades deseas?`, ctx);
+            await say(sock, jid, `✅ Toppings: ${userSession.toppingsSeleccionados.join(', ')}\n\n${progressText}Escribe:\n• *Cantidad* (ej: *2*)\n• Observación (ej: "sin papaya")`, ctx);
         }
         return;
     }
@@ -1882,9 +1897,7 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
                 if (mapped) mappedToppings.push(mapped);
             }
         }
-    }
-
-    // If user requested multiple units AND there are flavors/toppings selected, ask if they apply to all units
+    }    // If user requested multiple units AND there are flavors/toppings selected, ask if they apply to all units
     if (quantity > 1 && (mappedSabores.length > 0 || mappedToppings.length > 0)) {
         // Save candidate and ask confirmation
         userSession.pendingQuantityCandidate = {
@@ -1895,18 +1908,25 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
             observaciones: userSession.observaciones || ''
         };
         userSession.awaitingField = 'same_units_confirm';
-        await say(sock, jid, `Has pedido ${quantity} unidades. ¿Deseas que todas tengan los *mismos* sabores y toppings o *diferentes* para cada unidad? Responde *mismo* o *diferente*.`, ctx);
+        await say(sock, jid, `Has pedido ${quantity} unidades. ¿Deseas que todas tengan los *mismos* sabores/toppings/observaciones o *diferentes* para cada unidad? Responde *mismo* o *diferente*.`, ctx);
         return;
-    }    // Llamar a cartService.addToCart con sabores/toppings mapeados
+    }
+
+    // Agregar al carrito con observaciones si las hay
+    const observacionesFinal = userSession.observaciones || '';
+    
+    // Llamar a cartService.addToCart con sabores/toppings mapeados y observaciones
     cartService.addToCart(ctx, jid, {
         codigo: currentProduct.CodigoProducto || currentProduct.codigo || currentProduct.id,
         nombre: currentProduct.NombreProducto,
         precio: currentProduct.Precio_Venta || 0,
         sabores: mappedSabores, // array of objects or strings
         toppings: mappedToppings, // array of objects or strings
-        observaciones: ''
+        observaciones: observacionesFinal
     }, quantity);
-    await say(sock, jid, `✅ ${quantity}x ${currentProduct.NombreProducto} añadido(s) al carrito.`, ctx);
+    
+    const obsText = observacionesFinal ? ` (${observacionesFinal})` : '';
+    await say(sock, jid, `✅ ${quantity}x ${currentProduct.NombreProducto}${obsText} añadido(s) al carrito.`, ctx);
 
     // Si estamos en modo 'per_unit' y hay un pendingQuantity, decrementar y continuar el flujo por unidad
     if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
@@ -1932,12 +1952,11 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
         } catch (e) {
             logger.error(`Error en flujo per_unit tras addToCart: ${e.message}`);
         }
-    }
-
-    userSession.phase = PHASE.BROWSE_IMAGES;
+    }    userSession.phase = PHASE.BROWSE_IMAGES;
     userSession.currentProduct = null;
     userSession.saboresSeleccionados = [];
     userSession.toppingsSeleccionados = [];
+    userSession.observaciones = ''; // Limpiar observaciones
     userSession.awaitingField = null;
     userSession.errorCount = 0;
     await sendAfterAddOptions(sock, jid, ctx);
