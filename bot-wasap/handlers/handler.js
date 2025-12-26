@@ -1102,9 +1102,15 @@ if (userSession.awaitingField === 'confirm_reserva') {
                 }
             } catch (parserErr) {
                 logger.error(`Parser error: ${parserErr.message}`);
-            }
-
-            const geminiKey = SECRETS.GEMINI_API_KEY || process.env.GEMINI_API_KEY; // prefer centralized loader
+            }            const geminiKey = SECRETS.GEMINI_API_KEY || process.env.GEMINI_API_KEY; // prefer centralized loader
+            
+            // Validate that the key is not a placeholder or invalid
+            const isValidGeminiKey = geminiKey && 
+                                    geminiKey.trim() !== '' && 
+                                    !geminiKey.includes('TU_') && 
+                                    !geminiKey.includes('AQUI') &&
+                                    geminiKey.length > 20; // Real API keys are longer
+            
             // If MIA was disabled for this session due to repeated failures, skip calling Gemini for this user
             if (userSession && (userSession.miaDisabled || userSession.miaActivo === false)) {
                 logger.info(`[${jid}] -> MIA disabled for this session. Skipping IA for this message.`);
@@ -1122,46 +1128,47 @@ if (userSession.awaitingField === 'confirm_reserva') {
                 } catch (e) { logger.error(`Error notifying user about session MIA disable: ${e.message}`); }
                 return;
             }            // If we don't have Gemini key, inform user only when the message looks like an order
-            if (!geminiKey) {
-                logger.info(`[${jid}] -> Gemini API key missing. Skipping IA for this message.`);
+            if (!isValidGeminiKey) {
+                logger.info(`[${jid}] -> Gemini API key missing or invalid. Skipping IA for this message.`);
 
-                // Heuristic: treat as order-like if contains numbers/units or product keywords
-                const orderLikeRegex = /\b(\d+\s*(caja|cajas|unidad|unidades|docena|kg|kilo|litro|l)|caja de|helad|vainilla|copa|volcán|volcan|encargo|pedido)\b/i;
-                const looksLikeOrder = orderLikeRegex.test(text);
-
-                // Check if this is a greeting from a new user (no previous interactions)
-                const isGreeting = /^(hola|hi|hello|buenas|hey|buenos|ola)$/i.test(text.trim());
-                const isNewUser = (userSession.errorCount || 0) === 0;
+                // Get current error count BEFORE incrementing
+                const currentErrorCount = userSession.errorCount || 0;
 
                 // Increment general error counter so admins can be alerted after repeated unhandled messages
                 try {
-                    userSession.errorCount = (userSession.errorCount || 0) + 1;
+                    userSession.errorCount = currentErrorCount + 1;
                 } catch (e) { userSession.errorCount = 1; }
 
-                // If it's a greeting from a new user, send the menu automatically
-                if (isGreeting && isNewUser) {
-                    logger.info(`[${jid}] -> Usuario nuevo saludando sin Gemini disponible. Enviando menú automáticamente.`);
-                    await say(sock, jid, '¡Hola! 👋 Estos son nuestros productos:\n\n*1.* Ver menú de productos 📋\n*2.* Dirección y horarios 📍\n*3.* Encargos y eventos 🎉\n\nEscribe el número de la opción que desees o escribe tu pedido directamente (ej: "3 cajas vainilla").', ctx);
+                // PRIMER MENSAJE (errorCount era 0, ahora es 1)
+                if (currentErrorCount === 0) {
+                    logger.info(`[${jid}] -> Primer mensaje del usuario sin Gemini. Enviando menú de bienvenida.`);
+                    await say(sock, jid, '¡Hola! 👋 Bienvenido a *Mundo Helados* 🍦\n\nEstos son nuestros productos:\n\n*1.* Ver menú de productos 📋\n*2.* Dirección y horarios 📍\n*3.* Encargos y eventos 🎉\n\nEscribe el número de la opción que desees o escribe tu pedido directamente (ej: "3 cajas vainilla").', ctx);
                     return;
                 }
 
-                // Notify admins if repeated failures from this user and not already notified
-                if ((userSession.errorCount || 0) >= 2 && !userSession.adminNotified) {
+                // SEGUNDO MENSAJE (errorCount era 1, ahora es 2)
+                if (currentErrorCount === 1) {
+                    logger.info(`[${jid}] -> Segundo mensaje del usuario sin Gemini. Enviando mensaje de ayuda.`);
+                    await say(sock, jid, 'Si quieres hacer un pedido y recuerdas una palabra del nombre escribe cantidad y solo 1 palabra ejemplo: "1 buho" o escribe *menú* para ver opciones.', ctx);
+                    return;
+                }
+
+                // TERCER MENSAJE EN ADELANTE (errorCount >= 2) → Notificar al administrador
+                if (currentErrorCount >= 2 && !userSession.adminNotified) {
                     userSession.adminNotified = true;
+                    userSession.miaActivo = false; // Desactivar bot para este usuario
                     const admins = getAdminJids() || [];
                     const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-                    const notifyText = `🔔 Atención: MIA no disponible para ${jid.split('@')[0]}. El cliente ha enviado varios mensajes que no se pudieron procesar. Último mensaje: "${text}"\nAbrir chat: ${chatLink}`;
+                    const notifyText = `🔔 *Atención: Cliente necesita asistencia*\n\nCliente: ${jid.split('@')[0]}\nÚltimo mensaje: "${text}"\nAbrir chat: ${chatLink}\n\nEl bot ha sido desactivado para este chat. Usa "mia activa" para reactivarlo.`;
+                    
                     for (const adminJid of admins) {
                         try { if (adminJid) await say(sock, adminJid, notifyText, ctx); } catch (notifyErr) { logger.error(`Error notificando admin ${adminJid}: ${notifyErr.message}`); }
                     }
-                    try { await say(sock, jid, 'Lo siento, el servicio de IA no está disponible y necesitamos asistencia humana. Ya notifiqué a un administrador.', ctx); } catch (e) { logger.error(`Error enviando aviso al usuario ${jid}: ${e.message}`); }
-                } else {
-                    if (looksLikeOrder) {
-                        await say(sock, jid, 'Lo siento, el servicio de IA no está disponible temporalmente. Intenté un parser determinista; si no te añadí el pedido, por favor escribe más detalles (ej: "3 cajas vainilla sin toppings").', ctx);
-                    } else {
-                        // For generic messages, give a short hint (non-spammy)
-                        // Do not increment IA error counters here beyond the increment above.
-                        await say(sock, jid, 'Si quieres hacer un pedido y recuerdas una palabra del nombre escribe cantidad y solo 1 palabra ejemplo: "1 buho" o escribe *menú* para ver opciones.', ctx);
+                    
+                    try { 
+                        await say(sock, jid, 'Lo siento, parece que necesitas asistencia personalizada. Ya notifiqué a un administrador que te contactará pronto. 🙏', ctx); 
+                    } catch (e) { 
+                        logger.error(`Error enviando aviso al usuario ${jid}: ${e.message}`); 
                     }
                 }
                 return;

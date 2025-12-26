@@ -345,12 +345,18 @@ async function askGemini(ctx, question) {
     } catch (e) {
         // proceed normally if check fails
         console.warn('askGemini: error checking geminiAvailable flag:', e && e.message);
-    }
-
-    // Resolve API key from centralized secrets, fallback to config.json
+    }    // Resolve API key from centralized secrets, fallback to config.json
     const key = SECRETS.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY;
-    if (!key) {
-        console.error('askGemini: Gemini API key missing (check .env or config). Skipping Gemini.');
+    
+    // Validate that the key is not a placeholder or invalid
+    const isValidKey = key && 
+                      key.trim() !== '' && 
+                      !key.includes('TU_') && 
+                      !key.includes('AQUI') &&
+                      key.length > 20; // Real API keys are longer
+    
+    if (!isValidKey) {
+        console.warn('askGemini: Gemini API key missing or invalid (check .env). Skipping Gemini.');
         return null; // return null so handler can continue deterministic flows
     }
 
