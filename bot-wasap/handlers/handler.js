@@ -1593,10 +1593,9 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
 
     // Normalize input once
     const rawInput = (input || '').toString();
-    const normalizedInput = rawInput.normalize('NFD').replace(/\u0300-\u036f/g, '').toLowerCase().trim();
-
-    // Helper: detect explicit "no quiero / sin" intents (many variants)
-    const noKeywordsRegex = /^(sin(?:\b.*)?|no(?:\b.*)?|ningun[oa]|ninguno|ninguna|nada|0|ningunos?)\b|\bsin\s+(toppings|topping|nada)\b|\bno\s+(toppings|topping)\b/i;
+    const normalizedInput = rawInput.normalize('NFD').replace(/\u0300-\u036f/g, '').toLowerCase().trim();    // Helper: detect explicit "no quiero / sin" intents (SOLO cuando es "sin" o "no" sin nada más)
+    // NO debe coincidir con "sin papaya", "sin azúcar", etc.
+    const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
     // Determine if input looks like a details selection (S1, T2) or a numeric quantity
     const looksLikeDetail = /^\s*(s\d+|t\d+|sin)\b/i.test(rawInput.trim());
@@ -1757,34 +1756,37 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
             return;
         }
+          // LÓGICA MEJORADA: parsear el mensaje completo para extraer toppings Y observaciones
+        const inputTokens = normalizedInput.split(/\s+/);
+        const toppingCodes = [];
+        const observacionesParts = [];
         
-        // Si el usuario envía texto que NO es un código de topping (T1, T2), tratarlo como observación
-        const looksLikeTopping = /^t\d+$/i.test(normalizedInput.trim());
-        const looksLikeObservacion = !looksLikeTopping && !noKeywordsRegex.test(normalizedInput) && normalizedInput.length > 2;
+        // Si el mensaje COMPLETO es solo "sin", "no", "nada" -> interpretarlo como "sin nada"
+        const esSoloSinNada = noKeywordsRegex.test(normalizedInput);
         
-        if (looksLikeObservacion) {
-            // Guardar como observación y pasar a cantidad
-            userSession.observaciones = normalizedInput;
-            userSession.awaitingField = 'quantity';
-            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-            const progressText = progressIndicator ? `${progressIndicator} ` : '';
-            
-            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
-                userSession.awaitingField = null;
-                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
-                return;
+        if (!esSoloSinNada) {
+            // Parsear token por token
+            for (const token of inputTokens) {
+                const trimmedToken = token.trim();
+                // Si es código de topping (T1, T2, etc.)
+                if (/^t\d+$/i.test(trimmedToken)) {
+                    toppingCodes.push(trimmedToken.toUpperCase());
+                } 
+                // Si NO es número, guardarlo como parte de observación (incluyendo "sin")
+                else if (!/^\d+$/.test(trimmedToken)) {
+                    observacionesParts.push(token); // Mantener formato original (no normalizado)
+                }
             }
-            
-            await say(sock, jid, `✅ Observación guardada: "${normalizedInput}"\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
-            return;
         }
         
-        if (noKeywordsRegex.test(normalizedInput)) {
+        // Caso 1: Usuario escribe SOLO "sin", "no", "nada" (sin toppings ni observaciones)
+        if (esSoloSinNada) {
             userSession.toppingsSeleccionados = [];
+            userSession.observaciones = userSession.observaciones || '';
             userSession.awaitingField = 'quantity';
             const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
             const progressText = progressIndicator ? `${progressIndicator} ` : '';
-            // Auto-add in per-unit mode
+            
             if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
                 userSession.awaitingField = null;
                 await handleSelectQuantity(sock, jid, '1', userSession, ctx);
@@ -1792,27 +1794,71 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
             }
             await say(sock, jid, `✅ Sin toppings ni observaciones.\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
             return;
-        }        userSession.toppingsSeleccionados.push(input);
+        }
         
-        // IMPORTANTE: Los toppings son opcionales. Con 1 topping ya se puede avanzar.
-        // Siempre pasar a pedir cantidad después de agregar un topping
-        userSession.awaitingField = 'quantity';
-        const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-        const progressText = progressIndicator ? `${progressIndicator} ` : '';
-        
-        // Auto-add in per-unit mode
-        if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
-            userSession.awaitingField = null;
-            await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+        // Caso 2: Se detectaron observaciones (ej: "sin papaya", "T1 sin papaya", "sin azúcar")
+        if (observacionesParts.length > 0) {
+            const nuevaObservacion = observacionesParts.join(' ');
+            
+            // Concatenar observaciones si ya existen
+            if (userSession.observaciones && userSession.observaciones.trim() !== '') {
+                userSession.observaciones += `, ${nuevaObservacion}`;
+            } else {
+                userSession.observaciones = nuevaObservacion;
+            }
+            
+            // Si también hay toppings en el mensaje, agregarlos
+            if (toppingCodes.length > 0) {
+                for (const code of toppingCodes) {
+                    if (!userSession.toppingsSeleccionados.includes(code)) {
+                        userSession.toppingsSeleccionados.push(code);
+                    }
+                }
+            }
+            
+            // Pasar a pedir cantidad
+            userSession.awaitingField = 'quantity';
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressText = progressIndicator ? `${progressIndicator} ` : '';
+            
+            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+                userSession.awaitingField = null;
+                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+                return;
+            }
+            
+            const resumenToppings = userSession.toppingsSeleccionados.length > 0 
+                ? `Toppings: ${userSession.toppingsSeleccionados.join(', ')}\n` 
+                : '';
+            await say(sock, jid, `✅ ${resumenToppings}Observación: "${userSession.observaciones}"\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
             return;
         }
         
-        // Mensaje adaptado: dejar claro que puede agregar cantidad, más toppings u observaciones
-        if (userSession.toppingsSeleccionados.length === 1) {
-            await say(sock, jid, `✅ Topping: ${input}\n\n${progressText}Escribe:\n• *Cantidad* (ej: *2*)\n• Más toppings (ej: T2)\n• Observación (ej: "sin papaya")`, ctx);
-        } else {
-            await say(sock, jid, `✅ Toppings: ${userSession.toppingsSeleccionados.join(', ')}\n\n${progressText}Escribe:\n• *Cantidad* (ej: *2*)\n• Observación (ej: "sin papaya")`, ctx);
+        // Caso 3: Solo hay códigos de topping (T1, T2, etc.)
+        if (toppingCodes.length > 0) {
+            for (const code of toppingCodes) {
+                if (!userSession.toppingsSeleccionados.includes(code)) {
+                    userSession.toppingsSeleccionados.push(code);
+                }
+            }
+            
+            userSession.awaitingField = 'quantity';
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressText = progressIndicator ? `${progressIndicator} ` : '';
+            
+            if (userSession.pendingQuantity && userSession.pendingQuantity.mode === 'per_unit') {
+                userSession.awaitingField = null;
+                await handleSelectQuantity(sock, jid, '1', userSession, ctx);
+                return;
+            }
+            
+            await say(sock, jid, `✅ Toppings: ${userSession.toppingsSeleccionados.join(', ')}\n\n${progressText}Escribe:\n• *Cantidad* (ej: *2*)\n• Más toppings (ej: T3)\n• Observación (ej: "sin papaya")`, ctx);
+            return;
         }
+        
+        // Caso 4: Input no reconocido (no es topping, ni observación válida, ni "sin/no")
+        userSession.errorCount++;
+        await say(sock, jid, '❌ No entendí tu mensaje. Puedes escribir:\n• Código de topping (T1, T2)\n• Observación ("sin papaya")\n• Cantidad (número)\n• "sin" si no deseas nada', ctx);
         return;
     }
 
