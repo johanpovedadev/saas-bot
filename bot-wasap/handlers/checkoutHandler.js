@@ -334,19 +334,17 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         const codes = userSession.order.items.map(i => i.codigo || '').join('; ');
         const fallbackProductsText = productsText && productsText.trim() ? productsText : (userSession.order.detalles_items ? userSession.order.detalles_items.map(d => d.nombre).join('; ') : '');
         const fallbackCodes = codes && codes.trim() ? codes : (userSession.order.detalles_items ? userSession.order.detalles_items.map(d => d.codigo || '').join('; ') : '');
-        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
-
-        const payload = {
+        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        const payload = {
             fecha: new Date().toISOString(),
             nombre: userSession.order.name || '',
-            productos: fallbackProductsText,
-            codigos: fallbackCodes,
+            producto: fallbackProductsText,  // CORREGIDO: singular para Google Sheets
+            codigo: fallbackCodes,            // CORREGIDO: singular para Google Sheets
             telefono: userSession.order.telefono || '',
             direccion: userSession.order.address || '',
-            total: orderTotal,
+            monto: orderTotal,                // CORREGIDO: 'monto' en lugar de 'total'
             pago: userSession.order.paymentMethod || '',
             estado: userSession.order.status || 'Por despachar',
-            origen: 'WhatsApp',
+            origen: 'WhatsApp Bot',
             cliente_jid: jid,
             detalles_items: userSession.order.items.map(i => ({
                 codigo: i.codigo || null,
