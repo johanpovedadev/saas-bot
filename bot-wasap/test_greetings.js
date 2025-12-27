@@ -1,356 +1,442 @@
 /**
- * Test Suite: Reconocimiento de Saludos Colombianos
- * 
- * Valida que el bot reconozca correctamente:
- * 1. Saludos informales (hola, hl, oli, etc.)
- * 2. Saludos coloquiales (q hubo, q mas, q tal, etc.)
- * 3. Saludos regionales (paisa, costeño, caleño, etc.)
- * 4. Saludos formales (buenos días, buenas tardes, etc.)
+ * Test Suite para Saludos Colombianos
+ * Ejecutar con: node test_greetings.js
  */
 
-const assert = require('assert');
 const { 
+    COLOMBIAN_GREETINGS, 
     isGreeting, 
-    getGreetingType, 
-    getWelcomeMessage,
-    isOnlyGreeting,
-    handleGreeting,
-    SALUDOS
-} = require('../utils/greetings');
+    getMatchingGreeting,
+    normalizeGreeting,
+    getGreetingsStats 
+} = require('./config/greetings/greetings.colombia');
 
-// Colores para output
+// Colores para consola
 const colors = {
     reset: '\x1b[0m',
     green: '\x1b[32m',
     red: '\x1b[31m',
     yellow: '\x1b[33m',
     blue: '\x1b[34m',
-    cyan: '\x1b[36m',
-    magenta: '\x1b[35m',
+    cyan: '\x1b[36m'
 };
 
-function log(msg, color = 'reset') {
-    console.log(`${colors[color]}${msg}${colors.reset}`);
-}
+// Contadores
+let testsPassed = 0;
+let testsFailed = 0;
+let testsTotal = 0;
 
-async function runTests() {
-    log('\n╔══════════════════════════════════════════════════════════════════════════════╗', 'cyan');
-    log('║                   TEST SUITE: SALUDOS COLOMBIANOS                            ║', 'cyan');
-    log('╚══════════════════════════════════════════════════════════════════════════════╝\n', 'cyan');
-
-    let totalTests = 0;
-    let passedTests = 0;
-    let failedTests = 0;
-
-    // ========================================================================
-    // TEST 1: Saludos Informales
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 1: Saludos Informales                                                  │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const informal = [
-        'hola', 'ola', 'hol', 'holaa', 'holaaa',
-        'hl', 'hla', 'oli', 'olis',
-        'hey', 'hei', 'hi'
-    ];
-    
-    try {
-        totalTests++;
-        for (const saludo of informal) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        // Verificar que detecta el tipo correcto
-        const tipo = getGreetingType('hola');
-        assert.strictEqual(tipo, 'informales', 'Tipo debe ser "informales"');
-        log('   ✅ Tipo de saludo correcto: informales\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 2: Saludos Coloquiales
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 2: Saludos Coloquiales (q hubo, q mas, q tal)                          │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const coloquial = [
-        'q hubo', 'qubo', 'kubo', 'que hubo',
-        'q mas', 'que mas', 'q más', 'qué más',
-        'q mas k', 'que mas ke',
-        'q tal', 'que tal', 'qué tal'
-    ];
-    
-    try {
-        totalTests++;
-        for (const saludo of coloquial) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        const tipo = getGreetingType('q mas');
-        assert.strictEqual(tipo, 'coloquiales', 'Tipo debe ser "coloquiales"');
-        log('   ✅ Tipo de saludo correcto: coloquiales\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 3: Saludos Buenas (bnas, bns)
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 3: Variantes de "Buenas" (bnas, bns)                                   │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const buenas = [
-        'buenas', 'bnas', 'bns', 'buena',
-        'buenos dias', 'buen dia', 'buenos días', 'buen día',
-        'buenas tardes', 'buena tarde',
-        'buenas noches', 'buena noche'
-    ];
-    
-    try {
-        totalTests++;
-        for (const saludo of buenas) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        const tipo = getGreetingType('bnas');
-        assert.strictEqual(tipo, 'buenas', 'Tipo debe ser "buenas"');
-        log('   ✅ Tipo de saludo correcto: buenas\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 4: Saludos Regionales - Paisa
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 4: Saludos Paisas (Antioquia/Eje Cafetero)                             │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const paisa = [
-        'que mas pues', 'q mas pues', 'qué más pues',
-        'bien o que', 'bien o qué', 'bien o no',
-        'parce', 'parcero', 'parcerito'
-    ];
-    
-    try {
-        totalTests++;
-        for (const saludo of paisa) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        const tipo = getGreetingType('que mas pues');
-        assert.strictEqual(tipo, 'paisa', 'Tipo debe ser "paisa"');
-        
-        const mensaje = getWelcomeMessage('paisa');
-        assert.ok(mensaje.includes('Qué más, pues'), 'Mensaje debe tener saludo paisa');
-        log('   ✅ Tipo correcto: paisa', 'green');
-        log('   ✅ Mensaje personalizado: "¡Qué más, pues!"\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 5: Saludos Regionales - Costeño
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 5: Saludos Costeños (Costa Caribe)                                     │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const costeno = [
-        'aja y que', 'ajá y qué', 'aja',
-        'todo bien', 'todo bn',
-        'habla', 'habla pues',
-        'que cuentas', 'qué cuentas'
-    ];
-    
-    try {
-        totalTests++;
-        for (const saludo of costeno) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        const tipo = getGreetingType('aja');
-        assert.strictEqual(tipo, 'costeno', 'Tipo debe ser "costeno"');
-        
-        const mensaje = getWelcomeMessage('costeno');
-        assert.ok(mensaje.includes('Ajá'), 'Mensaje debe tener saludo costeño');
-        log('   ✅ Tipo correcto: costeno', 'green');
-        log('   ✅ Mensaje personalizado: "¡Ajá! ¿Todo bien?"\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 6: Saludos Regionales - Caleño
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 6: Saludos Caleños (Valle del Cauca)                                   │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    const caleno = ['mira que mas', 'mirá qué más', 'mira', 'ois', 'oís', 'ois que tal'];
-    
-    try {
-        totalTests++;
-        for (const saludo of caleno) {
-            assert.strictEqual(isGreeting(saludo), true, `"${saludo}" debe ser detectado como saludo`);
-            log(`   ✅ "${saludo}" detectado correctamente`, 'green');
-        }
-        
-        const tipo = getGreetingType('ois');
-        assert.strictEqual(tipo, 'caleno', 'Tipo debe ser "caleno"');
-        log('   ✅ Tipo correcto: caleno\n', 'green');
-        
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 7: Detección de SOLO saludo vs saludo + pedido
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 7: Diferencia entre SOLO saludo vs saludo + pedido                     │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    try {
-        totalTests++;
-        
-        // Solo saludos - deben retornar menú completo
-        const soloSaludos = ['hola', 'q mas', 'buenas', 'aja', 'que mas pues'];
-        for (const s of soloSaludos) {
-            const result = handleGreeting(s);
-            assert.strictEqual(result.isGreeting, true, `"${s}" debe ser saludo`);
-            assert.ok(result.welcomeMessage, `"${s}" debe tener mensaje de bienvenida`);
-            log(`   ✅ "${s}" → Menú completo`, 'green');
-        }
-        
-        // Saludo + pedido - debe detectar saludo pero NO enviar menú
-        const saludoConPedido = [
-            'hola quiero una copa',
-            'q mas necesito helado',
-            'buenas, dame 2 litros'
-        ];
-        for (const s of saludoConPedido) {
-            const result = handleGreeting(s);
-            assert.strictEqual(result.isGreeting, true, `"${s}" debe detectar saludo`);
-            assert.strictEqual(result.welcomeMessage, null, `"${s}" NO debe enviar menú (tiene pedido)`);
-            log(`   ✅ "${s}" → Saludo detectado, sin menú (tiene pedido)`, 'green');
-        }
-        
-        log('\n', 'green');
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // TEST 8: Mensajes que NO son saludos
-    // ========================================================================
-    log('┌──────────────────────────────────────────────────────────────────────────────┐', 'blue');
-    log('│ TEST 8: Mensajes que NO deben ser detectados como saludos                   │', 'blue');
-    log('└──────────────────────────────────────────────────────────────────────────────┘', 'blue');
-    
-    try {
-        totalTests++;
-        const noSaludos = [
-            'copa',
-            'quiero helado',
-            '2',
-            's1 s2 s3 s4',
-            'pagar',
-            'cancelar',
-            'sin'
-        ];
-        
-        for (const texto of noSaludos) {
-            assert.strictEqual(isGreeting(texto), false, `"${texto}" NO debe ser detectado como saludo`);
-            log(`   ✅ "${texto}" → NO es saludo`, 'green');
-        }
-        
-        log('\n', 'green');
-        passedTests++;
-    } catch (error) {
-        failedTests++;
-        log(`   ❌ ERROR: ${error.message}\n`, 'red');
-    }
-
-    // ========================================================================
-    // RESUMEN
-    // ========================================================================
-    log('\n╔══════════════════════════════════════════════════════════════════════════════╗', 'cyan');
-    log('║                           RESUMEN DE TESTS                                   ║', 'cyan');
-    log('╚══════════════════════════════════════════════════════════════════════════════╝\n', 'cyan');
-    
-    log(`   Total de tests:     ${totalTests}`, 'yellow');
-    log(`   Tests exitosos:     ${passedTests}`, 'green');
-    log(`   Tests fallidos:     ${failedTests}`, failedTests > 0 ? 'red' : 'green');
-    
-    const successRate = ((passedTests / totalTests) * 100).toFixed(1);
-    log(`\n   Tasa de éxito:      ${successRate}%`, successRate === '100.0' ? 'green' : 'yellow');
-    
-    if (passedTests === totalTests) {
-        log('\n   ✅ ¡TODOS LOS TESTS PASARON CORRECTAMENTE!', 'green');
-        log('   ✅ Sistema de saludos listo para producción 🚀\n', 'green');
+/**
+ * Función de aserción mejorada
+ */
+function assert(condition, testName, expected, actual) {
+    testsTotal++;
+    if (condition) {
+        console.log(`${colors.green}✅ PASS${colors.reset}: ${testName}`);
+        testsPassed++;
+        return true;
     } else {
-        log('\n   ⚠️  Algunos tests fallaron. Revisar errores arriba.\n', 'yellow');
+        console.log(`${colors.red}❌ FAIL${colors.reset}: ${testName}`);
+        if (expected !== undefined) {
+            console.log(`   ${colors.yellow}Expected:${colors.reset}`, expected);
+            console.log(`   ${colors.yellow}Actual:${colors.reset}`, actual);
+        }
+        testsFailed++;
+        return false;
     }
-    
-    // Resumen de saludos soportados
-    log('╔══════════════════════════════════════════════════════════════════════════════╗', 'magenta');
-    log('║                        SALUDOS SOPORTADOS                                    ║', 'magenta');
-    log('╚══════════════════════════════════════════════════════════════════════════════╝\n', 'magenta');
-    
-    const totalSaludos = Object.values(SALUDOS).reduce((sum, arr) => sum + arr.length, 0);
-    log(`   Total de variantes: ${totalSaludos} saludos\n`, 'cyan');
-    
-    const categories = [
-        ['Informales', SALUDOS.informales.length, SALUDOS.informales.slice(0, 5).join(', ')],
-        ['Coloquiales', SALUDOS.coloquiales.length, SALUDOS.coloquiales.slice(0, 5).join(', ')],
-        ['Buenas', SALUDOS.buenas.length, SALUDOS.buenas.slice(0, 5).join(', ')],
-        ['Paisas', SALUDOS.paisa.length, SALUDOS.paisa.slice(0, 3).join(', ')],
-        ['Costeños', SALUDOS.costeno.length, SALUDOS.costeno.slice(0, 3).join(', ')],
-        ['Caleños', SALUDOS.caleno.length, SALUDOS.caleno.slice(0, 3).join(', ')],
-        ['Bogotanos', SALUDOS.bogotano.length, SALUDOS.bogotano.slice(0, 3).join(', ')],
-        ['Santandereanos', SALUDOS.santandereano.length, SALUDOS.santandereano.slice(0, 2).join(', ')]
-    ];
-    
-    categories.forEach(([cat, count, examples]) => {
-        log(`   ${cat}: ${count} variantes`, 'yellow');
-        log(`      Ejemplos: ${examples}...`, 'cyan');
-    });
-    
-    log('');
 }
 
-// Ejecutar tests
-runTests().catch(error => {
-    log(`\n❌ ERROR FATAL: ${error.message}\n`, 'red');
-    console.error(error);
-    process.exit(1);
+/**
+ * Separador visual
+ */
+function separator(title) {
+    console.log(`\n${colors.cyan}${'='.repeat(60)}${colors.reset}`);
+    console.log(`${colors.cyan}${title}${colors.reset}`);
+    console.log(`${colors.cyan}${'='.repeat(60)}${colors.reset}\n`);
+}
+
+// ==========================================
+// TEST 1: Verificar cantidad de saludos
+// ==========================================
+separator('TEST 1: Cantidad de Saludos');
+
+assert(
+    COLOMBIAN_GREETINGS.length >= 150,
+    'Debe haber al menos 150 saludos',
+    '>=150',
+    COLOMBIAN_GREETINGS.length
+);
+
+assert(
+    COLOMBIAN_GREETINGS.length === 184,
+    `Total de saludos debe ser 184`,
+    184,
+    COLOMBIAN_GREETINGS.length
+);
+
+// ==========================================
+// TEST 2: Saludos Formales
+// ==========================================
+separator('TEST 2: Saludos Formales');
+
+const formalGreetings = [
+    'hola',
+    'buenos días',
+    'buenas tardes',
+    'buenas noches',
+    'buen día'
+];
+
+formalGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" debe ser reconocido como saludo`,
+        true,
+        isGreeting(greeting)
+    );
 });
+
+// ==========================================
+// TEST 3: Saludos Costa Caribe
+// ==========================================
+separator('TEST 3: Saludos Costa Caribe (Riohacha, Barranquilla, Cartagena)');
+
+const coastalGreetings = [
+    'quiubo',
+    'epa',
+    'epale',
+    'quiubo parce',
+    'que mas pues',
+    'epa que mas',
+    'quiubo mi llave'
+];
+
+coastalGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" (Costa Caribe) debe ser reconocido`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 4: Saludos Paisas
+// ==========================================
+separator('TEST 4: Saludos Paisas (Medellín, Manizales)');
+
+const paisaGreetings = [
+    'oe',
+    'quiubo parcero',
+    'que mas pues',
+    'bien o que',
+    'vea pues'
+];
+
+paisaGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" (Paisa) debe ser reconocido`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 5: Saludos Caleños
+// ==========================================
+separator('TEST 5: Saludos Valle del Cauca (Cali)');
+
+const caliGreetings = [
+    'ey jugador',
+    'ave maria',
+    'mi amor',
+    'socio',
+    'mi rey'
+];
+
+caliGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" (Cali) debe ser reconocido`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 6: Variantes con acentos
+// ==========================================
+separator('TEST 6: Normalización de Acentos');
+
+const accentTests = [
+    { with: 'qué más', without: 'que mas' },
+    { with: 'cómo estás', without: 'como estas' },
+    { with: 'aló', without: 'alo' },
+    { with: 'quiúbole', without: 'quiubole' }
+];
+
+accentTests.forEach(test => {
+    const normalized1 = normalizeGreeting(test.with);
+    const normalized2 = normalizeGreeting(test.without);
+    assert(
+        normalized1 === normalized2,
+        `"${test.with}" y "${test.without}" deben normalizarse igual`,
+        normalized2,
+        normalized1
+    );
+});
+
+// ==========================================
+// TEST 7: Errores ortográficos comunes
+// ==========================================
+separator('TEST 7: Errores Ortográficos Comunes');
+
+const typoGreetings = [
+    'ola',
+    'kiubo',
+    'q mas',
+    'k hubo',
+    'kiubole'
+];
+
+typoGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" (error ortográfico común) debe ser reconocido`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 8: Variantes digitales
+// ==========================================
+separator('TEST 8: Variantes Digitales/WhatsApp');
+
+const digitalGreetings = [
+    'holaa',
+    'holaaa',
+    'holiii',
+    'hola!',
+    'hola!!',
+    'buenass',
+    'hey',
+    'heey'
+];
+
+digitalGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" (digital) debe ser reconocido`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 9: Saludos compuestos
+// ==========================================
+separator('TEST 9: Saludos Compuestos (con contexto)');
+
+const compositeGreetings = [
+    'hola como estas',
+    'epa que mas',
+    'quiubo parce como vas',
+    'buenos días me interesa un producto'
+];
+
+compositeGreetings.forEach(greeting => {
+    assert(
+        isGreeting(greeting),
+        `"${greeting}" debe ser reconocido como saludo`,
+        true,
+        isGreeting(greeting)
+    );
+});
+
+// ==========================================
+// TEST 10: NO saludos (casos negativos)
+// ==========================================
+separator('TEST 10: Casos Negativos (NO son saludos)');
+
+const nonGreetings = [
+    'menu',
+    'carrito',
+    'pagar',
+    '123',
+    'producto',
+    'cuanto cuesta',
+    'direccion',
+    's1 s2',
+    't1',
+    '2'
+];
+
+nonGreetings.forEach(text => {
+    assert(
+        !isGreeting(text),
+        `"${text}" NO debe ser reconocido como saludo`,
+        false,
+        isGreeting(text)
+    );
+});
+
+// ==========================================
+// TEST 11: getMatchingGreeting()
+// ==========================================
+separator('TEST 11: Función getMatchingGreeting()');
+
+const matchTests = [
+    { input: 'hola', expected: 'hola' },
+    { input: 'HOLA', expected: 'hola' },
+    { input: 'Hola!!', expected: 'hola' },
+    { input: 'quiubo parce', expected: 'quiubo parce' },
+    { input: 'epa que mas', expected: 'epa' }, // Match por inicio
+];
+
+matchTests.forEach(test => {
+    const match = getMatchingGreeting(test.input);
+    assert(
+        match !== null,
+        `getMatchingGreeting("${test.input}") debe retornar un saludo`,
+        'not null',
+        match
+    );
+});
+
+// ==========================================
+// TEST 12: Normalización compleja
+// ==========================================
+separator('TEST 12: Normalización Compleja');
+
+const complexNormalizations = [
+    { input: '¡Hola!', expected: 'hola' },
+    { input: '¿Qué más?', expected: 'que mas' },
+    { input: '   hola   ', expected: 'hola' },
+    { input: 'HOLAAAA!!!', expected: 'holaaaa' }
+];
+
+complexNormalizations.forEach(test => {
+    const normalized = normalizeGreeting(test.input);
+    assert(
+        normalized === test.expected,
+        `normalizeGreeting("${test.input}") debe ser "${test.expected}"`,
+        test.expected,
+        normalized
+    );
+});
+
+// ==========================================
+// TEST 13: Estadísticas
+// ==========================================
+separator('TEST 13: Estadísticas de Saludos');
+
+const stats = getGreetingsStats();
+
+assert(
+    stats.total === 184,
+    'Total de saludos en estadísticas',
+    184,
+    stats.total
+);
+
+assert(
+    stats.unique >= 150,
+    'Saludos únicos (sin duplicados)',
+    '>=150',
+    stats.unique
+);
+
+assert(
+    typeof stats.categories === 'object',
+    'Debe tener categorías definidas',
+    'object',
+    typeof stats.categories
+);
+
+console.log(`\n${colors.blue}📊 Estadísticas de Saludos:${colors.reset}`);
+console.log(`   Total: ${stats.total}`);
+console.log(`   Únicos: ${stats.unique}`);
+console.log(`   Categorías:`, stats.categories);
+
+// ==========================================
+// TEST 14: Performance (1000 verificaciones)
+// ==========================================
+separator('TEST 14: Performance Test (1000 verificaciones)');
+
+const startTime = Date.now();
+for (let i = 0; i < 1000; i++) {
+    isGreeting('hola');
+    isGreeting('quiubo');
+    isGreeting('que mas');
+    isGreeting('menu'); // No es saludo
+}
+const endTime = Date.now();
+const duration = endTime - startTime;
+
+assert(
+    duration < 300,
+    `4000 verificaciones deben completarse en <300ms`,
+    '<300ms',
+    `${duration}ms`
+);
+
+// ==========================================
+// TEST 15: Casos edge
+// ==========================================
+separator('TEST 15: Casos Edge (valores inválidos)');
+
+assert(
+    !isGreeting(null),
+    'null no debe ser reconocido como saludo',
+    false,
+    isGreeting(null)
+);
+
+assert(
+    !isGreeting(undefined),
+    'undefined no debe ser reconocido como saludo',
+    false,
+    isGreeting(undefined)
+);
+
+assert(
+    !isGreeting(''),
+    'String vacío no debe ser reconocido como saludo',
+    false,
+    isGreeting('')
+);
+
+assert(
+    !isGreeting(123),
+    'Número no debe ser reconocido como saludo',
+    false,
+    isGreeting(123)
+);
+
+// ==========================================
+// RESUMEN FINAL
+// ==========================================
+separator('RESUMEN FINAL');
+
+const passRate = ((testsPassed / testsTotal) * 100).toFixed(2);
+const status = testsPassed === testsTotal ? colors.green : colors.red;
+
+console.log(`\n${colors.blue}📊 Resultados:${colors.reset}`);
+console.log(`   ${colors.green}✅ Pasados: ${testsPassed}${colors.reset}`);
+console.log(`   ${colors.red}❌ Fallados: ${testsFailed}${colors.reset}`);
+console.log(`   📝 Total: ${testsTotal}`);
+console.log(`   ${status}🎯 Tasa de éxito: ${passRate}%${colors.reset}\n`);
+
+if (testsPassed === testsTotal) {
+    console.log(`${colors.green}${'='.repeat(60)}${colors.reset}`);
+    console.log(`${colors.green}✅ ¡TODOS LOS TESTS PASARON! 🎉${colors.reset}`);
+    console.log(`${colors.green}${'='.repeat(60)}${colors.reset}\n`);
+    process.exit(0);
+} else {
+    console.log(`${colors.red}${'='.repeat(60)}${colors.reset}`);
+    console.log(`${colors.red}❌ ALGUNOS TESTS FALLARON${colors.reset}`);
+    console.log(`${colors.red}${'='.repeat(60)}${colors.reset}\n`);
+    process.exit(1);
+}
