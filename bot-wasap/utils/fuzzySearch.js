@@ -5,6 +5,8 @@
 
 'use strict';
 
+const envConfig = require('../config/env.loader');
+
 /**
  * Calcula la distancia de Levenshtein entre dos strings
  * @param {string} a - Primera cadena
@@ -192,8 +194,10 @@ function fuzzySearch(query, items, options = {}) {
  * @returns {Array} - Productos encontrados
  */
 function fuzzySearchProducts(query, products, options = {}) {
+    const dbFields = envConfig.backend.fields;
+    
     const results = fuzzySearch(query, products, {
-        key: 'NombreProducto',
+        key: dbFields.productName,
         threshold: options.threshold || 0.4, // Umbral más bajo para productos
         maxResults: options.maxResults || 10,
         ...options
@@ -207,25 +211,28 @@ function fuzzySearchProducts(query, products, options = {}) {
 }
 
 /**
- * Busca sabores con fuzzy matching
+ * Busca items primarios (sabores, ingredientes, etc.) con fuzzy matching
+ * Función genérica que reemplaza fuzzySearchSabores
  * @param {string} query - Texto de búsqueda
- * @param {Array} sabores - Array de sabores (strings o objetos con campo 'nombre' o 'NombreProducto')
+ * @param {Array} items - Array de items primarios (strings o objetos)
  * @param {Object} options - Opciones adicionales
- * @returns {Array} - Sabores encontrados
+ * @returns {Array} - Items encontrados
  */
-function fuzzySearchSabores(query, sabores, options = {}) {
-    if (!sabores || !Array.isArray(sabores) || sabores.length === 0) return [];
+function fuzzySearchPrimaryItems(query, items, options = {}) {
+    if (!items || !Array.isArray(items) || items.length === 0) return [];
+    
+    const dbFields = envConfig.backend.fields;
     
     // Determinar si son strings o objetos
-    const isStringArray = typeof sabores[0] === 'string';
+    const isStringArray = typeof items[0] === 'string';
     
-    // Si son objetos, determinar el campo correcto (NombreProducto o nombre)
+    // Si son objetos, usar el campo genérico de nombre de producto
     let keyField = null;
     if (!isStringArray) {
-        keyField = sabores[0].NombreProducto ? 'NombreProducto' : 'nombre';
+        keyField = dbFields.productName;
     }
     
-    const results = fuzzySearch(query, sabores, {
+    const results = fuzzySearch(query, items, {
         key: keyField,
         threshold: options.threshold || 0.5,
         maxResults: options.maxResults || 5,
@@ -244,25 +251,28 @@ function fuzzySearchSabores(query, sabores, options = {}) {
 }
 
 /**
- * Busca toppings con fuzzy matching
+ * Busca items secundarios (toppings, extras, etc.) con fuzzy matching
+ * Función genérica que reemplaza fuzzySearchToppings
  * @param {string} query - Texto de búsqueda
- * @param {Array} toppings - Array de toppings (strings o objetos con campo 'nombre' o 'NombreProducto')
+ * @param {Array} items - Array de items secundarios (strings o objetos)
  * @param {Object} options - Opciones adicionales
- * @returns {Array} - Toppings encontrados
+ * @returns {Array} - Items encontrados
  */
-function fuzzySearchToppings(query, toppings, options = {}) {
-    if (!toppings || !Array.isArray(toppings) || toppings.length === 0) return [];
+function fuzzySearchSecondaryItems(query, items, options = {}) {
+    if (!items || !Array.isArray(items) || items.length === 0) return [];
+    
+    const dbFields = envConfig.backend.fields;
     
     // Determinar si son strings o objetos
-    const isStringArray = typeof toppings[0] === 'string';
+    const isStringArray = typeof items[0] === 'string';
     
-    // Si son objetos, determinar el campo correcto (NombreProducto o nombre)
+    // Si son objetos, usar el campo genérico de nombre de producto
     let keyField = null;
     if (!isStringArray) {
-        keyField = toppings[0].NombreProducto ? 'NombreProducto' : 'nombre';
+        keyField = dbFields.productName;
     }
     
-    const results = fuzzySearch(query, toppings, {
+    const results = fuzzySearch(query, items, {
         key: keyField,
         threshold: options.threshold || 0.5,
         maxResults: options.maxResults || 5,
@@ -280,12 +290,30 @@ function fuzzySearchToppings(query, toppings, options = {}) {
     }));
 }
 
+/**
+ * @deprecated Usar fuzzySearchPrimaryItems en su lugar
+ * Busca sabores con fuzzy matching (backward compatibility)
+ */
+function fuzzySearchSabores(query, sabores, options = {}) {
+    return fuzzySearchPrimaryItems(query, sabores, options);
+}
+
+/**
+ * @deprecated Usar fuzzySearchSecondaryItems en su lugar
+ * Busca toppings con fuzzy matching (backward compatibility)
+ */
+function fuzzySearchToppings(query, toppings, options = {}) {
+    return fuzzySearchSecondaryItems(query, toppings, options);
+}
+
 module.exports = {
     levenshteinDistance,
     similarityScore,
     fuzzySearch,
     fuzzySearchProducts,
-    fuzzySearchSabores,
-    fuzzySearchToppings,
+    fuzzySearchPrimaryItems,    // Nueva función genérica
+    fuzzySearchSecondaryItems,  // Nueva función genérica
+    fuzzySearchSabores,         // @deprecated - usar fuzzySearchPrimaryItems
+    fuzzySearchToppings,        // @deprecated - usar fuzzySearchSecondaryItems
     normalizeForComparison
 };
