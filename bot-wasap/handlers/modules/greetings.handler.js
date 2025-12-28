@@ -26,19 +26,35 @@ function detectGreeting(text) {
  * Maneja un mensaje de saludo
  * @param {Object} sock - Socket de WhatsApp
  * @param {string} jid - JID del usuario
- * @param {string} text - Texto del saludo
- * @param {Object} userSession - Sesión del usuario
+ * @param {Object} userSession - Sesión del usuario (puede pasar text como 3er param para compatibilidad)
  * @param {Object} ctx - Contexto global
  */
-async function handleGreeting(sock, jid, text, userSession, ctx) {
-    logger.info(`[${jid}] -> Saludo detectado: "${text}"`);
+async function handleGreeting(sock, jid, userSession, ctx) {
+    // Soporte para ambas firmas: (sock, jid, text, userSession, ctx) y (sock, jid, userSession, ctx)
+    let text = '';
+    let session = userSession;
+    let context = ctx;
+    
+    if (arguments.length === 5) {
+        // Llamada con texto explícito: (sock, jid, text, userSession, ctx)
+        text = arguments[2];
+        session = arguments[3];
+        context = arguments[4];
+    } else {
+        // Llamada sin texto: (sock, jid, userSession, ctx)
+        text = '';
+        session = userSession;
+        context = ctx;
+    }
+    
+    logger.info(`[${jid}] -> Saludo detectado${text ? ': "' + text + '"' : ''}`);
     
     // Resetear errores y establecer fase
-    userSession.phase = PHASE.SELECCION_OPCION;
-    userSession.errorCount = 0;
+    session.phase = PHASE.SELECCION_OPCION;
+    session.errorCount = 0;
     
     // Enviar menú de bienvenida
-    await sendWelcomeMenu(sock, jid, ctx);
+    await sendWelcomeMenu(sock, jid, context);
 }
 
 /**
@@ -80,6 +96,7 @@ function getGreetingInfo(text) {
 
 module.exports = {
     detectGreeting,
+    isGreeting: detectGreeting, // Alias para compatibilidad
     handleGreeting,
     sendWelcomeMenu,
     getGreetingInfo

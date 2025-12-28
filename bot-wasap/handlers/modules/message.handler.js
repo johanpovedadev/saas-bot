@@ -207,6 +207,61 @@ function createWhatsAppLink(jid) {
     return `https://wa.me/${phoneNumber}`;
 }
 
+/**
+ * Valida si un mensaje es válido para ser procesado
+ * @param {Object} messageData - Datos del mensaje { from, text, key }
+ * @returns {boolean}
+ */
+function isValidMessage(messageData) {
+    if (!messageData || !messageData.from || !messageData.text) {
+        return false;
+    }
+    
+    const text = String(messageData.text).trim();
+    if (!text) {
+        return false;
+    }
+    
+    return shouldProcessMessage(messageData.from, text, messageData.key || {});
+}
+
+/**
+ * Registra un mensaje entrante en el log
+ * @param {string} jid - JID del usuario
+ * @param {string} text - Texto del mensaje
+ * @param {Object} userSession - Sesión del usuario
+ */
+function logIncomingMessage(jid, text, userSession) {
+    logMessage(jid, text, 'received');
+    logConversation(jid, 'user', text);
+    
+    const phase = userSession?.phase || 'UNKNOWN';
+    logger.info(`📨 [${jid}] Mensaje recibido (Fase: ${phase}): "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+}
+
+/**
+ * Maneja errores en el procesamiento de mensajes
+ * @param {Object} sock - Socket de Baileys
+ * @param {string} jid - JID del usuario
+ * @param {Error} error - Error ocurrido
+ * @param {Object} ctx - Contexto global
+ */
+async function handleProcessingError(sock, jid, error, ctx) {
+    try {
+        logger.error(`❌ Error procesando mensaje de ${jid}:`, error?.stack || error);
+        
+        const { logUserError } = require('../../utils/logger');
+        logUserError(jid, 'message_processing', '', error?.stack || String(error));
+        
+        await say(sock, jid, 
+            '⚠️ Lo siento, ocurrió un error procesando tu mensaje. Por favor intenta de nuevo o escribe *menú* para ver las opciones.', 
+            ctx
+        );
+    } catch (fallbackError) {
+        logger.error('❌ Error en handleProcessingError:', fallbackError);
+    }
+}
+
 module.exports = {
     extractMessageData,
     shouldProcessMessage,
@@ -218,5 +273,8 @@ module.exports = {
     scheduleAutoUnmute,
     isOwnMessage,
     extractPhoneNumber,
-    createWhatsAppLink
+    createWhatsAppLink,
+    isValidMessage,
+    logIncomingMessage,
+    handleProcessingError
 };
