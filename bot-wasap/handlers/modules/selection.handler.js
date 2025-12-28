@@ -312,29 +312,32 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
         await say(sock, jid, '❌ No hay un producto seleccionado. Por favor, escribe el nombre del producto que deseas.', ctx);
         userSession.phase = PHASE.BROWSE_IMAGES;
         return;
-    }
-
-    const nomenclature = envConfig.nomenclature;
+    }    const nomenclature = envConfig.nomenclature;
+    const dbFields = envConfig.backend.fields;
     const primaryItemsKey = `${nomenclature.itemPrimary}Selected`;
     const secondaryItemsKey = `${nomenclature.itemSecondary}Selected`;
     
-    // Obtener items seleccionados (backward compatible)
-    const selectedPrimaryItems = userSession[primaryItemsKey] || userSession.saboresSeleccionados || [];
-    const selectedSecondaryItems = userSession[secondaryItemsKey] || userSession.toppingsSeleccionados || [];
+    // Obtener items seleccionados
+    const selectedPrimaryItems = userSession[primaryItemsKey] || [];
+    const selectedSecondaryItems = userSession[secondaryItemsKey] || [];    // Obtener listas de items desde el producto o contexto
+    const primaryItemsList = currentProduct[dbFields.itemPrimaryList] || ctx.itemsData?.[nomenclature.itemPrimaryPlural] || [];
+    const secondaryItemsList = currentProduct[dbFields.itemSecondaryList] || ctx.itemsData?.[nomenclature.itemSecondaryPlural] || [];
 
     // Mapear items primarios y secundarios a objetos
     const mappedPrimaryItems = await mapSelectionToItems(
         selectedPrimaryItems,
-        currentProduct[nomenclature.itemPrimary] || currentProduct.sabores || ctx.saboresYToppings?.sabores || [],
-        's',
+        primaryItemsList,
+        nomenclature.itemPrimaryCode || 's',
+        dbFields,
         ctx,
         jid
     );
 
     const mappedSecondaryItems = await mapSelectionToItems(
         selectedSecondaryItems,
-        currentProduct[nomenclature.itemSecondary] || currentProduct.toppings || ctx.saboresYToppings?.toppings || [],
-        't',
+        secondaryItemsList,
+        nomenclature.itemSecondaryCode || 't',
+        dbFields,
         ctx,
         jid
     );
@@ -382,20 +385,17 @@ async function addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, map
     const dbFields = envConfig.backend.fields;
     const observacionesFinal = userSession.observaciones || '';
     
-    // Preparar objeto para el carrito (backward compatible)
+    // Preparar objeto para el carrito con nomenclatura genérica
     const cartItem = {
-        codigo: currentProduct[dbFields.productCode] || currentProduct.CodigoProducto || currentProduct.codigo || currentProduct.id,
-        nombre: currentProduct[dbFields.productName] || currentProduct.NombreProducto,
-        precio: currentProduct[dbFields.productPrice] || currentProduct.Precio_Venta || 0,
+        codigo: currentProduct[dbFields.productCode],
+        nombre: currentProduct[dbFields.productName],
+        precio: currentProduct[dbFields.productPrice] || 0,
         observaciones: observacionesFinal
     };
     
-    // Agregar items con keys genéricas Y backward compatible
+    // Agregar items con keys genéricas
     cartItem[nomenclature.itemPrimary] = mappedPrimaryItems;
-    cartItem.sabores = mappedPrimaryItems; // Backward compatibility
-    
     cartItem[nomenclature.itemSecondary] = mappedSecondaryItems;
-    cartItem.toppings = mappedSecondaryItems; // Backward compatibility
     
     cartService.addToCart(ctx, jid, cartItem, quantity);
     
@@ -406,16 +406,12 @@ async function addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, map
     userSession.phase = PHASE.BROWSE_IMAGES;
     userSession.currentProduct = null;
     
-    // Resetear ambas nomenclaturas (genérica + legacy)
+    // Resetear keys genéricas
     const primaryKey = `${nomenclature.itemPrimary}Selected`;
     const secondaryKey = `${nomenclature.itemSecondary}Selected`;
     
     userSession[primaryKey] = [];
-    userSession.saboresSeleccionados = []; // Backward compatibility
-    
     userSession[secondaryKey] = [];
-    userSession.toppingsSeleccionados = []; // Backward compatibility
-    
     userSession.observaciones = '';
     userSession.awaitingField = null;
     userSession.errorCount = 0;
@@ -426,10 +422,17 @@ async function addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, map
 }
 
 /**
- * Mapea códigos de selección (S1, T1) a objetos reales
+ * Mapea códigos de selección (ej: S1, T1) a objetos reales
  * @private
+ * @param {Array} selectedItems - Items seleccionados (códigos o nombres)
+ * @param {Array} itemsList - Lista completa de items disponibles
+ * @param {string} prefix - Prefijo del código (ej: 's', 't')
+ * @param {Object} dbFields - Campos de base de datos desde ENV
+ * @param {Object} ctx - Contexto global
+ * @param {string} jid - JID del usuario
+ * @returns {Promise<Array>} - Items mapeados
  */
-async function mapSelectionToItems(selectedItems, itemsList, prefix, ctx, jid) {
+async function mapSelectionToItems(selectedItems, itemsList, prefix, dbFields, ctx, jid) {
     const mapped = [];
     
     if (!Array.isArray(selectedItems) || selectedItems.length === 0) {
@@ -441,7 +444,7 @@ async function mapSelectionToItems(selectedItems, itemsList, prefix, ctx, jid) {
         const parts = raw.split(/[,\s]+/).map(p => p.trim()).filter(Boolean);
         
         for (const p of parts) {
-            const mappedItem = mapCodeToItem(p, itemsList, prefix, jid);
+            const mappedItem = mapCodeToItem(p, itemsList, prefix, dbFields, jid);
             if (mappedItem) {
                 mapped.push(mappedItem);
             }
@@ -454,35 +457,52 @@ async function mapSelectionToItems(selectedItems, itemsList, prefix, ctx, jid) {
 /**
  * Mapea un código individual a un item
  * @private
+ * @param {string} token - Código o nombre del item
+ * @param {Array} list - Lista de items disponibles
+ * @param {string} prefix - Prefijo del código
+ * @param {Object} dbFields - Campos de base de datos desde ENV
+ * @param {string} jid - JID del usuario
+ * @returns {Object|string|null} - Item mapeado o null
  */
-function mapCodeToItem(token, list, prefix, jid) {
+function mapCodeToItem(token, list, prefix, dbFields, jid) {
     if (!token) return null;
     
+    const nomenclature = envConfig.nomenclature;
     const t = String(token).trim().toLowerCase();
     const m = t.match(new RegExp(`^${prefix}(\\d+)$`, 'i'));
     
+    // Si es un código válido (ej: S1, T2)
     if (m) {
         const idx = parseInt(m[1], 10) - 1;
         if (idx >= 0 && list && list[idx]) return list[idx];
         return null;
     }
     
-    // Si no es código, buscar por nombre
+    // Si no es código, buscar por nombre usando el campo genérico
     if (list && list.length) {
-        const found = list.find(i => (i.NombreProducto || String(i)).toString().toLowerCase().includes(t));
+        const nameField = dbFields.productName;
+        const found = list.find(i => {
+            const itemName = (i[nameField] || String(i)).toString().toLowerCase();
+            return itemName.includes(t);
+        });
+        
         if (found) return found;
         
-        // Fuzzy match
-        const fuzzyMatches = prefix === 's'
-            ? fuzzySearchSabores(t, list, { threshold: 0.6, maxResults: 1 })
-            : fuzzySearchToppings(t, list, { threshold: 0.6, maxResults: 1 });
+        // Fuzzy match usando funciones genéricas
+        const fuzzyFunction = prefix === (nomenclature.itemPrimaryCode || 's')
+            ? fuzzySearchSabores 
+            : fuzzySearchToppings;
+        
+        const fuzzyMatches = fuzzyFunction(t, list, { threshold: 0.6, maxResults: 1 });
         
         if (fuzzyMatches && fuzzyMatches.length > 0) {
-            logger.info(`[${jid}] -> Fuzzy match para "${t}": ${fuzzyMatches[0].NombreProducto || fuzzyMatches[0]}`);
+            const matchedName = fuzzyMatches[0][nameField] || fuzzyMatches[0];
+            logger.info(`[${jid}] -> Fuzzy match para "${t}": ${matchedName}`);
             return fuzzyMatches[0];
         }
     }
     
+    // Si no se encontró nada, devolver el token original
     return token;
 }
 
