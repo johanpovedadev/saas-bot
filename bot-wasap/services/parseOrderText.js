@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeText } = require('../utils/util') || {};
+const envConfig = require('../config/env.loader');
 
 function simpleNormalize(text) {
     if (!text) return '';
@@ -44,8 +45,17 @@ function extractQuantityAndUnit(normalized) {
 }
 
 function detectNoToppings(normalized) {
-    // Detect phrases that explicitly deny toppings/extras, including common misspellings
-    return /\bsin\s+(toppings|topping|topings|toping|topin|topong|extras|nada|adicionales|sabores)\b/.test(normalized) || /\bsin\b\s*$/.test(normalized);
+    // Detect phrases that explicitly deny secondary items (toppings/extras), including common misspellings
+    const nomenclature = envConfig.getNomenclature();
+    const secondaryItemVariants = envConfig.getArray('KEYWORDS_ITEM_SECONDARY_VARIANTS') || 
+        [nomenclature.itemSecondary, nomenclature.itemSecondaryPlural];
+    
+    // Build regex pattern dynamically from ENV keywords
+    const variantPattern = secondaryItemVariants.join('|');
+    const rejectPattern = new RegExp(`\\bsin\\s+(${variantPattern}|extras|nada|adicionales)\\b`, 'i');
+    const endPattern = /\bsin\b\s*$/;
+    
+    return rejectPattern.test(normalized) || endPattern.test(normalized);
 }
 
 function extractProductCandidate(normalized) {
@@ -72,6 +82,7 @@ function extractProductCandidate(normalized) {
 function extractAdditionsAndExclusions(normalized) {
     const additions = [];
     const exclusions = [];
+    const nomenclature = envConfig.getNomenclature();
 
     // Match phrases like 'con extra miel y nueces' or 'con miel, nueces'
     const conMatches = normalized.match(/\bcon\b\s+([a-z0-9\s,]+?)(?:$|[.,;])/gi);
@@ -95,15 +106,18 @@ function extractAdditionsAndExclusions(normalized) {
         }
     }
 
-    // Normalize common misspellings of 'toppings' into a canonical token
-    const toppingVariants = new RegExp('^(toppings|topping|topings|toping|topin|topong)$','i');
+    // Normalize common misspellings/variants of secondary items into canonical token
+    const secondaryItemVariants = envConfig.getArray('KEYWORDS_ITEM_SECONDARY_VARIANTS') || 
+        [nomenclature.itemSecondary, nomenclature.itemSecondaryPlural];
+    const variantPattern = new RegExp(`^(${secondaryItemVariants.join('|')})$`, 'i');
+    
     for (let i = 0; i < exclusions.length; i++) {
         const ex = exclusions[i];
-        if (toppingVariants.test(ex)) exclusions[i] = 'toppings';
+        if (variantPattern.test(ex)) exclusions[i] = nomenclature.itemSecondaryPlural;
     }
     for (let i = 0; i < additions.length; i++) {
         const ad = additions[i];
-        if (toppingVariants.test(ad)) additions[i] = 'toppings';
+        if (variantPattern.test(ad)) additions[i] = nomenclature.itemSecondaryPlural;
     }
 
     return { additions, exclusions };
@@ -113,6 +127,7 @@ function parseOrderText(text) {
     if (!text || typeof text !== 'string') return null;
     const raw = text.trim();
     const normalized = simpleNormalize(raw);
+    const nomenclature = envConfig.getNomenclature();
 
     const { quantity, unit } = extractQuantityAndUnit(normalized);
     const noToppings = detectNoToppings(normalized);
@@ -137,7 +152,9 @@ function parseOrderText(text) {
     const notesParts = [];
     if (exclusions && exclusions.length > 0) notesParts.push('sin: ' + exclusions.join(', '));
     if (additions && additions.length > 0) notesParts.push('con: ' + additions.join(', '));
-    if (noToppings || (exclusions && exclusions.some(e => e === 'toppings'))) notesParts.push('sin: toppings');
+    if (noToppings || (exclusions && exclusions.some(e => e === nomenclature.itemSecondaryPlural))) {
+        notesParts.push(`sin: ${nomenclature.itemSecondaryPlural}`);
+    }
     const notes = notesParts.join('; ');
 
     const parsed = {
@@ -146,20 +163,21 @@ function parseOrderText(text) {
         product_name: productCandidate,
         additions: additions.length > 0 ? additions : null,
         exclusions: exclusions.length > 0 ? exclusions : null,
-        toppings: (noToppings || (exclusions && exclusions.some(e=>e==='toppings')) ? [] : null),
+        [nomenclature.itemSecondaryPlural]: (noToppings || (exclusions && exclusions.some(e=>e===nomenclature.itemSecondaryPlural)) ? [] : null),
         notes: notes || ''
     };
 
-    // If product mentions 'helado' but no flavor specified, assume 'vainilla' as default
+    // Generic default primary item logic (if product mentions generic terms but no specific item)
     try {
-        if (parsed.product_name && /\bhelad[o|os]?\b/.test(parsed.product_name)) {
-            const flavors = ['vainilla','chocolate','fresa','coco','mango'];
-            const hasFlavor = flavors.some(f => parsed.product_name.includes(f));
-            if (!hasFlavor) {
-                // Do NOT mutate product_name (avoid concatenating observaciones/sabores into the product string)
-                // Record the default flavor in a dedicated field so it doesn't mix with the product name
-                parsed.sabor = parsed.sabor || 'vainilla';
-                parsed.notes = (parsed.notes ? parsed.notes + '; ' : '') + 'sabor por defecto: vainilla';
+        const productKeywords = envConfig.getKeywords().products || [];
+        const defaultPrimaryItems = envConfig.getArray('KEYWORDS_ITEM_PRIMARY_DEFAULTS') || [];
+        
+        if (parsed.product_name && productKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(parsed.product_name))) {
+            const hasPrimaryItem = defaultPrimaryItems.some(item => parsed.product_name.includes(item));
+            if (!hasPrimaryItem && defaultPrimaryItems.length > 0) {
+                // Record default primary item
+                parsed[nomenclature.itemPrimary] = parsed[nomenclature.itemPrimary] || defaultPrimaryItems[0];
+                parsed.notes = (parsed.notes ? parsed.notes + '; ' : '') + `${nomenclature.itemPrimary} por defecto: ${defaultPrimaryItems[0]}`;
             }
         }
     } catch (e) { /* ignore */ }

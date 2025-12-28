@@ -10,21 +10,23 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const CONFIG = require('../config.json');
 // Centralized secrets loader (loads .env in development)
 const SECRETS = require('../config.secrets');
+const envConfig = require('../config/env.loader');
 
 /**
- * Calcula el indicador de progreso basado en los pasos del producto
+ * Calcula el indicador de progreso basado en los pasos del producto (genérico)
  * @param {Object} producto - Producto seleccionado
- * @param {string} currentStep - Paso actual: 'sabores', 'toppings', 'quantity'
+ * @param {string} currentStep - Paso actual: 'primary', 'secondary', 'quantity'
  * @returns {string} - Indicador de progreso (ej: "📍 Paso 1 de 3")
  */
 function getProgressIndicator(producto, currentStep) {
-    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
-    const numToppings = parseInt(producto.Numero_de_Toppings || 0, 10);
+    const dbFields = envConfig.getDbFields();
+    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
+    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
     
     // Determinar cuántos pasos totales hay
     const steps = [];
-    if (numSabores > 0) steps.push('sabores');
-    if (numToppings > 0) steps.push('toppings');
+    if (numPrimaryItems > 0) steps.push('primary');
+    if (numSecondaryItems > 0) steps.push('secondary');
     steps.push('quantity'); // Siempre hay paso de cantidad
     
     const totalSteps = steps.length;
@@ -45,15 +47,20 @@ async function getSaboresYToppings(ctx) {
         if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
     } catch(e) { endpoints = null; }
     endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
-    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';    try {
+    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';
+    
+    const nomenclature = envConfig.getNomenclature();
+    const dbFields = envConfig.getDbFields();
+    
+    try {
         const url = `${apiBase}${listEndpoint}`;
-        console.log(`🔍 Consultando sabores y toppings desde: ${url}`);
+        console.log(`🔍 Consultando ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} desde: ${url}`);
         const response = await axios.get(url);
         
         console.log(`📦 Respuesta recibida. Status: ${response?.status}`);
         console.log(`📦 Data keys:`, response?.data ? Object.keys(response.data) : 'NO DATA');
-        console.log(`📦 Sabores raw length:`, response?.data?.sabores?.length || 0);
-        console.log(`📦 Toppings raw length:`, response?.data?.toppings?.length || 0);
+        console.log(`📦 ${nomenclature.itemPrimaryPlural} raw length:`, response?.data?.sabores?.length || 0);
+        console.log(`📦 ${nomenclature.itemSecondaryPlural} raw length:`, response?.data?.toppings?.length || 0);
         
         if (response && response.data) {
             // Normalize entries so downstream code can rely on NombreProducto, CodigoProducto and numeric Precio_Venta
@@ -67,11 +74,11 @@ async function getSaboresYToppings(ctx) {
                 return arr.map(it => {
                     const obj = Object.assign({}, it);
                     // Normalize name and code fields
-                    obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
-                    obj.CodigoProducto = obj.CodigoProducto || obj.codigo || obj.Code || obj.Codigo || null;
+                    obj[dbFields.productName] = obj[dbFields.productName] || obj.nombre || obj.Name || obj.Nombre || null;
+                    obj[dbFields.productCode] = obj[dbFields.productCode] || obj.codigo || obj.Code || obj.Codigo || null;
 
                     // Detect price in various fields and parse to number (handles '1.000' or '1,000.50')
-                    const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
+                    const priceCandidates = [obj[dbFields.productPrice], obj.Precio, obj.precio, obj.Price, obj.price];
                     let priceRaw = null;
                     for (const p of priceCandidates) {
                         if (typeof p !== 'undefined' && p !== null && String(p).toString().trim() !== '') { priceRaw = p; break; }
@@ -96,12 +103,12 @@ async function getSaboresYToppings(ctx) {
                             // Replace comma decimal with dot
                             s = s.replace(/,/g, '.');
                             const parsed = parseFloat(s);
-                            obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
+                            obj[dbFields.productPrice] = Number.isFinite(parsed) ? parsed : null;
                         } catch (e) {
-                            obj.Precio_Venta = null;
+                            obj[dbFields.productPrice] = null;
                         }
                     } else {
-                        obj.Precio_Venta = null;
+                        obj[dbFields.productPrice] = null;
                     }
 
                     return obj;
@@ -113,29 +120,28 @@ async function getSaboresYToppings(ctx) {
                 toppings: normalizeList(data.toppings || [])
             };
 
-            console.log(`✅ Sabores y toppings cargados. Sabores: ${ctx.saboresYToppings.sabores.length}, Toppings: ${ctx.saboresYToppings.toppings.length}`);
+            console.log(`✅ ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} cargados. ${nomenclature.itemPrimaryPlural}: ${ctx.saboresYToppings.sabores.length}, ${nomenclature.itemSecondaryPlural}: ${ctx.saboresYToppings.toppings.length}`);
             
-            // Mostrar primeros 3 sabores para debug
+            // Mostrar primeros 3 items para debug
             if (ctx.saboresYToppings.sabores.length > 0) {
-                console.log(`📋 Primeros 3 sabores:`, ctx.saboresYToppings.sabores.slice(0, 3).map(s => s.NombreProducto));
+                console.log(`📋 Primeros 3 ${nomenclature.itemPrimaryPlural}:`, ctx.saboresYToppings.sabores.slice(0, 3).map(s => s[dbFields.productName]));
             }
             if (ctx.saboresYToppings.toppings.length > 0) {
-                console.log(`📋 Primeros 3 toppings:`, ctx.saboresYToppings.toppings.slice(0, 3).map(t => t.NombreProducto));
-            }
-        } else {
+                console.log(`📋 Primeros 3 ${nomenclature.itemSecondaryPlural}:`, ctx.saboresYToppings.toppings.slice(0, 3).map(t => t[dbFields.productName]));
+            }        } else {
             ctx.saboresYToppings = { sabores: [], toppings: [] };
             console.warn('⚠️  getSaboresYToppings: empty response data from', url);
         }
     } catch (e) {
-        console.error('❌ Error al obtener sabores y toppings de la API:', e.response?.data || e.message || e);
-        // ensure downstream code doesn't crash if toppings are missing
+        console.error(`❌ Error al obtener ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} de la API:`, e.response?.data || e.message || e);
+        // ensure downstream code doesn't crash if items are missing
         ctx.saboresYToppings = { sabores: [], toppings: [] };
     }
 }
 
 /**
  * Carga TODOS los productos desde la API usando búsquedas con términos comunes
- * para evitar llamadas repetidas durante la operación del bot
+ * para evitar llamadas repetidas durante la operación del bot (genérico)
  */
 async function loadAllProductsCache(ctx) {
     const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
@@ -147,9 +153,12 @@ async function loadAllProductsCache(ctx) {
     endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
     const searchEndpoint = (endpoints && endpoints.BUSCAR_PRODUCTO) ? endpoints.BUSCAR_PRODUCTO : '/buscar_producto_por_nombre/';
 
+    const dbFields = envConfig.getDbFields();
+    const keywords = envConfig.getKeywords();
+    
     try {
-        // Estrategia: Hacer búsquedas con términos comunes para obtener la mayor cantidad de productos
-        const searchTerms = ['caja', 'copa', 'paleta', 'litro', 'helado', 'volcan', 'topping'];
+        // Estrategia: Hacer búsquedas con términos comunes desde ENV para obtener la mayor cantidad de productos
+        const searchTerms = keywords.products || ['producto'];
         const allProducts = new Map(); // Usar Map para evitar duplicados por CodigoProducto
         
         console.log(`🔄 Cargando productos en cache usando búsquedas múltiples...`);
@@ -162,21 +171,21 @@ async function loadAllProductsCache(ctx) {
                 let products = [];
                 if (response.data.matches) {
                     products = response.data.matches;
-                } else if (response.data.CodigoProducto) {
+                } else if (response.data[dbFields.productCode]) {
                     products = [response.data];
                 }
                 
                 // Agregar al Map usando CodigoProducto como key para evitar duplicados
                 products.forEach(p => {
-                    const codigo = p.CodigoProducto || p.codigo || p.Code || p.Codigo || Math.random().toString();
+                    const codigo = p[dbFields.productCode] || p.codigo || p.Code || p.Codigo || Math.random().toString();
                     if (!allProducts.has(codigo)) {
                         // Normalizar producto
                         const obj = Object.assign({}, p);
-                        obj.NombreProducto = obj.NombreProducto || obj.nombre || obj.Name || obj.Nombre || null;
-                        obj.CodigoProducto = codigo;
+                        obj[dbFields.productName] = obj[dbFields.productName] || obj.nombre || obj.Name || obj.Nombre || null;
+                        obj[dbFields.productCode] = codigo;
 
                         // Normalizar precio
-                        const priceCandidates = [obj.Precio_Venta, obj.Precio, obj.precio, obj.Price, obj.price];
+                        const priceCandidates = [obj[dbFields.productPrice], obj.Precio, obj.precio, obj.Price, obj.price];
                         let priceRaw = null;
                         for (const pr of priceCandidates) {
                             if (typeof pr !== 'undefined' && pr !== null && String(pr).toString().trim() !== '') { priceRaw = pr; break; }
@@ -194,13 +203,12 @@ async function loadAllProductsCache(ctx) {
                                     }
                                 }
                                 s = s.replace(/,/g, '.');
-                                const parsed = parseFloat(s);
-                                obj.Precio_Venta = Number.isFinite(parsed) ? parsed : null;
+                                const parsed = parseFloat(s);                                obj[dbFields.productPrice] = Number.isFinite(parsed) ? parsed : null;
                             } catch (e) {
-                                obj.Precio_Venta = null;
+                                obj[dbFields.productPrice] = null;
                             }
                         } else {
-                            obj.Precio_Venta = null;
+                            obj[dbFields.productPrice] = null;
                         }
 
                         allProducts.set(codigo, obj);
@@ -216,7 +224,8 @@ async function loadAllProductsCache(ctx) {
         console.log(`✅ ${ctx.productsCache.length} productos únicos cargados en cache`);
         
         // Log de categorías/tipos de productos encontrados
-        const categories = [...new Set(ctx.productsCache.map(p => p.Categoria || p.Tipo || 'Sin categoría'))];
+        const categoryField = dbFields.productCategory || 'Categoria';
+        const categories = [...new Set(ctx.productsCache.map(p => p[categoryField] || p.Tipo || 'Sin categoría'))];
         console.log(`📦 Categorías cargadas: ${categories.join(', ')}`);
         
     } catch (e) {        console.error('❌ Error al cargar productos en cache:', e.message || e);
@@ -225,6 +234,8 @@ async function loadAllProductsCache(ctx) {
 }
 
 function resetChat(jid, ctx) {
+    const nomenclature = envConfig.getNomenclature();
+    
     // En lugar de borrar, sobreescribimos la sesión con un estado limpio y por defecto.
     // Esto asegura que la sesión SIEMPRE exista después de un reseteo.
     ctx.sessions[jid] = {
@@ -233,8 +244,8 @@ function resetChat(jid, ctx) {
         errorCount: 0,
         order: { items: [] },
         currentProduct: null,
-        saboresSeleccionados: [],
-        toppingsSeleccionados: [],
+        [`${nomenclature.itemPrimary}Selected`]: [],
+        [`${nomenclature.itemSecondary}Selected`]: [],
         lastMatches: [],
         createdAt: Date.now(),
         adminNotified: false,
@@ -245,13 +256,15 @@ function resetChat(jid, ctx) {
 }
 
 // =================================================================================
-// CAMBIO 1: FUNCIÓN `addToCart` CORREGIDA Y CENTRALIZADA
+// FUNCIÓN `addToCart` CORREGIDA Y CENTRALIZADA (GENÉRICA)
 // Esta función ahora guarda los productos en `ctx.sessions[jid].order.items`,
 // que es la estructura correcta que usa tu `handler.js`.
 // Esto asegura que el carrito funcione correctamente en todo el bot.
+// Soporta nomenclatura dinámica para items primarios y secundarios.
 // =================================================================================
 function addToCart(ctx, jid, item, quantity = 1) {
     const userSession = ctx.sessions[jid];
+    const nomenclature = envConfig.getNomenclature();
 
     // Se asegura de que la estructura del pedido exista (doble verificación)
     if (!userSession.order) {
@@ -264,13 +277,18 @@ function addToCart(ctx, jid, item, quantity = 1) {
     const cart = userSession.order.items;
     const itemIndex = cart.findIndex(x => x.codigo === item.codigo);
 
+    // Keys dinámicas para items primarios y secundarios
+    const primaryKey = nomenclature.itemPrimaryPlural || 'sabores';
+    const secondaryKey = nomenclature.itemSecondaryPlural || 'toppings';
+    const primaryKeySingular = nomenclature.itemPrimary || 'sabor';
+
     if (itemIndex >= 0) {
         // Si el item ya existe, actualiza la cantidad
         cart[itemIndex].cantidad += quantity;
-        if (item.sabores && item.sabores.length > 0) cart[itemIndex].sabores = item.sabores;
-        if (item.toppings && item.toppings.length > 0) cart[itemIndex].toppings = item.toppings;
-        // Nuevo: soportar sabor individual y observaciones (campo 'sabor' y 'observaciones')
-        if (item.sabor) cart[itemIndex].sabor = item.sabor;
+        if (item[primaryKey] && item[primaryKey].length > 0) cart[itemIndex][primaryKey] = item[primaryKey];
+        if (item[secondaryKey] && item[secondaryKey].length > 0) cart[itemIndex][secondaryKey] = item[secondaryKey];
+        // Nuevo: soportar item individual y observaciones
+        if (item[primaryKeySingular]) cart[itemIndex][primaryKeySingular] = item[primaryKeySingular];
         if (item.notes) cart[itemIndex].observaciones = item.notes;
         if (item.observaciones) cart[itemIndex].observaciones = item.observaciones;
     } else {
@@ -280,10 +298,10 @@ function addToCart(ctx, jid, item, quantity = 1) {
             nombre: item.nombre,
             precio: item.precio,
             cantidad: quantity,
-            sabores: item.sabores,
-            toppings: item.toppings,
-            // Nuevo: registrar sabor individual y observaciones si vienen desde el parser
-            sabor: item.sabor || null,
+            [primaryKey]: item[primaryKey],
+            [secondaryKey]: item[secondaryKey],
+            // Nuevo: registrar item individual y observaciones si vienen desde el parser
+            [primaryKeySingular]: item[primaryKeySingular] || null,
             observaciones: item.notes || item.observaciones || null
         });
     }
