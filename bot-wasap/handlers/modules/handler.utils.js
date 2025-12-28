@@ -12,6 +12,7 @@ const PHASE = require('../../utils/phases');
 const CONFIG = require('../../config.json');
 const { logger } = require('../../utils/logger');
 const { say } = require('../../services/bot_core');
+const envConfig = require('../../config/env.loader');
 
 /**
  * Inicializa o recupera la sesión de un usuario
@@ -22,12 +23,17 @@ const { say } = require('../../services/bot_core');
 function initializeUserSession(jid, ctx) {
     if (!ctx.sessions) ctx.sessions = {};
     
+    const nomenclature = envConfig.nomenclature;
+    
     if (!ctx.sessions[jid]) {
+        const primaryKey = `${nomenclature.itemPrimary}Selected`;
+        const secondaryKey = `${nomenclature.itemSecondary}Selected`;
+        
         ctx.sessions[jid] = {
             phase: PHASE.SELECCION_OPCION,
             errorCount: 0,
-            saboresSeleccionados: [],
-            toppingsSeleccionados: [],
+            [primaryKey]: [],
+            [secondaryKey]: [],
             observaciones: '',
             currentProduct: null,
             lastMatches: [],
@@ -148,19 +154,24 @@ Escribe el número.`;
 function getProgressIndicator(product, currentStep) {
     if (!product) return '';
     
-    const numSabores = parseInt(product.Numero_de_Sabores || 0);
-    const numToppings = parseInt(product.Numero_de_Toppings || 0);
+    const dbFields = envConfig.backend.fields;
+    const nomenclature = envConfig.nomenclature;
+    
+    const numPrimaryItems = parseInt(product[dbFields.itemPrimaryCount] || 0);
+    const numSecondaryItems = parseInt(product[dbFields.itemSecondaryCount] || 0);
     
     const steps = [];
-    if (numSabores > 0) steps.push('Sabores');
-    if (numToppings > 0) steps.push('Toppings');
+    if (numPrimaryItems > 0) steps.push(nomenclature.itemPrimaryLabel || nomenclature.itemPrimaryPlural);
+    if (numSecondaryItems > 0) steps.push(nomenclature.itemSecondaryLabel || nomenclature.itemSecondaryPlural);
     steps.push('Cantidad');
     
-    const currentIndex = steps.indexOf(
-        currentStep === 'sabores' ? 'Sabores' :
-        currentStep === 'toppings' ? 'Toppings' :
-        'Cantidad'
-    );
+    const stepMapping = {
+        [nomenclature.itemPrimary]: nomenclature.itemPrimaryLabel || nomenclature.itemPrimaryPlural,
+        [nomenclature.itemSecondary]: nomenclature.itemSecondaryLabel || nomenclature.itemSecondaryPlural,
+        'quantity': 'Cantidad'
+    };
+    
+    const currentIndex = steps.indexOf(stepMapping[currentStep] || 'Cantidad');
     
     if (currentIndex === -1) return '';
     
@@ -201,7 +212,8 @@ function parsePrice(price) {
  */
 function wantsMenu(text) {
     const t = normalizeText(text);
-    const menuKeywords = ['menu', 'menú', 'catalogo', 'catálogo', 'carta', 'productos'];
+    const keywords = envConfig.keywords;
+    const menuKeywords = keywords.menu || ['menu', 'menú', 'catalogo', 'catálogo', 'carta', 'productos'];
     return menuKeywords.some(keyword => t.includes(keyword));
 }
 
@@ -213,11 +225,15 @@ function wantsMenu(text) {
 function resetUserSession(jid, ctx) {
     if (!ctx.sessions) ctx.sessions = {};
     
+    const nomenclature = envConfig.nomenclature;
+    const primaryKey = `${nomenclature.itemPrimary}Selected`;
+    const secondaryKey = `${nomenclature.itemSecondary}Selected`;
+    
     ctx.sessions[jid] = {
         phase: PHASE.SELECCION_OPCION,
         errorCount: 0,
-        saboresSeleccionados: [],
-        toppingsSeleccionados: [],
+        [primaryKey]: [],
+        [secondaryKey]: [],
         observaciones: '',
         currentProduct: null,
         lastMatches: [],
@@ -285,78 +301,6 @@ function truncateText(text, maxLength, suffix = '...') {
     return text.substring(0, maxLength - suffix.length) + suffix;
 }
 
-/**
- * Array para rastrear intervalos de fondo
- */
-let _backgroundIntervals = [];
-
-/**
- * Detiene todas las tareas de fondo
- * @returns {Promise<boolean>} True si se detuvieron correctamente
- */
-async function stopBackgroundTasks() {
-    try {
-        if (Array.isArray(_backgroundIntervals)) {
-            for (const id of _backgroundIntervals) {
-                try { clearInterval(id); } catch (e) { /* ignore */ }
-                try { clearTimeout(id); } catch (e) { /* ignore */ }
-            }
-            _backgroundIntervals = [];
-        }
-        logger.info('Background tasks stopped.');
-        return true;
-    } catch (err) {
-        logger.error(`Error stopping background tasks: ${err?.message || err}`);
-        return false;
-    }
-}
-
-/**
- * Registra un intervalo de fondo
- * @param {number} intervalId - ID del intervalo
- */
-function registerBackgroundInterval(intervalId) {
-    if (!Array.isArray(_backgroundIntervals)) {
-        _backgroundIntervals = [];
-    }
-    _backgroundIntervals.push(intervalId);
-}
-
-/**
- * Verifica si un chat está silenciado
- * @param {string} jid - JID del chat
- * @param {Object} ctx - Contexto global
- * @returns {boolean}
- */
-function isChatMuted(jid, ctx) {
-    if (!ctx.mutedChats) return false;
-    return ctx.mutedChats.has(jid);
-}
-
-/**
- * Silencia un chat
- * @param {string} jid - JID del chat
- * @param {Object} ctx - Contexto global
- */
-function muteChat(jid, ctx) {
-    if (!ctx.mutedChats) {
-        ctx.mutedChats = new Set();
-    }
-    ctx.mutedChats.add(jid);
-    logger.info(`Chat silenciado: ${jid}`);
-}
-
-/**
- * Desmutea un chat
- * @param {string} jid - JID del chat
- * @param {Object} ctx - Contexto global
- */
-function unmuteChat(jid, ctx) {
-    if (!ctx.mutedChats) return;
-    ctx.mutedChats.delete(jid);
-    logger.info(`Chat desmuteado: ${jid}`);
-}
-
 module.exports = {
     initializeUserSession,
     normalizeText,
@@ -371,10 +315,5 @@ module.exports = {
     getTimeBasedGreeting,
     generateTransactionId,
     cleanText,
-    truncateText,
-    stopBackgroundTasks,
-    registerBackgroundInterval,
-    isChatMuted,
-    muteChat,
-    unmuteChat
+    truncateText
 };

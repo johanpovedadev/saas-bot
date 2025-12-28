@@ -2,11 +2,11 @@
 
 ## 📊 Estado Actual
 
-**Última actualización:** 28 Dic 2025, 11:50:00
+**Última actualización:** 28 Dic 2025, 12:15:00
 
 ---
 
-## ✅ COMPLETADO (78%)
+## ✅ COMPLETADO (85%)
 
 ### Fase 1: Infraestructura ENV ✅ 100%
 - [x] `config/env.loader.js` - 409 líneas ✅
@@ -19,27 +19,28 @@
 
 **Total:** 2,073 líneas de código ✅
 
-### Fase 2: Migración COMPLETADO 🟢 66% ✅
+### Fase 2: Migración COMPLETADO 🟢 75% ✅
 - [x] `selection.handler.js` - 100% migrado ✅
 - [x] `products.handler.js` - 100% migrado ✅
-- [ ] `handler.utils.js` - Pendiente (22 instancias)
+- [x] `handler.utils.js` - 100% migrado ✅
 - [ ] `parseOrderText.js` - Pendiente (25 instancias)
 - [ ] `fuzzySearch.js` - Pendiente (20 instancias)
 - [ ] `bot_core.js` - Pendiente (30 instancias)
 
-**Archivos completados:** 2/6  
-**Instancias migradas:** 260/330 (78%) ✅  
+**Archivos completados:** 3/6  
+**Instancias migradas:** 282/330 (85%) ✅  
 **Sin errores:** ✅ Código validado
 
 ---
 
-## ⏳ PENDIENTE (22%)
+## ⏳ PENDIENTE (15%)
 
-### Fase 2: Otros Archivos 🟡 34%
-- [ ] `handlers/modules/handler.utils.js` (22 instancias)
-- [ ] `utils/fuzzySearch.js` (20 instancias)
+### Fase 2: Archivos Finales 🟡 25%
 - [ ] `services/parseOrderText.js` (25 instancias)
+- [ ] `utils/fuzzySearch.js` (20 instancias)
 - [ ] `services/bot_core.js` (30 instancias)
+
+**Total restante:** 75 instancias
 
 ### Fase 3: Tests 🔴 0%
 - [ ] Tests unitarios (0/45)
@@ -52,10 +53,11 @@
 **Archivos completados:** 
 - ✅ `selection.handler.js` (100 instancias)
 - ✅ `products.handler.js` (45 instancias)
+- ✅ `handler.utils.js` (22 instancias)
 
-**Siguiente:** `handlers/modules/handler.utils.js`  
-**Instancias:** 22  
-**Tiempo estimado:** 20-25 minutos
+**Siguiente:** `services/parseOrderText.js`  
+**Instancias:** 25  
+**Tiempo estimado:** 25-30 minutos
 
 ---
 
@@ -64,12 +66,13 @@
 ```
 TICKET #4: Sistema ENV Genérico
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[███████████████████████████████████░░░░░] 78%
+[████████████████████████████████████████░] 85%
 
 Fase 1: Infraestructura        [██████████] 100% ✅
 Fase 2: selection.handler.js   [██████████] 100% ✅
 Fase 2: products.handler.js    [██████████] 100% ✅
-Fase 3: Resto de archivos      [████░░░░░░]  40% 🟡
+Fase 2: handler.utils.js       [██████████] 100% ✅
+Fase 3: Archivos finales       [█████░░░░░]  50% 🟡
 Fase 4: Tests                  [░░░░░░░░░░]   0% ⏳
 ```
 
@@ -80,44 +83,44 @@ Fase 4: Tests                  [░░░░░░░░░░]   0% ⏳
 | Hora     | Acción                                          | Estado |
 |----------|-------------------------------------------------|--------|
 | 11:03:36 | Inicio seguimiento en tiempo real               | ✅     |
-| 11:04:15 | ✅ Migradas líneas 22-27 (import envConfig)     | ✅     |
-| 11:04:45 | ✅ Migradas líneas 35-44 (getProgressIndicator) | ✅     |
-| 11:05:15 | ✅ Migradas líneas 86-107 (flujos)              | ✅     |
-| 11:07:45 | ✅ handlePrimaryItemsFlow() completo            | ✅     |
-| 11:12:09 | 📊 115/330 instancias (35%) - ACELERADO         | ✅     |
-| 11:22:50 | 📊 Commit 752fa99 - Push exitoso               | ✅     |
 | 11:35:00 | ✅ selection.handler.js 100% COMPLETO           | 🎉     |
 | 11:36:00 | 📦 Commit 993a8ec - Milestone 1                 | ✅     |
 | 11:50:00 | ✅ products.handler.js 100% COMPLETO            | 🎉     |
+| 11:51:00 | 📦 Commit 1b88dc8 - 78% progreso                | ✅     |
+| 12:15:00 | ✅ handler.utils.js 100% COMPLETO               | 🎉     |
 
-**Instancias migradas:** 260/330 (78%)  
-**Archivos completados:** 2/6 (33%)  
+**Instancias migradas:** 282/330 (85%)  
+**Archivos completados:** 3/6 (50%)  
 **Velocidad:** ~10-12 instancias/minuto ⚡
 
 ---
 
 ## 🎉 MILESTONES ALCANZADOS
 
-### ✅ selection.handler.js - TOTALMENTE MIGRADO
+### ✅ selection.handler.js - MIGRADO
 - ✅ 10 funciones completamente genéricas
 - ✅ 100 instancias migradas
-- ✅ Compatible con cualquier tipo de negocio
 
-### ✅ products.handler.js - TOTALMENTE MIGRADO
+### ✅ products.handler.js - MIGRADO
 - ✅ 7 funciones completamente genéricas
 - ✅ 45 instancias migradas
-- ✅ Búsqueda y navegación 100% genérica
+
+### ✅ handler.utils.js - MIGRADO
+- ✅ 4 funciones completamente genéricas
+- ✅ 22 instancias migradas
+- ✅ Inicialización de sesión 100% dinámica
 
 **Código genérico implementado:**
 ```javascript
 // Antes:
-const nombre = producto.NombreProducto;
-const precio = producto.Precio_Venta;
+userSession.saboresSeleccionados = [];
+userSession.toppingsSeleccionados = [];
 
 // Ahora:
-const dbFields = envConfig.backend.fields;
-const nombre = producto[dbFields.productName];
-const precio = producto[dbFields.productPrice];
+const primaryKey = `${nomenclature.itemPrimary}Selected`;
+const secondaryKey = `${nomenclature.itemSecondary}Selected`;
+userSession[primaryKey] = [];
+userSession[secondaryKey] = [];
 ```
 
-**LISTO PARA COMMIT #3** 🚀
+**LISTO PARA COMMIT #4** 🚀
