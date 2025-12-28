@@ -25,6 +25,7 @@ const { handleProductSelection } = require('../../services/bot_core');
 const { fuzzySearchProducts } = require('../../utils/fuzzySearch');
 const CONFIG = require('../../config.json');
 const SECRETS = require('../../config.secrets');
+const envConfig = require('../../config/env.loader');
 
 // API Configuration
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
@@ -102,13 +103,14 @@ async function searchInCache(query, ctx, jid) {
         return [];
     }
 
+    const dbFields = envConfig.backend.fields;
     logger.info(`[${jid}] -> Buscando "${query}" en cache de ${ctx.productsCache.length} productos`);
 
     // Búsqueda exacta primero
     const queryLower = query.toLowerCase();
     let productos = ctx.productsCache.filter(p => {
-        const nombre = (p.NombreProducto || '').toLowerCase();
-        const codigo = (p.CodigoProducto || '').toLowerCase();
+        const nombre = (p[dbFields.productName] || '').toLowerCase();
+        const codigo = (p[dbFields.productCode] || '').toLowerCase();
         return nombre.includes(queryLower) || codigo.includes(queryLower);
     });
 
@@ -137,6 +139,7 @@ async function searchInCache(query, ctx, jid) {
 async function searchInAPI(query, ctx, jid) {
     logger.info(`[${jid}] -> Buscando en API: "${query}"`);
 
+    const dbFields = envConfig.backend.fields;
     const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, {
         params: { q: query },
         timeout: 8000
@@ -145,7 +148,7 @@ async function searchInAPI(query, ctx, jid) {
     let productos = [];
     if (response.data.matches) {
         productos = response.data.matches;
-    } else if (response.data.CodigoProducto) {
+    } else if (response.data[dbFields.productCode]) {
         productos = [response.data];
     }
 
@@ -159,19 +162,25 @@ async function searchInAPI(query, ctx, jid) {
  * @returns {Array} Productos normalizados
  */
 function normalizeProductsData(productos) {
+    const dbFields = envConfig.backend.fields;
+    
     return productos.map(p => {
         // Normalizar precio
-        if (p.Precio_Venta) {
-            const precioString = String(p.Precio_Venta);
-            p.Precio_Venta = parseFloat(precioString.replace('.', ''));
+        const priceField = dbFields.productPrice;
+        if (p[priceField]) {
+            const precioString = String(p[priceField]);
+            p[priceField] = parseFloat(precioString.replace('.', ''));
         }
         
-        // Normalizar números de sabores y toppings
-        if (p.Numero_de_Sabores) {
-            p.Numero_de_Sabores = parseInt(p.Numero_de_Sabores, 10);
+        // Normalizar números de items primarios y secundarios
+        const primaryCountField = dbFields.itemPrimaryCount;
+        const secondaryCountField = dbFields.itemSecondaryCount;
+        
+        if (p[primaryCountField]) {
+            p[primaryCountField] = parseInt(p[primaryCountField], 10);
         }
-        if (p.Numero_de_Toppings) {
-            p.Numero_de_Toppings = parseInt(p.Numero_de_Toppings, 10);
+        if (p[secondaryCountField]) {
+            p[secondaryCountField] = parseInt(p[secondaryCountField], 10);
         }
         
         return p;
@@ -188,7 +197,10 @@ function normalizeProductsData(productos) {
  * @returns {Promise<void>}
  */
 async function handleSingleProductFound(sock, jid, producto, userSession, ctx) {
-    logger.info(`[${jid}] -> Producto único encontrado: ${producto.NombreProducto}`);
+    const dbFields = envConfig.backend.fields;
+    const nomenclature = envConfig.nomenclature;
+    
+    logger.info(`[${jid}] -> Producto único encontrado: ${producto[dbFields.productName]}`);
 
     await handleProductSelection(sock, jid, producto, ctx);
     
@@ -197,13 +209,13 @@ async function handleSingleProductFound(sock, jid, producto, userSession, ctx) {
     userSession.errorCount = 0;
 
     // Determinar el campo que se debe esperar
-    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
-    const numToppings = parseInt(producto.Numero_de_Toppings || 0, 10);
+    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
+    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
 
-    if (numSabores > 0) {
-        userSession.awaitingField = 'sabores';
-    } else if (numToppings > 0) {
-        userSession.awaitingField = 'toppings';
+    if (numPrimaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemPrimary;
+    } else if (numSecondaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemSecondary;
     } else {
         userSession.awaitingField = 'quantity';
     }
@@ -222,13 +234,16 @@ async function handleSingleProductFound(sock, jid, producto, userSession, ctx) {
 async function handleMultipleProductsFound(sock, jid, productos, userSession, ctx, originalQuery) {
     logger.info(`[${jid}] -> Múltiples productos encontrados: ${productos.length}`);
 
+    const dbFields = envConfig.backend.fields;
     userSession.phase = PHASE.SELECCION_PRODUCTO;
     userSession.lastMatches = productos;
     userSession.errorCount = 0;
 
-    const list = productos.slice(0, 10).map((p, i) => 
-        `*${i + 1}.* ${p.NombreProducto} ${p.Precio_Venta ? `- $${p.Precio_Venta.toLocaleString()}` : ''}`
-    ).join('\n');
+    const list = productos.slice(0, 10).map((p, i) => {
+        const nombre = p[dbFields.productName];
+        const precio = p[dbFields.productPrice];
+        return `*${i + 1}.* ${nombre} ${precio ? `- $${precio.toLocaleString()}` : ''}`;
+    }).join('\n');
 
     await say(sock, jid, 
         `🤔 Encontré varios productos similares a *"${originalQuery}"*:\n\n${list}\n\n` +
@@ -250,6 +265,9 @@ async function handleMultipleProductsFound(sock, jid, productos, userSession, ct
 async function handleNoProductsFound(sock, jid, query, userSession, ctx, originalQuery) {
     logger.info(`[${jid}] -> No se encontraron productos para: "${query}"`);
 
+    const dbFields = envConfig.backend.fields;
+    const keywords = envConfig.keywords;
+    
     // Intentar sugerencias con fuzzy search muy tolerante
     let sugerencias = [];
     if (ctx.productsCache && Array.isArray(ctx.productsCache) && ctx.productsCache.length > 0) {
@@ -261,7 +279,7 @@ async function handleNoProductsFound(sock, jid, query, userSession, ctx, origina
 
     if (sugerencias.length > 0) {
         const sugerenciasList = sugerencias.map((p, i) => 
-            `*${i + 1}.* ${p.NombreProducto}`
+            `*${i + 1}.* ${p[dbFields.productName]}`
         ).join('\n');
         
         await say(sock, jid, 
@@ -275,10 +293,14 @@ async function handleNoProductsFound(sock, jid, query, userSession, ctx, origina
         userSession.lastMatches = sugerencias;
     } else {
         userSession.errorCount++;
+        
+        // Construir lista de keywords dinámicamente
+        const productKeywords = keywords.products || [];
+        const keywordsList = productKeywords.slice(0, 6).map(k => `• ${k}`).join('\n');
+        
         await say(sock, jid, 
             `❌ No encontré el producto *"${originalQuery}"*.\n\n` +
-            `💡 Intenta con palabras clave como:\n` +
-            `• Copa\n• Paleta\n• Caja\n• Litro\n• Volcán\n• Brownie\n\n` +
+            `💡 Intenta con palabras clave como:\n${keywordsList}\n\n` +
             `O escribe *menú* para ver todas las opciones 😊`, 
             ctx
         );
@@ -297,6 +319,8 @@ async function handleNoProductsFound(sock, jid, query, userSession, ctx, origina
 async function handleSeleccionProducto(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Selección de producto: "${input}"`);
 
+    const dbFields = envConfig.backend.fields;
+    const nomenclature = envConfig.nomenclature;
     const selection = parseInt(input, 10);
     const matches = userSession.lastMatches || [];
 
@@ -320,13 +344,13 @@ async function handleSeleccionProducto(sock, jid, input, userSession, ctx) {
     userSession.errorCount = 0;
 
     // Determinar el campo que se debe esperar
-    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
-    const numToppings = parseInt(producto.Numero_de_Toppings || 0, 10);
+    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
+    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
 
-    if (numSabores > 0) {
-        userSession.awaitingField = 'sabores';
-    } else if (numToppings > 0) {
-        userSession.awaitingField = 'toppings';
+    if (numPrimaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemPrimary;
+    } else if (numSecondaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemSecondary;
     } else {
         userSession.awaitingField = 'quantity';
     }
