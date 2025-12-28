@@ -493,6 +493,49 @@ async function sendOrderNotification(sock, userOrder, ctx) {
     }
 }
 
+/**
+ * Maneja todas las fases del checkout
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {string} text - Texto del usuario
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ */
+async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
+    const PHASE = require('../utils/phases');
+    
+    switch (userSession.phase) {
+        case PHASE.RESUMEN_CARRITO:
+            await handleCartSummary(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.INGRESAR_NOMBRE:
+            await handleEnterName(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.INGRESAR_DIRECCION:
+            await handleEnterAddress(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.INGRESAR_TELEFONO:
+            await handleEnterTelefono(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.INGRESAR_METODO_PAGO:
+            await handleEnterPaymentMethod(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.CONFIRMAR_ORDEN:
+            await handleConfirmOrder(sock, jid, text, userSession, ctx);
+            break;
+            
+        default:
+            const { logger } = require('../utils/logger');
+            logger.warn(`[${jid}] Fase de checkout desconocida: ${userSession.phase}`);
+            break;
+    }
+}
+
 module.exports = {
     handleCartSummary,
     handleEnterAddress,
@@ -502,5 +545,6 @@ module.exports = {
     handleFinalizeOrder,
     handleConfirmOrder,
     validateInput,
-    sendOrderNotification
+    sendOrderNotification,
+    handleCheckoutPhase
 };

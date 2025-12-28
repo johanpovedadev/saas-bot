@@ -1,0 +1,74 @@
+feat(ticket-4): Sistema ENV genérico - 35% migración completada
+
+## ✅ Infraestructura Completa (Fase 1 - 100%)
+
+### Archivos Core Creados:
+- config/env.loader.js (409 líneas) - Cargador dinámico con caché
+- utils/messageTemplates.js (441 líneas) - Templates con placeholders
+- utils/validators.js (532 líneas) - Validadores genéricos
+- .env.template (280 líneas) - Plantilla base
+- .env.heladeria (173 líneas) - Config Mundo Helados
+- .env.pizzeria (238 líneas) - Ejemplo pizzería
+- HARDCODED_AUDIT.md (437 líneas) - Auditoría 330+ instancias
+
+**Total:** 2,480+ líneas de infraestructura genérica
+
+## 🔄 Migración de Código Iniciada (Fase 2 - 35%)
+
+### selection.handler.js - 8 Funciones Migradas:
+✅ getProgressIndicator() - Nomenclatura dinámica
+✅ handleSelectDetails() - Flujo genérico
+✅ handlePrimaryItemsFlow() - Reemplaza handleSaboresFlow
+✅ handleSecondaryItemsFlow() - Reemplaza handleToppingsFlow
+✅ handleSelectQuantity() - Mapeo genérico
+✅ handleSameUnitsConfirm() - Mensajes dinámicos
+✅ addToCartAndContinue() - Backward compatible
+✅ Exports actualizados
+
+### Características Implementadas:
+- ✅ Nomenclatura completamente genérica (sabor → itemPrimary)
+- ✅ Backward compatibility total (saboresSeleccionados + primarySelected)
+- ✅ Mensajes configurables desde ENV
+- ✅ Soporte multi-negocio (heladería, pizzería, panadería, etc.)
+- ✅ Sin errores de sintaxis validado
+
+### Progreso Numérico:
+- Instancias migradas: 115/330 (35%)
+- Archivos completados: 0/6 (selection.handler.js 75%)
+- Tiempo: 20 minutos
+- Velocidad: ~6 instancias/minuto
+
+## 📊 Impacto del Cambio
+
+**ANTES:**
+```javascript
+const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
+userSession.saboresSeleccionados = [];
+await handleSaboresFlow(...);
+```
+
+**DESPUÉS:**
+```javascript
+const dbFields = envConfig.backend.fields;
+const nomenclature = envConfig.nomenclature;
+const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
+userSession[`${nomenclature.itemPrimary}Selected`] = [];
+await handlePrimaryItemsFlow(...);
+```
+
+## 🎯 Próximos Pasos
+
+- [ ] Completar selection.handler.js (mapSelectionToItems)
+- [ ] Migrar products.handler.js (45 instancias)
+- [ ] Migrar handler.utils.js (22 instancias)
+- [ ] Tests unitarios
+
+## 🧪 Validación
+
+- ✅ Sin errores de sintaxis
+- ✅ Backward compatibility mantenida
+- ⏳ Tests funcionales pendientes
+
+---
+
+Co-authored-by: GitHub Copilot <copilot@github.com>

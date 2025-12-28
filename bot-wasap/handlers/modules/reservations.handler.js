@@ -360,6 +360,102 @@ function getReservationState(userSession) {
     };
 }
 
+/**
+ * Maneja la entrada de campos pendientes (nombre, dirección, teléfono, confirmación)
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {string} text - Texto del usuario
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ */
+async function handleAwaitingField(sock, jid, text, userSession, ctx) {
+    const field = userSession.awaitingField;
+    
+    logger.info(`[${jid}] Procesando campo pendiente: ${field}`);
+    
+    switch (field) {
+        case 'telefono_reserva':
+            await handleTelefonoReserva(sock, jid, text, userSession, ctx);
+            break;
+            
+        case 'confirm_reserva':
+            await handleConfirmReserva(sock, jid, text, userSession, ctx);
+            break;
+            
+        default:
+            logger.warn(`[${jid}] Campo desconocido: ${field}`);
+            userSession.awaitingField = null;
+            await say(sock, jid, 'Hubo un error. Por favor intenta de nuevo o escribe *menú*.', ctx);
+            break;
+    }
+}
+
+/**
+ * Maneja pedidos por encargo (litros, eventos)
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {string} text - Texto del usuario
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ */
+async function handleEncargo(sock, jid, text, userSession, ctx) {
+    const t = text.toLowerCase().trim();
+    
+    // Intentar parsear el texto como reserva
+    const parsed = parseReservationText(text);
+    
+    if (parsed) {
+        logger.info(`[${jid}] Reserva parseada exitosamente`);
+        
+        // Guardar datos de reserva
+        if (!userSession.order) userSession.order = {};
+        if (!userSession.pendingReserva) userSession.pendingReserva = {};
+        
+        userSession.pendingReserva.reserva = {
+            name: parsed.name || '',
+            address: parsed.address || '',
+            tipo: parsed.tipo || 'recoger',
+            payment: parsed.payment || 'efectivo',
+            telefono: parsed.telefono || '',
+            createdAt: new Date().toISOString()
+        };
+        
+        // Si falta teléfono, pedirlo
+        if (!parsed.telefono) {
+            userSession.awaitingField = 'telefono_reserva';
+            await say(sock, jid, '📱 Por favor ingresa tu número de teléfono:', ctx);
+        } else {
+            // Pedir confirmación directamente
+            userSession.awaitingField = 'confirm_reserva';
+            const addrText = parsed.address ? `Dirección: ${parsed.address}\n` : '';
+            const tipoText = parsed.tipo === 'recoger' ? 'Recoger' : 'Comer en instalación';
+            
+            await say(sock, jid, 
+                `📋 *Confirma tu reserva:*\n\n` +
+                `Nombre: ${parsed.name || '—'}\n` +
+                `Tipo: ${tipoText}\n` +
+                `${addrText}` +
+                `Teléfono: ${parsed.telefono}\n` +
+                `Pago: ${parsed.payment}\n\n` +
+                `¿Es correcto? (responde *si* o *no*)`, 
+                ctx
+            );
+        }
+    } else {
+        // No se pudo parsear, mostrar instrucciones
+        await say(sock, jid, 
+            `📦 *Pedidos por Encargo*\n\n` +
+            `Para hacer un pedido especial (litros, eventos, grandes cantidades), ` +
+            `envía un mensaje con el siguiente formato:\n\n` +
+            `*Nombre, dirección, tipo, pago, teléfono*\n\n` +
+            `Ejemplo:\n` +
+            `"Juan Pérez, Calle 10 #20-30, recoger, efectivo, 3001234567"\n\n` +
+            `O simplemente dinos qué necesitas y te ayudamos. 😊`, 
+            ctx
+        );
+    }
+}
+
 // ==========================================
 // EXPORTS
 // ==========================================
@@ -367,6 +463,8 @@ module.exports = {
     parseReservationText,
     handleTelefonoReserva,
     handleConfirmReserva,
+    handleAwaitingField,
+    handleEncargo,
     saveReservation,
     getReservationState
 };
