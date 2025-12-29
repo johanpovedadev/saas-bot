@@ -12,6 +12,8 @@ const PHASE = require('../utils/phases');
 const CONFIG = require('../config.json');
 const SECRETS = require('../config.secrets');
 const notificationService = require('../services/notificationService');
+// NOTA: Google Sheets se maneja desde el backend de Python (inventario/google_sheets.py)
+// const googleSheetsService = require('../services/googleSheetsService');
 const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
 
 // Resolve admin JIDs - delegado a notificationService
@@ -365,12 +367,41 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         const endpoint = (CONFIG.ENDPOINTS && (CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION || CONFIG.ENDPOINTS.REGISTRAR_ENTREGA))
             ? (CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION || CONFIG.ENDPOINTS.REGISTRAR_ENTREGA)
             : '/registrar_entrega/';
-        const url = `${API_BASE}${endpoint}`;
-
-        try {
+        const url = `${API_BASE}${endpoint}`;        try {
             logger.info(`[${jid}] Enviando payload a ${url}: ${JSON.stringify(payload)}`);
             const resp = await axios.post(url, payload, { timeout: 10000 });
             logger.info(`[${jid}] Backend respondió: ${resp.status} ${resp.statusText}`);
+
+            // 📊 GUARDAR EN GOOGLE SHEETS (pestaña Domicilios)
+            try {
+                const sheetData = {
+                    cliente: payload.nombre || 'Sin nombre',
+                    telefono: payload.telefono || jid,
+                    direccion: payload.direccion || '',
+                    barrio: payload.barrio || '',
+                    productos: productsText.replace(/;\s*/g, ', '),
+                    total: orderTotal,
+                    metodoPago: payload.pago || 'No especificado',
+                    estado: payload.estado || 'Pendiente',
+                    observaciones: payload.observaciones || '',                    jid: jid
+                };
+                
+                // Google Sheets: el backend de Python guarda automáticamente en la pestaña "Domicilios"
+                // cuando se llama al endpoint /crear_pedido/
+                logger.info(`[${jid}] ℹ️  El backend guardará el pedido en Google Sheets (pestaña: ${process.env.SHEET_TAB_DOMICILIOS || 'Domicilios'})`);
+                
+                /* DESHABILITADO: El backend de Python ya maneja Google Sheets
+                const savedToSheets = await googleSheetsService.savePedidoToSheets(sheetData);
+                if (savedToSheets) {
+                    logger.info(`[${jid}] ✅ Pedido guardado en Google Sheets`);
+                } else {
+                    logger.warn(`[${jid}] ⚠️ No se pudo guardar en Google Sheets (continúa sin error)`);
+                }
+                */
+            } catch (sheetsError) {
+                logger.error(`[${jid}] Error al guardar en Sheets: ${sheetsError.message}`);
+                // No lanzar error, continuar con el flujo
+            }
 
             const admins = getAdminJids() || [];
             if (!admins || admins.length === 0) logger.warn('handleFinalizeOrder: no admin JIDs configured; skipping admin notification.');

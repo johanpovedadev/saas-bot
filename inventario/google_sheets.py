@@ -30,8 +30,8 @@ def _get_service_account_file():
     return 'service_account.json'
 
 SERVICE_ACCOUNT_FILE = _get_service_account_file()
-ENTREGAS_SPREADSHEET_ID = '1479sKgwA2ES503noFusdM-rOYv412-ogcqEouI6zQgI'
-ENTREGAS_SHEET_NAME = 'Entregas'
+ENTREGAS_SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID', '1479sKgwA2ES503noFusdM-rOYv412-ogcqEouI6zQgI')
+ENTREGAS_SHEET_NAME = os.environ.get('SHEET_TAB_DOMICILIOS', 'Domicilios')
 
 def conectar_sheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
