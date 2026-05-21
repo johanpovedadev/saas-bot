@@ -3,8 +3,10 @@
 module.exports = {
     business: {
         id: 'SEGUROS_MASCOTAS',
-        name: 'Seguros Mascotas',
-        shortName: 'Seguros Mascotas',
+        name: 'TE ASEGURAMOS',
+        shortName: 'TE ASEGURAMOS',
+        brand: 'TE ASEGURAMOS',
+        partner: 'Seguros Mundial',
         type: 'seguros_mascotas',
         industry: 'insurance',
         city: 'Bogotá',
@@ -20,7 +22,6 @@ module.exports = {
         whatsapp: '+573138777115',
         email: 'seguros@mascotas.co',
         website: 'https://www.segurosmundial.com.co/pagos/',
-
         address: {
             street: 'Av Principal #123',
             neighborhood: 'Centro',
@@ -30,7 +31,6 @@ module.exports = {
             coordinates: { lat: 4.711, lng: -74.0721 },
             googleMapsUrl: null
         },
-
         socialMedia: {
             facebook: null,
             instagram: null,
@@ -51,13 +51,34 @@ module.exports = {
         specialDays: []
     },
 
+    plans: {
+        perroPlus: {
+            name: 'Plan PLUS',
+            price: 25000,
+            label: 'Plan PLUS Perro',
+            code: 'PLUS'
+        },
+        perroPremium: {
+            name: 'Plan PREMIUM',
+            price: 45000,
+            label: 'Plan PREMIUM Perro',
+            code: 'PREMIUM'
+        },
+        gato: {
+            name: 'Plan Gato',
+            price: 20000,
+            label: 'Plan Gato',
+            code: 'GATO'
+        }
+    },
+
     bot: {
-        welcomeMessage: `🐾 Hola, bienvenido
+        welcomeMessage: `🐾 Hola, bienvenido a TE ASEGURAMOS
+Aliados de Seguros Mundial ❤️
 
-Sabemos que tu mascota es parte de tu familia ❤️
-Aquí puedes protegerla fácil, rápido y sin complicaciones.
+Sabemos que tu mascota es parte de tu familia.
 
-¿A quién quieres cuidar hoy?
+¿A quién deseas proteger hoy?
 
 1️⃣ Perro 🐶
 2️⃣ Gato 🐱`,
@@ -67,9 +88,12 @@ Aquí puedes protegerla fácil, rápido y sin complicaciones.
                 { id: '1', label: 'Perro 🐶', emoji: '🐶' },
                 { id: '2', label: 'Gato 🐱', emoji: '🐱' }
             ],
-            message: `🐾 Sabemos que tu mascota es parte de tu familia ❤️
+            message: `🐾 Hola, bienvenido a TE ASEGURAMOS
+Aliados de Seguros Mundial ❤️
 
-¿A quién quieres cuidar hoy?
+Sabemos que tu mascota es parte de tu familia.
+
+¿A quién deseas proteger hoy?
 
 1️⃣ Perro 🐶
 2️⃣ Gato 🐱
@@ -77,7 +101,8 @@ Aquí puedes protegerla fácil, rápido y sin complicaciones.
 Escribe el número de la opción.`
         },
 
-        infoMessage: `📍 *Seguros Mascotas*
+        infoMessage: `📍 *TE ASEGURAMOS*
+Aliados de Seguros Mundial
 
 Protege a tu mascota con los mejores planes.
 
@@ -111,9 +136,10 @@ Protege a tu mascota con los mejores planes.
         greetings: {
             type: 'colombia',
             customGreetings: [
+                'hola te aseguramos',
                 'hola seguro mascotas',
                 'hola seguros mascotas',
-                'buenas seguro mascotas',
+                'buenas te aseguramos',
                 'proteccion mascotas',
                 'seguro perro',
                 'seguro gato',
@@ -133,91 +159,120 @@ Protege a tu mascota con los mejores planes.
             },
 
             messages: {
-                gato: `🐱 Protección para tu gato en todo momento
+                gato: `🐱 *Plan Gato*
+
+Protección completa para tu felino 🐱
 
 ✨ Atención veterinaria
 ✨ Cobertura por accidentes
 ✨ Asistencia exequial
 
+💰 *Valor: $20.000/mes*
+
 ¿Deseas continuar?
 
 1️⃣ Sí, continuar`,
 
-                perroPlus: `🐶 Plan PLUS
+                perroPlus: `🐶 *Plan PLUS*
 
 Protección esencial para tu compañero de vida 🐾
+
+✨ Cubrimiento veterinario básico
+✨ Cobertura por accidentes
+✨ Asistencia exequial
+
+💰 *Valor: $25.000/mes*
 
 1️⃣ Elegir este plan
 2️⃣ Ver plan PREMIUM`,
 
-                perroPremium: `🐶 Plan PREMIUM
+                perroPremium: `🐶 *Plan PREMIUM*
 
 Máxima protección para quien más quieres ❤️
 
+✨ Cubrimiento veterinario completo
+✨ Cobertura por accidentes
+✨ Asistencia exequial
+✨ Descuentos en medicamentos
+
+💰 *Valor: $45.000/mes*
+
 1️⃣ Elegir este plan`,
 
-                datosTitular: `Perfecto 🙌
+                datosTitularNombre: `Perfecto 🙌
 
 Vamos a proteger a tu mascota 🐾
 
 ✍️ ¿Cuál es tu nombre completo?`,
 
-                datosTitularDocumento: `📄 ¿Qué tipo de documento tienes?`,
+                datosTitularDocumento: `📄 ¿Qué tipo de documento tienes?
+
+1️⃣ Cédula de Ciudadanía
+2️⃣ NIT
+3️⃣ Tarjeta de Identidad
+4️⃣ Cédula de Extranjería`,
 
                 datosTitularNumero: `🔢 ¿Cuál es tu número de identificación?`,
 
-                datosTitularFechaExp: `📅 ¿Fecha de expedición del documento?`,
+                datosTitularFechaNacimiento: `🎂 ¿Cuál es tu fecha de nacimiento?
 
-                datosTitularCiudad: `📍 ¿Ciudad?`,
+📝 Formato: DD/MM/YYYY
+Ejemplo: 15/03/1990`,
 
-                datosTitularDireccion: `🏠 ¿Dirección?`,
+                datosTitularCiudad: `📍 ¿Ciudad y departamento?
 
-                datosTitularContacto: `📞 ¿Número de contacto?`,
+Ejemplo: Bogotá, Cundinamarca`,
 
-                datosTitularEmail: `📧 ¿Correo electrónico?`,
+                datosTitularContacto: `📞 ¿Cuál es tu número de celular?
+
+Ejemplo: 3138777115`,
 
                 datosMascotaNombre: `🐾 ¿Cómo se llama tu mascota?`,
 
-                datosMascotaEdad: `🎂 ¿Año de nacimiento?`,
+                datosMascotaEdad: `🎂 ¿Cuántos años tiene tu mascota?
 
-                datosMascotaRaza: `🦴 ¿Qué raza es?`,
+📝 Solo números (ej: 3, 5, 8)`,
 
-                datosMascotaColor: `🎨 ¿Color de la mascota?`,
+                datosMascotaRaza: `🦴 ¿Qué raza es?
 
-                datosMascotaGenero: `⚧️ ¿Género?
-
-1️⃣ Macho
-2️⃣ Hembra`,
+Ejemplo: Golden Retriever, Criollo, Pastor Alemán`,
 
                 confirmacion: `💛 Ya casi terminamos
 
 Confirma tu información:
 
-👤 {nombre}
-🐾 {mascota}
-📦 {plan}
+👤 *Titular:*
+Nombre: {nombre}
+Documento: {documento}
+Fecha Nac.: {fechaNac}
+Ciudad/Dep: {ciudad}
+Celular: {contacto}
+
+🐾 *Mascota:*
+Nombre: {mascota}
+Edad: {edad} años
+Raza: {raza}
+
+📦 *Plan:* {plan}
 
 1️⃣ Confirmar
 2️⃣ Corregir`,
 
-                pago: `✨ Estás a un paso de proteger a quien amas
+                rechazoEdad: `😔 Lo sentimos, {nombre}.
 
-Realiza tu pago aquí:
+Actualmente no es posible asegurar mascotas mayores de 12 años.
 
-https://www.segurosmundial.com.co/pagos/
+Gracias por comunicarte con TE ASEGURAMOS, aliados de Seguros Mundial ❤️`,
 
-Cuando termines escribe:
-LISTO`,
+                final: `💛 Perfecto, {nombre}.
 
-                final: `🎉 ¡Listo!
+Tu solicitud fue registrada exitosamente.
 
-Tu solicitud fue registrada 💛
+📞 Un asesor de TE ASEGURAMOS y Seguros Mundial se pondrá en contacto contigo para continuar el proceso de emisión y pago de la póliza.
 
-Un asesor validará tu pago y te enviará la póliza.
+¡Gracias por proteger a tu compañero de vida! 🐾`,
 
-Gracias por cuidar a tu compañero de vida 🐾`,
-
-                error: `❌ Opción no válida
+                error: `❌ Opción no válida.
 
 Por favor selecciona una opción del menú.`
             }
