@@ -4,242 +4,135 @@ console.log('--- Iniciando diagnóstico en bot_core.js ---');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
-const { logConversation } = require('../utils/logger');
+const { logConversation, logger } = require('../utils/logger');
 const { sleep, money } = require('../utils/util');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const CONFIG = require('../config.json');
-// Centralized secrets loader (loads .env in development)
-const SECRETS = require('../config.secrets');
 const envConfig = require('../config/env.loader');
+const { getCategoriasGenericas } = require('./productService');
+const PHASE = require('../utils/phases');
+
+// Validación y fallback para business.location
+if (!envConfig.business.location || typeof envConfig.business.location !== 'object') {
+    envConfig.business.location = {
+        city: process.env.BUSINESS_CITY || 'Ciudad',
+        address: process.env.BUSINESS_ADDRESS || '',
+        timezone: process.env.BUSINESS_TIMEZONE || 'America/Bogota',
+    };
+}
 
 /**
  * Calcula el indicador de progreso basado en los pasos del producto (genérico)
  * @param {Object} producto - Producto seleccionado
  * @param {string} currentStep - Paso actual: 'primary', 'secondary', 'quantity'
+ * @param {Object} [ctx] - Contexto opcional para usar configuración mock
  * @returns {string} - Indicador de progreso (ej: "📍 Paso 1 de 3")
  */
-function getProgressIndicator(producto, currentStep) {
-    const dbFields = envConfig.getDbFields();
-    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
-    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
-    
+function getProgressIndicator(producto, currentStep, ctx) {
+    let dbFields;
+    if (ctx && ctx.envConfig && ctx.envConfig.backend && ctx.envConfig.backend.fields) {
+        dbFields = ctx.envConfig.backend.fields;
+    } else if (envConfig.backend && envConfig.backend.fields) {
+        dbFields = envConfig.backend.fields;
+    } else {
+        dbFields = { itemPrimaryCount: '', itemSecondaryCount: '' };
+    }
+    // Si los campos están desactivados, no mostrar indicador de progreso ni lanzar error
+    if (!dbFields.itemPrimaryCount && !dbFields.itemSecondaryCount) {
+        return '';
+    }
+    // Defensive: check required fields
+    if (!dbFields.itemPrimaryCount || !dbFields.itemSecondaryCount) {
+        const errMsg = `[getProgressIndicator] Configuración incompleta: dbFields=${JSON.stringify(dbFields)} producto=${JSON.stringify(producto)} ctx.envConfig=${ctx && ctx.envConfig ? JSON.stringify(ctx.envConfig) : 'N/A'}`;
+        require('../utils/logger').logger.error(errMsg);
+        throw new Error('Configuración de campos de producto incompleta. Revisa DB_FIELD_ITEM_PRIMARY_COUNT y DB_FIELD_ITEM_SECONDARY_COUNT en .env');
+    }
+    const itemPrimaryCountKey = dbFields.itemPrimaryCount;
+    const itemSecondaryCountKey = dbFields.itemSecondaryCount;
+    const numPrimaryItems = parseInt(producto[itemPrimaryCountKey] || 0, 10);
+    const numSecondaryItems = parseInt(producto[itemSecondaryCountKey] || 0, 10);
     // Determinar cuántos pasos totales hay
     const steps = [];
     if (numPrimaryItems > 0) steps.push('primary');
     if (numSecondaryItems > 0) steps.push('secondary');
     steps.push('quantity'); // Siempre hay paso de cantidad
-    
     const totalSteps = steps.length;
     const currentStepIndex = steps.indexOf(currentStep) + 1;
-    
     if (currentStepIndex > 0 && totalSteps > 1) {
-        return `📍 *Paso ${currentStepIndex} de ${totalSteps}*`;
+        return `📍 *Paso ${currentStepIndex} de ${totalSteps}:*`;
     }
-    
-    return ''; // Si solo hay 1 paso, no mostrar indicador
-}
-
-async function getSaboresYToppings(ctx) {
-    const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
-    const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-    let endpoints = null;
-    try {
-        if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
-    } catch(e) { endpoints = null; }
-    endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
-    const listEndpoint = (endpoints && endpoints.LISTAR_SABORES_TOPPINGS) ? endpoints.LISTAR_SABORES_TOPPINGS : '/consultar_sabores_y_toppings/';
-    
-    const nomenclature = envConfig.getNomenclature();
-    const dbFields = envConfig.getDbFields();
-    
-    try {
-        const url = `${apiBase}${listEndpoint}`;
-        console.log(`🔍 Consultando ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} desde: ${url}`);
-        const response = await axios.get(url);
-        
-        console.log(`📦 Respuesta recibida. Status: ${response?.status}`);
-        console.log(`📦 Data keys:`, response?.data ? Object.keys(response.data) : 'NO DATA');
-        console.log(`📦 ${nomenclature.itemPrimaryPlural} raw length:`, response?.data?.sabores?.length || 0);
-        console.log(`📦 ${nomenclature.itemSecondaryPlural} raw length:`, response?.data?.toppings?.length || 0);
-        
-        if (response && response.data) {
-            // Normalize entries so downstream code can rely on NombreProducto, CodigoProducto and numeric Precio_Venta
-            const data = response.data;
-            const normalizeList = (arr) => {
-                if (!Array.isArray(arr)) {
-                    console.warn(`⚠️  normalizeList recibió un no-array:`, typeof arr);
-                    return [];
-                }
-                console.log(`🔄 Normalizando ${arr.length} items...`);
-                return arr.map(it => {
-                    const obj = Object.assign({}, it);
-                    // Normalize name and code fields
-                    obj[dbFields.productName] = obj[dbFields.productName] || obj.nombre || obj.Name || obj.Nombre || null;
-                    obj[dbFields.productCode] = obj[dbFields.productCode] || obj.codigo || obj.Code || obj.Codigo || null;
-
-                    // Detect price in various fields and parse to number (handles '1.000' or '1,000.50')
-                    const priceCandidates = [obj[dbFields.productPrice], obj.Precio, obj.precio, obj.Price, obj.price];
-                    let priceRaw = null;
-                    for (const p of priceCandidates) {
-                        if (typeof p !== 'undefined' && p !== null && String(p).toString().trim() !== '') { priceRaw = p; break; }
-                    }
-                    if (priceRaw !== null) {
-                        try {
-                            // Convert to string and remove non-numeric punctuation except decimal comma/dot
-                            let s = String(priceRaw).trim();
-                            // If like '1.000' treat '.' as thousands separator: remove dots and replace comma with dot
-                            // Heuristics: if more than one dot and no comma, remove all dots; if comma present and dot present, remove dots then replace comma
-                            if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
-                                s = s.replace(/\./g, '');
-                            }
-                            // Replace thousands separator dot when pattern like '1.000' (single dot and no comma)
-                            if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
-                                // assume dot is thousands separator if there are three digits after it
-                                const parts = s.split('.');
-                                if (parts[1] && parts[1].length === 3) {
-                                    s = parts.join('');
-                                }
-                            }
-                            // Replace comma decimal with dot
-                            s = s.replace(/,/g, '.');
-                            const parsed = parseFloat(s);
-                            obj[dbFields.productPrice] = Number.isFinite(parsed) ? parsed : null;
-                        } catch (e) {
-                            obj[dbFields.productPrice] = null;
-                        }
-                    } else {
-                        obj[dbFields.productPrice] = null;
-                    }
-
-                    return obj;
-                });
-            };
-
-            ctx.saboresYToppings = {
-                sabores: normalizeList(data.sabores || []),
-                toppings: normalizeList(data.toppings || [])
-            };
-
-            console.log(`✅ ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} cargados. ${nomenclature.itemPrimaryPlural}: ${ctx.saboresYToppings.sabores.length}, ${nomenclature.itemSecondaryPlural}: ${ctx.saboresYToppings.toppings.length}`);
-            
-            // Mostrar primeros 3 items para debug
-            if (ctx.saboresYToppings.sabores.length > 0) {
-                console.log(`📋 Primeros 3 ${nomenclature.itemPrimaryPlural}:`, ctx.saboresYToppings.sabores.slice(0, 3).map(s => s[dbFields.productName]));
-            }
-            if (ctx.saboresYToppings.toppings.length > 0) {
-                console.log(`📋 Primeros 3 ${nomenclature.itemSecondaryPlural}:`, ctx.saboresYToppings.toppings.slice(0, 3).map(t => t[dbFields.productName]));
-            }        } else {
-            ctx.saboresYToppings = { sabores: [], toppings: [] };
-            console.warn('⚠️  getSaboresYToppings: empty response data from', url);
-        }
-    } catch (e) {
-        console.error(`❌ Error al obtener ${nomenclature.itemPrimaryPlural} y ${nomenclature.itemSecondaryPlural} de la API:`, e.response?.data || e.message || e);
-        // ensure downstream code doesn't crash if items are missing
-        ctx.saboresYToppings = { sabores: [], toppings: [] };
-    }
+    return '';
 }
 
 /**
- * Carga TODOS los productos desde la API usando búsquedas con términos comunes
- * para evitar llamadas repetidas durante la operación del bot (genérico)
+ * Carga TODOS los productos desde la API
+ * Estrategia: Solo intenta obtener todos los productos directamente desde el endpoint
+ */
+/**
+ * Carga todos los productos en cache desde la API al iniciar el bot
+ * REGLA: Usar get_clean_inventory() del backend para obtener datos limpios
  */
 async function loadAllProductsCache(ctx) {
-    const secrets = (function(){ try { return require('../config.secrets'); } catch(e){ return {}; } })();
-    const apiBase = (process.env.API_BASE || secrets.API_BASE || (CONFIG && CONFIG.API_BASE) || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-    let endpoints = null;
-    try {
-        if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
-    } catch(e) { endpoints = null; }
-    endpoints = endpoints || secrets.ENDPOINTS || (CONFIG && CONFIG.ENDPOINTS) || null;
-    const searchEndpoint = (endpoints && endpoints.BUSCAR_PRODUCTO) ? endpoints.BUSCAR_PRODUCTO : '/buscar_producto_por_nombre/';
-
-    const dbFields = envConfig.getDbFields();
-    const keywords = envConfig.getKeywords();
+    const apiBase = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+    const listAllEndpoint = process.env.API_ENDPOINT_GET_ALL_PRODUCTS || '/obtener_todos_los_productos/';
+    const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
     
     try {
-        // Estrategia: Hacer búsquedas con términos comunes desde ENV para obtener la mayor cantidad de productos
-        const searchTerms = keywords.products || ['producto'];
-        const allProducts = new Map(); // Usar Map para evitar duplicados por CodigoProducto
+        const allProducts = [];
+        console.log(`🔄 Cargando productos desde API limpia (get_clean_inventory)...`);
         
-        console.log(`🔄 Cargando productos en cache usando búsquedas múltiples...`);
+        const params = {};
+        if (bizId) {
+            params.biz_id = bizId;
+        }
+          const response = await axios.get(`${apiBase}${listAllEndpoint}`, { 
+            params: params,
+            timeout: 10000 
+        });
         
-        for (const term of searchTerms) {
-            try {
-                const url = `${apiBase}${searchEndpoint}?q=${encodeURIComponent(term)}`;
-                const response = await axios.get(url);
-                
-                let products = [];
-                if (response.data.matches) {
-                    products = response.data.matches;
-                } else if (response.data[dbFields.productCode]) {
-                    products = [response.data];
-                }
-                
-                // Agregar al Map usando CodigoProducto como key para evitar duplicados
-                products.forEach(p => {
-                    const codigo = p[dbFields.productCode] || p.codigo || p.Code || p.Codigo || Math.random().toString();
-                    if (!allProducts.has(codigo)) {
-                        // Normalizar producto
-                        const obj = Object.assign({}, p);
-                        obj[dbFields.productName] = obj[dbFields.productName] || obj.nombre || obj.Name || obj.Nombre || null;
-                        obj[dbFields.productCode] = codigo;
-
-                        // Normalizar precio
-                        const priceCandidates = [obj[dbFields.productPrice], obj.Precio, obj.precio, obj.Price, obj.price];
-                        let priceRaw = null;
-                        for (const pr of priceCandidates) {
-                            if (typeof pr !== 'undefined' && pr !== null && String(pr).toString().trim() !== '') { priceRaw = pr; break; }
-                        }
-                        if (priceRaw !== null) {
-                            try {
-                                let s = String(priceRaw).trim();
-                                if ((s.match(/\./g) || []).length > 1 && !s.includes(',')) {
-                                    s = s.replace(/\./g, '');
-                                }
-                                if ((s.match(/\./g) || []).length === 1 && !s.includes(',')) {
-                                    const parts = s.split('.');
-                                    if (parts[1] && parts[1].length === 3) {
-                                        s = parts.join('');
-                                    }
-                                }
-                                s = s.replace(/,/g, '.');
-                                const parsed = parseFloat(s);                                obj[dbFields.productPrice] = Number.isFinite(parsed) ? parsed : null;
-                            } catch (e) {
-                                obj[dbFields.productPrice] = null;
-                            }
-                        } else {
-                            obj[dbFields.productPrice] = null;
-                        }
-
-                        allProducts.set(codigo, obj);
-                    }
+        // El backend retorna {matches: [...]} o directamente un array
+        const productData = response.data.matches || response.data;
+        
+        if (productData && Array.isArray(productData) && productData.length > 0) {
+            console.log(`✅ Obtenidos ${productData.length} productos limpios desde el backend`);
+            
+            // Los productos ya vienen limpios desde el backend (sin duplicados)
+            productData.forEach(p => {
+                allProducts.push({
+                    NombreProducto: p.NombreProducto || p.nombre || '',
+                    CodigoProducto: p.CodigoProducto || p.codigo || Math.random().toString(),
+                    Precio_Venta: p.Precio_Venta || p.precio || 0,
+                    Categoria: p.Categoria || p.categoria || '',
+                    Numero_de_Sabores: p.Numero_de_Sabores || p.numSabores || 0,
+                    Numero_de_Toppings: p.Numero_de_Toppings || p.numToppings || 0,
+                    Descripcion: p.Descripcion || p.descripcion || '',
+                    Stock_Actual: p.Stock_Actual || p.stock || 0
                 });
-                
-            } catch (e) {
-                console.warn(`⚠️ Error buscando productos con término "${term}":`, e.message);
-            }
+            });
+        } else {
+            console.warn('⚠️ No se encontraron productos en el inventario.');
         }
         
-        ctx.productsCache = Array.from(allProducts.values());
-        console.log(`✅ ${ctx.productsCache.length} productos únicos cargados en cache`);
-        
-        // Log de categorías/tipos de productos encontrados
-        const categoryField = dbFields.productCategory || 'Categoria';
-        const categories = [...new Set(ctx.productsCache.map(p => p[categoryField] || p.Tipo || 'Sin categoría'))];
-        console.log(`📦 Categorías cargadas: ${categories.join(', ')}`);
-        
-    } catch (e) {        console.error('❌ Error al cargar productos en cache:', e.message || e);
+        ctx.productsCache = allProducts;
+        console.log(`✅ ${ctx.productsCache.length} productos cargados en cache (ya limpios por el backend)`);
+          } catch (e) {
+        console.error('❌ Error al cargar productos en cache:', e.message || e);
+        console.error('📍 Detalles del error:', {
+            url: `${apiBase}${listAllEndpoint}`,
+            status: e.response?.status,
+            statusText: e.response?.statusText,
+            data: e.response?.data
+        });
         ctx.productsCache = [];
     }
 }
 
 function resetChat(jid, ctx) {
-    const nomenclature = envConfig.getNomenclature();
+    const nomenclature = envConfig.nomenclature;
     
     // En lugar de borrar, sobreescribimos la sesión con un estado limpio y por defecto.
     // Esto asegura que la sesión SIEMPRE exista después de un reseteo.
     ctx.sessions[jid] = {
-        phase: 'seleccion_opcion', // Usamos el nombre de la fase directamente
+        phase: PHASE.SELECCION_OPCION, // ✅ Usar constante en lugar de string hardcodeado
         lastPromptAt: Date.now(),
         errorCount: 0,
         order: { items: [] },
@@ -264,7 +157,7 @@ function resetChat(jid, ctx) {
 // =================================================================================
 function addToCart(ctx, jid, item, quantity = 1) {
     const userSession = ctx.sessions[jid];
-    const nomenclature = envConfig.getNomenclature();
+    const nomenclature = envConfig.nomenclature; // CORREGIDO: acceso directo a la propiedad
 
     // Se asegura de que la estructura del pedido exista (doble verificación)
     if (!userSession.order) {
@@ -278,7 +171,7 @@ function addToCart(ctx, jid, item, quantity = 1) {
     const itemIndex = cart.findIndex(x => x.codigo === item.codigo);
 
     // Keys dinámicas para items primarios y secundarios
-    const primaryKey = nomenclature.itemPrimaryPlural || 'sabores';
+    const primaryKey = nomenclature.itemPrimaryPlural || 'adiciones';
     const secondaryKey = nomenclature.itemSecondaryPlural || 'toppings';
     const primaryKeySingular = nomenclature.itemPrimary || 'sabor';
 
@@ -316,31 +209,45 @@ async function say(sock, jid, text, ctx) {
     ctx.lastSent[jid] = text;
     console.log(`[${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}] 🤖 Bot: "${text.split('\n')[0]}..."`);
     logConversation(jid, text, true);
-    await sock.sendPresenceUpdate('composing', jid);
+    
+    // whatsapp-web.js: sendStateTyping via chat object
+    try {
+        if (sock.getChatById) {
+            const chat = await sock.getChatById(jid);
+            if (chat && typeof chat.sendStateTyping === 'function') {
+                await chat.sendStateTyping();
+            }
+        }
+    } catch (error) {
+        logger.debug(`No se pudo enviar typing indicator: ${error.message}`);
+    }
 
     // Determine writing simulation timeout from several sources (env, secrets, config) with fallback
     const writingMs = Number(
-        (SECRETS && (SECRETS.TIME_WRITING_SIMULATION_MS || SECRETS.WRITING_SIMULATION_MS)) ||
-        (CONFIG && CONFIG.TIME && CONFIG.TIME.WRITING_SIMULATION_MS) ||
+        (envConfig.time && envConfig.time.writingSimulationMs) ||
         process.env.TIME_WRITING_SIMULATION_MS ||
         process.env.WRITING_SIMULATION_MS ||
         1
     ) || 1;
 
     try {
-        await sleep(writingMs);
-    } catch (err) {
+        await sleep(writingMs);    } catch (err) {
         console.warn('sleep failed in say():', err && err.message ? err.message : err);
     }
 
-    await sock.sendMessage(jid, { text });
-    await sock.sendPresenceUpdate('paused', jid);
+    try {
+        await sock.sendMessage(jid, text);
+    } catch (error) {
+        logger.error(`Error al enviar mensaje a ${jid}: ${error.message}`);
+        console.error(`[ERROR] No se pudo enviar mensaje a ${jid}: ${error.message}`);
+    }
 }
 
 async function sendImage(sock, jid, imagePath, caption, ctx) {
     try {
-        const media = fs.readFileSync(imagePath);
-        await sock.sendMessage(jid, { image: media, caption });
+        const { MessageMedia } = require('whatsapp-web.js');
+        const media = MessageMedia.fromFilePath(imagePath);
+        await sock.sendMessage(jid, media, { caption });
         console.log(`[${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}] 🤖 Bot: Enviando imagen "${caption}"`);
         logConversation(jid, `Enviando imagen: ${caption}`, true);
     } catch (error) {
@@ -364,7 +271,7 @@ async function askGemini(ctx, question) {
         // proceed normally if check fails
         console.warn('askGemini: error checking geminiAvailable flag:', e && e.message);
     }    // Resolve API key from centralized secrets, fallback to config.json
-    const key = SECRETS.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY;
+    const key = envConfig.gemini.apiKey;
     
     // Validate that the key is not a placeholder or invalid
     const isValidKey = key && 
@@ -381,8 +288,13 @@ async function askGemini(ctx, question) {
     const genAI = new GoogleGenerativeAI(key);
     const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
 
+    // Usar configuración genérica desde .env
+    const businessName = envConfig.business.name || 'Mundo Helados';
+    const businessType = envConfig.business.type || 'heladería';
+    const assistantName = envConfig.bot.assistantName || 'MIA';
+    
     const prompt = `
-   Eres "MIA", el asistente experto de la heladería "Mundo Helados". Tu única tarea es analizar la petición de un cliente y devolver SIEMPRE un objeto JSON.
+   Eres "${assistantName}", el asistente experto de ${businessType} "${businessName}". Tu única tarea es analizar la petición de un cliente y devolver SIEMPRE un objeto JSON.
 
         El JSON debe tener una de estas tres claves: "items", "respuesta_texto" o "accion".
 
@@ -442,75 +354,100 @@ async function askGemini(ctx, question) {
 }
 
 async function handleProductSelection(sock, jid, producto, ctx) {
+    ctx.sessions[jid].currentProduct = producto;
+    const dbFields = envConfig.backend.fields;
+    // Si los campos de cantidad están desactivados, solo mostrar nombre y precio y pedir cantidad directo
+    if (!dbFields.itemPrimaryCount && !dbFields.itemSecondaryCount) {
+        let mensaje = `Has seleccionado: *${producto[dbFields.productName]}* — COP$${money(producto[dbFields.productPrice])}`;
+        if (producto[dbFields.productDescription]) {
+            mensaje += `\n${producto[dbFields.productDescription]}`;
+        }
+        mensaje += `\n\n🔢 ¿Cuántas unidades de este producto quieres?`;
+        ctx.sessions[jid].awaitingField = 'quantity';
+        await say(sock, jid, mensaje, ctx);
+        return;
+    }
     // 1. Guarda el producto actual en la sesión del usuario
     ctx.sessions[jid].currentProduct = producto;
 
     // 2. Construye el mensaje de respuesta paso a paso
     let mensaje = `Has seleccionado: *${producto.NombreProducto}* — COP$${money(producto.Precio_Venta)}\n${producto.Descripcion || ''}`;
 
-    // Preferir sabores/toppings embebidos en el producto, si existen; si no, usar el cache global ctx.saboresYToppings
-    const productSabores = Array.isArray(producto.sabores) ? producto.sabores : [];
-    const productToppings = Array.isArray(producto.toppings) ? producto.toppings : [];    // Prefer the explicit Numero_de_Sabores / Numero_de_Toppings declared on the product
-    // IMPORTANTE: Si está explícitamente en 0, respetar ese valor (no pedir sabores/toppings)
-    const declaredNumSabores = Number.parseInt(producto.Numero_de_Sabores || producto.Numero_de_Sabores === 0 ? producto.Numero_de_Sabores : NaN, 10);
-    const declaredNumToppings = Number.parseInt(producto.Numero_de_Toppings || producto.Numero_de_Toppings === 0 ? producto.Numero_de_Toppings : NaN, 10);
+    // Preferir categorías/subcategorías embebidas en el producto, si existen; si no, usar el cache global ctx.categoriasGenericas
+    const productCategorias = Array.isArray(producto.categorias) ? producto.categorias : [];
+    const productSubcategorias = Array.isArray(producto.subcategorias) ? producto.subcategorias : [];    // Prefer the explicit Numero_de_Categorias / Numero_de_Subcategorias declared on the product
+    // IMPORTANTE: Si está explícitamente en 0, respetar ese valor (no pedir categorías/subcategorías)
+    const declaredNumCategorias = Number.parseInt(producto.Numero_de_Categorias || producto.Numero_de_Categorias === 0 ? producto.Numero_de_Categorias : NaN, 10);
+    const declaredNumSubcategorias = Number.parseInt(producto.Numero_de_Subcategorias || producto.Numero_de_Subcategorias === 0 ? producto.Numero_de_Subcategorias : NaN, 10);
     
-    // Si el producto tiene Numero_de_Sabores/Toppings definido explícitamente (incluso si es 0), usarlo
+    // Si el producto tiene Numero_de_Categorias/Subcategorias definido explícitamente (incluso si es 0), usarlo
     // Si no está definido (NaN), hacer fallback a las listas
-    const numSabores = Number.isFinite(declaredNumSabores)
-        ? declaredNumSabores  // Usar valor explícito (puede ser 0)
-        : (productSabores.length > 0 ? productSabores.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores.length : 0));
-    const numToppings = Number.isFinite(declaredNumToppings)
-        ? declaredNumToppings  // Usar valor explícito (puede ser 0)
-        : (productToppings.length > 0 ? productToppings.length : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings.length : 0));
+    const numCategorias = Number.isFinite(declaredNumCategorias)
+        ? declaredNumCategorias  // Usar valor explícito (puede ser 0)
+        : (productCategorias.length > 0 ? productCategorias.length : (ctx.categoriasGenericas && Array.isArray(ctx.categoriasGenericas.categorias) ? ctx.categoriasGenericas.categorias.length : 0));
+    const numSubcategorias = Number.isFinite(declaredNumSubcategorias)
+        ? declaredNumSubcategorias  // Usar valor explícito (puede ser 0)
+        : (productSubcategorias.length > 0 ? productSubcategorias.length : (ctx.categoriasGenericas && Array.isArray(ctx.categoriasGenericas.subcategorias) ? ctx.categoriasGenericas.subcategorias.length : 0));
 
-    // Si el producto requiere sabores pero no tenemos la lista global, intentar cargarla
-    if ((numSabores > 0) && (!ctx.saboresYToppings || !Array.isArray(ctx.saboresYToppings.sabores))) {
+    // Si el producto requiere categorías pero no tenemos la lista global, intentar cargarla
+    if ((numCategorias > 0) && (!ctx.categoriasGenericas || !Array.isArray(ctx.categoriasGenericas.categorias))) {
         try {
-            await getSaboresYToppings(ctx);
+            ctx.categoriasGenericas = await getCategoriasGenericas();
         } catch (e) {
-            console.error('Error cargando sabores y toppings globales:', e.message);
+            console.error('Error cargando categorías y subcategorías globales:', e.message);
         }
     }
 
-    // Build actual lists to show: prefer product-specific lists, else fallback to ctx.saboresYToppings
-    const saboresList = productSabores.length > 0 ? productSabores : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.sabores) ? ctx.saboresYToppings.sabores : []);
-    const toppingsList = productToppings.length > 0 ? productToppings : (ctx.saboresYToppings && Array.isArray(ctx.saboresYToppings.toppings) ? ctx.saboresYToppings.toppings : []);    // 3. Añade la sección de SABORES y/o TOPPINGS separadas por pasos para mejor UX
-    if (numSabores > 0 && saboresList.length > 0) {
-        const progressIndicator = getProgressIndicator(producto, 'sabores');
+    // Build actual lists to show: prefer product-specific lists, else fallback to ctx.categoriasGenericas
+    const categoriasList = productCategorias.length > 0 ? productCategorias : (ctx.categoriasGenericas && Array.isArray(ctx.categoriasGenericas.categorias) ? ctx.categoriasGenericas.categorias : []);
+    const subcategoriasList = productSubcategorias.length > 0 ? productSubcategorias : (ctx.categoriasGenericas && Array.isArray(ctx.categoriasGenericas.subcategorias) ? ctx.categoriasGenericas.subcategorias : []);    // 3. Añade la sección de CATEGORÍAS y/o SUBCATEGORÍAS separadas por pasos para mejor UX
+    if (numCategorias > 0 && categoriasList.length > 0) {
+        const progressIndicator = getProgressIndicator(producto, 'categorias', ctx);
         const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
-        mensaje += `\n\n${progressText}🍨 *Elige ${numSabores} sabor${numSabores > 1 ? 'es' : ''} de la lista* (ej: S1, S3):\n`;
+        const itemPrimaryLabel = envConfig.nomenclature.itemPrimaryLabel || 'Categorías';
+        const itemPrimaryLabelSingular = envConfig.nomenclature.itemPrimaryLabelSingular || 'Categoría';
+        const emoji = envConfig.ui.emoji.main || '📂';
+        mensaje += `\n\n${progressText}${emoji} *Elige ${numCategorias} ${numCategorias > 1 ? itemPrimaryLabel.toLowerCase() : itemPrimaryLabelSingular.toLowerCase()} de la lista* (ej: C1, C3):\n`;
         // Mostrar con número y emoji por opción para mejor UX
-        mensaje += saboresList.map((s, i) => `*${i + 1}.* ${s.NombreProducto || s} 🍨`).join('\n');        // Además, incluir la lista de toppings disponibles como referencia para que el usuario
-        // pueda ver los códigos T# y precios antes de elegir la cantidad (mejora UX requerida).
-        if (toppingsList && toppingsList.length > 0) {
-            mensaje += `\n\n🍬 *Toppings disponibles (opcionales).* Puedes añadirlos luego o en el mismo mensaje separando sabores y toppings con ` + "'|'" + ` (ej: S1 | T2,T3).\n`;
-            mensaje += toppingsList.map((t, i) => {
-                const precio = (t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ` — COP$${money(t.Precio_Venta)}` : '';
-                return `*T${i + 1}.* ${t.NombreProducto || t}${precio} 🍬`;
+        mensaje += categoriasList.map((c, i) => `*${i + 1}.* ${c.NombreCategoria || c} 📂`).join('\n');        // Además, incluir la lista de subcategorías disponibles como referencia para que el usuario
+        // pueda ver los códigos S# y precios antes de elegir la cantidad (mejora UX requerida).
+        if (subcategoriasList && subcategoriasList.length > 0) {
+            mensaje += `\n\n📁 *Subcategorías disponibles (opcionales).* Puedes añadirlas luego o en el mismo mensaje separando categorías y subcategorías con ` + "'|'" + ` (ej: C1 | S2,S3).\n`;
+            mensaje += subcategoriasList.map((s, i) => {
+                const precio = (s && typeof s.Precio_Venta === 'number' && Number.isFinite(s.Precio_Venta)) ? ` — COP$${money(s.Precio_Venta)}` : '';
+                return `*S${i + 1}.* ${s.NombreSubcategoria || s}${precio} 📁`;
             }).join('\n');
-            mensaje += `\n\n_Después de seleccionar sabores, puedes añadir toppings opcionales (ej: T1) o responder "sin" para ir directo a la cantidad. Con 1 topping ya puedes continuar._`;
+            mensaje += `\n\n_Después de seleccionar categorías, puedes añadir subcategorías opcionales (ej: S1) o responder "sin" para ir directo a la cantidad. Con 1 subcategoría ya puedes continuar._`;
         } else {
-            // Indicamos que primero pedimos sabores; luego, si hay toppings, preguntaremos por ellos en un paso separado.
-            mensaje += `\n\n_Indica únicamente los sabores ahora. Después te preguntaré por los toppings opcionales (si aplica) y finalmente por la cantidad._`;
-        }// Marcamos que ahora esperamos la selección de sabores
-        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'sabores';    } else if (numToppings > 0 && toppingsList.length > 0) {
-        // Si no hay sabores pero sí toppings, pedimos directamente los toppings
-        const progressIndicator = getProgressIndicator(producto, 'toppings');
+            // Indicamos que primero pedimos categorías; luego, si hay subcategorías, preguntaremos por ellas en un paso separado.
+            mensaje += `\n\n_Indica únicamente las categorías ahora. Después te preguntaré por las subcategorías opcionales (si aplica) y finalmente por la cantidad._`;
+        }// Marcamos que ahora esperamos la selección de categorías
+        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'categorias';    } else if (numSubcategorias > 0 && subcategoriasList.length > 0) {
+        // Si no hay categorías pero sí subcategorías, pedimos directamente las subcategorías
+        const progressIndicator = getProgressIndicator(producto, 'subcategorias', ctx);
         const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
-        mensaje += `\n\n${progressText}🍬 *Toppings disponibles (opcionales).* Puedes añadir uno o varios, responder "sin" para ninguno, o indicar la cantidad directamente.\n`;
-        mensaje += toppingsList.map((t, i) => `*${i + 1}.* ${t.NombreProducto || t}${(t && typeof t.Precio_Venta === 'number' && Number.isFinite(t.Precio_Venta)) ? ' — COP$' + money(t.Precio_Venta) : ''} 🍬`).join('\n');        mensaje += `\n\n_Con 1 topping ya puedes continuar indicando la cantidad. Los toppings son completamente opcionales._`;
-        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'toppings';
+        mensaje += `\n\n${progressText}📁 *Subcategorías disponibles (opcionales).* Puedes añadir una o varias, responder "sin" para ninguna, o indicar la cantidad directamente.\n`;
+        mensaje += subcategoriasList.map((s, i) => `*${i + 1}.* ${s.NombreSubcategoria || s}${(s && typeof s.Precio_Venta === 'number' && Number.isFinite(s.Precio_Venta)) ? ' — COP$' + money(s.Precio_Venta) : ''} 📁`).join('\n');        mensaje += `\n\n_Con 1 subcategoría ya puedes continuar indicando la cantidad. Las subcategorías son completamente opcionales._`;
+        if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'subcategorias';
     } else {
         // Si el producto no tiene opciones, preguntamos directamente la cantidad
-        const progressIndicator = getProgressIndicator(producto, 'quantity');
+        const progressIndicator = getProgressIndicator(producto, 'quantity', ctx);
         const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
         mensaje += `\n\n${progressText}🔢 ¿Cuántas unidades de este producto quieres?`;
         // Indicamos que ahora esperamos la cantidad
         if (ctx.sessions[jid]) ctx.sessions[jid].awaitingField = 'quantity';
+    }    // 6. Mostrar cantidades disponibles si existen
+    const cantidadesDisponibles = producto.Cantidades_Disponibles || producto.cantidades_disponibles;
+    if (cantidadesDisponibles && typeof cantidadesDisponibles === 'string') {
+        const cantidades = cantidadesDisponibles.split(',').map(c => c.trim()).filter(Boolean);
+        if (cantidades.length > 0) {
+            mensaje += `\n\n📦 *Cantidades disponibles:*\n`;
+            mensaje += cantidades.map((cant, i) => `*C${i + 1}.* ${cant} unidades`).join('\n');
+            mensaje += `\n\n_Puedes seleccionar una o varias cantidades (ej: C1, C2, C3) o escribir un número directamente._`;
+        }
     }
 
-    // 6. Envía el mensaje completo al usuario
+    // 7. Envía el mensaje completo al usuario
     await say(sock, jid, mensaje, ctx);
 
     // CAMBIO 3: La función `addToCart` duplicada que estaba aquí ha sido eliminada.
@@ -518,48 +455,79 @@ async function handleProductSelection(sock, jid, producto, ctx) {
 
 
 async function startEncargoBrowse(sock, jid, ctx) {
-    // Tu función startEncargoBrowse no necesita cambios
+    // Usar configuración genérica desde .env
+    const apiBase = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+    let endpoints = null;
     try {
-        const [litrosResponse, cajasResponse] = await Promise.all([
-            axios.get(CONFIG.API_BASE + CONFIG.ENDPOINTS.BUSCAR_PRODUCTO, { params: { q: 'Litros de Helado' } }),
-            axios.get(CONFIG.API_BASE + CONFIG.ENDPOINTS.BUSCAR_PRODUCTO, { params: { q: 'Cajas de Helado' } })
-        ]);
+        if (process.env.ENDPOINTS_JSON) endpoints = JSON.parse(process.env.ENDPOINTS_JSON);
+    } catch(e) { endpoints = null; }
+    endpoints = endpoints || envConfig.backend.endpoints || null;
+    const searchEndpoint = (endpoints && endpoints.BUSCAR_PRODUCTO) ? endpoints.BUSCAR_PRODUCTO : '/buscar_producto_por_nombre/';
+    
+    // CRÍTICO: Usar keywords de búsqueda desde .env en lugar de hardcodear
+    const keywords = envConfig.keywords.products || ['producto'];
+    const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+    
+    try {
+        // Buscar usando los primeros keywords del .env
+        const searchTerms = keywords.slice(0, 2); // Usar los primeros 2 keywords
+        const searchPromises = searchTerms.map(term => {
+            const params = { q: term };
+            if (bizId) {
+                params.biz_id = bizId;
+            }
+            return axios.get(`${apiBase}${searchEndpoint}`, { params: params });
+        });
+        
+        const responses = await Promise.all(searchPromises);
 
         const productos = [];
-        if (litrosResponse.data && litrosResponse.data.NombreProducto) {
-            productos.push(litrosResponse.data);
-        }
-        if (cajasResponse.data && cajasResponse.data.NombreProducto) {
-            productos.push(cajasResponse.data);
-        }
-
-        if (productos.length === 0) {
-            ctx.sessions[jid].phase = 'encargo';
-            await say(sock, jid, `¡Claro! Con gusto te ayudamos con tu pedido por encargo. 😊\nPor favor, describe con detalle el pedido que necesitas:\n_Ej: 50 helados de vainilla para un evento, 20 minihelados para una fiesta, etc._`, ctx);
+        const dbFields = envConfig.backend.fields;
+        
+        // Procesar todas las respuestas
+        responses.forEach(response => {
+            if (response.data) {
+                if (response.data.matches && Array.isArray(response.data.matches)) {
+                    productos.push(...response.data.matches);
+                } else if (response.data[dbFields.productName] || response.data.NombreProducto) {
+                    productos.push(response.data);
+                }
+            }
+        });        if (productos.length === 0) {
+            ctx.sessions[jid].phase = PHASE.ENCARGO; // ✅ Usar constante
+            const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+            const message = envConfig.messages.templates.customOrderStart || 
+                `¡Claro! Con gusto te ayudamos con tu pedido por encargo. 😊\nPor favor, describe con detalle el pedido que necesitas:\n_Ej: 50 ${productTypePlural} para un evento, etc._`;
+            await say(sock, jid, message, ctx);
             return;
         }
 
+        // dbFields ya está declarado arriba (línea 591)
         ctx.sessions[jid].lastMatches = productos.map((p, i) => ({
             ...p,
-            Numero_de_Sabores: parseInt(p.Numero_de_Sabores),
-            Numero_de_Toppings: parseInt(p.Numero_de_Toppings),
-            Precio_Venta: parseFloat(String(p.Precio_Venta).replace('.', '')),
+            [dbFields.itemPrimaryCount]: parseInt(p[dbFields.itemPrimaryCount] || 0),
+            [dbFields.itemSecondaryCount]: parseInt(p[dbFields.itemSecondaryCount] || 0),
+            [dbFields.productPrice]: parseFloat(String(p[dbFields.productPrice] || p.Precio_Venta || 0).replace('.', '')),
             index: i + 1
         }));
 
         const list = ctx.sessions[jid].lastMatches.map(p => {
-            return `*${p.index}.* ${p.NombreProducto} — COP$${money(p.Precio_Venta)}\n_Descripción: ${p.Descripcion}_`;
-        }).join('\n\n');
-
-        const mensaje = `📦 Estas son nuestras opciones para **pedidos por encargo**:\n${list}\n\n_Escribe el número de un producto o su nombre para continuar, o **menú** para volver._`;
+            const nombre = p[dbFields.productName] || p.NombreProducto;
+            const precio = p[dbFields.productPrice] || p.Precio_Venta;
+            const descripcion = p.Descripcion || '';
+            return `*${p.index}.* ${nombre} — COP$${money(precio)}\n_Descripción: ${descripcion}_`;
+        }).join('\n\n');        const mensaje = `📦 Estas son nuestras opciones para **pedidos por encargo**:\n${list}\n\n_Escribe el número de un producto o su nombre para continuar, o **menú** para volver._`;
         
-        ctx.sessions[jid].phase = 'browse_images'; // Corregido para que el flujo sea consistente
+        ctx.sessions[jid].phase = PHASE.BROWSE_IMAGES; // ✅ Usar constante
         await say(sock, jid, mensaje, ctx);
 
     } catch (e) {
         console.error('Error al obtener productos de encargo:', e.response?.data || e.message);
-        ctx.sessions[jid].phase = 'encargo';
-        await say(sock, jid, `Lo siento, no pude cargar el menú de encargo en este momento.\nPor favor, describe con detalle el pedido que necesitas:\n_Ej: 50 helados de vainilla para un evento, 20 minihelados para una fiesta, etc._`, ctx);
+        ctx.sessions[jid].phase = PHASE.ENCARGO; // ✅ Usar constante
+        const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+        const message = envConfig.messages.templates.customOrderStart || 
+            `Lo siento, no pude cargar el menú de encargo en este momento.\nPor favor, describe con detalle el pedido que necesitas:\n_Ej: 50 ${productTypePlural} para un evento, etc._`;
+        await say(sock, jid, message, ctx);
     }
 }
 
@@ -574,6 +542,5 @@ module.exports = {
     startEncargoBrowse,
     askGemini,
     sleep,
-    getSaboresYToppings,
     loadAllProductsCache
 };

@@ -1,8 +1,19 @@
 // services/notificationService.js
 const { logger } = require('../utils/logger');
 const { say } = require('./bot_core');
-const CONFIG = require('../config.json');
-const SECRETS = require('../config.secrets');
+const envConfig = require('../config/env.loader');
+
+/**
+ * Normaliza un número de teléfono a formato JID de WhatsApp
+ * @param {string} jid - Número o JID
+ * @returns {string} JID normalizado
+ */
+function normalizeJid(jid) {
+    if (!jid) return jid;
+    if (jid.includes('@')) return jid;
+    // Solo el número → asumir @c.us (whatsapp-web.js maneja LID internamente)
+    return `${jid}@c.us`;
+}
 
 /**
  * Obtiene los JIDs de administradores
@@ -11,9 +22,9 @@ const SECRETS = require('../config.secrets');
 function getAdminJids() {
     const admins = [];
     
-    // Priorizar SECRETS, luego CONFIG, luego env
-    const adminJid = SECRETS.ADMIN_JID || CONFIG.ADMIN_JID || process.env.ADMIN_JID;
-    const sociaJid = SECRETS.SOCIA_JID || CONFIG.SOCIA_JID || process.env.SOCIA_JID;
+    // Priorizar envConfig, luego process.env
+    const adminJid = normalizeJid(envConfig.security.adminJid || process.env.ADMIN_JID);
+    const sociaJid = normalizeJid(envConfig.security.sociaJid || process.env.SOCIA_JID);
     
     if (adminJid) admins.push(adminJid);
     if (sociaJid && sociaJid !== adminJid) admins.push(sociaJid);
@@ -166,10 +177,55 @@ Por favor, revisa la consola o los logs para más detalles.`;
     }
 }
 
+/**
+ * Notifica a los admins sobre un pedido completado exitosamente
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del cliente
+ * @param {Object} payload - Datos del pedido
+ * @param {number} total - Total del pedido
+ * @param {Object} ctx - Contexto global
+ */
+async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
+    try {
+        const admins = getAdminJids();
+        const chatLink = `https://wa.me/${jid.split('@')[0]}`;
+        
+        const adminMsg = `📦 *NUEVO PEDIDO CONFIRMADO*
+
+👤 *Cliente:* ${payload.nombre || jid.split('@')[0]}
+📞 *Teléfono:* ${payload.telefono || 'N/A'}
+🏠 *Dirección:* ${payload.direccion || 'N/A'}
+
+🛒 *Productos:*
+${payload.producto || 'N/A'}
+
+💰 *Total:* $${total.toLocaleString('es-CO')}
+💳 *Método de pago:* ${payload.pago || 'N/A'}
+📊 *Estado:* ${payload.estado || 'Por despachar'}
+
+🔗 Abrir chat: ${chatLink}`;
+        
+        for (const admin of admins) {
+            try {
+                if (admin) {
+                    await say(sock, admin, adminMsg, ctx);
+                    logger.info(`✅ Notificado admin ${admin} sobre nuevo pedido de ${jid}`);
+                }
+            } catch (notifyError) {
+                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
+            }
+        }
+        
+    } catch (error) {
+        logger.error(`Error en notifyAdminsNewOrder: ${error.message}`);
+    }
+}
+
 module.exports = {
     getAdminJids,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,
-    notifyAdminsAboutCriticalError
+    notifyAdminsAboutCriticalError,
+    notifyAdminsNewOrder  // ✅ Nueva función
 };

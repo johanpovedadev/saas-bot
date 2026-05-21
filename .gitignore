@@ -54,7 +54,21 @@ tmp/
 auth_info_baileys/
 bot-wasap/auth_info_baileys/
 
+# Virtual environment
+venv/
+.virtualenvs/
+
+# WhatsApp Web JS auth
+.wwebjs_auth/
+bot-wasap/.wwebjs_auth/
+
 # Logs and local artifacts
 logs/
 bot-wasap/conversations.log
 user_errors.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

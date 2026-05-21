@@ -1,21 +1,15 @@
 'use strict';
 
 const path = require('path');
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    Browsers,
-    DisconnectReason,
-    toBuffer
-} = require('@whiskeysockets/baileys');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { say, getSaboresYToppings, loadAllProductsCache } = require('./services/bot_core');
+const { say, loadAllProductsCache } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
 
 const { logger } = require('./utils/logger');
 const { spawnSync } = require('child_process');
 
-// Install console filter to suppress noisy outputs coming directly from Baileys or other libs
+// Install console filter to suppress noisy outputs coming directly from WhatsApp libraries
 function installConsoleFilter() {
     // Allow developers to disable the noisy filter temporarily by setting LOG_FILTER_VERBOSE=1
     if (String(process.env.LOG_FILTER_VERBOSE || '').trim() === '1') {
@@ -93,11 +87,9 @@ function installConsoleFilter() {
 
 installConsoleFilter();
 
-const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 
-const CONFIG = require('./config.json');
-const SECRETS = (() => { try { return require('./config.secrets'); } catch (e) { return {}; } })();
+const envConfig = require('./config/env.loader');
 
 // Manejadores globales para errores no controlados.
 // Esto evita que el proceso se apague de forma inesperada.
@@ -109,6 +101,7 @@ process.on('uncaughtException', (err) => {
         console.error('⚠️ Excepción no capturada (falló el formateo):', String(err));
     }
     try {
+        logger.error({ err: err && err.stack ? err.stack : String(err) }, '⚠️ Se ha producido una excepción no capturada');
         logger.error({ err: err && err.stack ? err.stack : String(err) }, '⚠️ Se ha producido una excepción no capturada');
     } catch (e) { /* best effort */ }
 
@@ -172,7 +165,6 @@ async function maybeCleanAppStateOnStartup() {
 const startBot = async () => {
     console.log('Inicializando servicios...');
 
-    // Si se solicita limpieza de app-state al inicio, ejecútala antes de inicializar el estado de Baileys
     await maybeCleanAppStateOnStartup();
 
     const ctx = {
@@ -182,19 +174,13 @@ const startBot = async () => {
         lastSent: {},
         botEnabled: true,
         order: {},
-        geminiKey: (process.env.GEMINI_API_KEY || (SECRETS && SECRETS.GEMINI_API_KEY) || CONFIG.GEMINI_API_KEY) || null,
+        geminiKey: process.env.GEMINI_API_KEY || envConfig.GEMINI_API_KEY || null,
         geminiAvailable: false
-        // Note: per-session MIA disable flags are stored on each session (userSession.miaDisabled)
-    };    try {
-        await getSaboresYToppings(ctx);
-        console.log('✅ Sabores y toppings cargados.');
-    } catch (e) {
-        console.warn('Warning: no se pudieron cargar sabores y toppings, continuando de todos modos:', e && e.message ? e.message : e);
-    }
+    };
 
-    // Cargar TODOS los productos en cache para evitar llamadas repetidas a Google Sheets
     try {
         await loadAllProductsCache(ctx);
+        ctx.cachedInventory = ctx.productsCache;
         console.log('✅ Cache de productos cargada.');
     } catch (e) {
         console.warn('Warning: no se pudieron cargar productos en cache, continuando de todos modos:', e && e.message ? e.message : e);
@@ -213,46 +199,59 @@ const startBot = async () => {
         console.warn('Gemini API key no configurada. El bot usará el parser determinista y respuestas simples en su lugar.');
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
-
-    const sock = makeWASocket({
-        auth: state,
-        logger,
-        browser: Browsers.macOS('Desktop'),
-        // Provide a function rather than a boolean. Some Baileys internals expect a function and
-        // calling code will invoke it; returning false disables history sync.
-        shouldSyncHistoryMessage: () => false
+    const sock = new Client({
+        authStrategy: new LocalAuth({
+            dataPath: path.join(__dirname, '.wwebjs_auth')
+        }),
+        puppeteer: {
+            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        }
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.on('qr', (qr) => {
+        console.log('Escanea este código QR para conectar el bot:');
+        // Guardar QR como imagen PNG
+        qrcode.toFile(path.join(__dirname, 'qr_code.png'), qr, { type: 'png', width: 400, margin: 2 }, (err) => {
+            if (!err) console.log('QR guardado como: qr_code.png (ábrelo y escanea con WhatsApp)');
+        });
+        qrcode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
+            if (err) return console.log(err);
+            console.log(url);
+        });
+    });
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            console.log('Escanea este código QR para conectar el bot:');
-            qrcode.toString(qr, { type: 'terminal' , small: true }, (err, url) => {
-                if (err) return console.log(err);
-                console.log(url);
-            });
-        }
-
-        if (connection === 'close') {
-            const shouldReconnect = new Boom(lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            logger.error({ lastDisconnect: lastDisconnect?.error }, '❌ Conexión cerrada.');
-            if (shouldReconnect) {
-                console.log('Reconectando...');
-                startBot();
-            } else {
-                console.log('✅ Desconectado. Borra la carpeta auth_info_baileys si quieres reconectar.');
+    sock.on('ready', async () => {
+        const botJid = sock.info.wid._serialized;
+        console.log('✅ Conectado como', botJid);
+        // Enviar mensaje de inicio al admin
+        try {
+            const rawAdmin = process.env.ADMIN_JID || '';
+            if (rawAdmin) {
+                const resolved = rawAdmin.includes('@')
+                    ? rawAdmin
+                    : (await sock.getNumberId(rawAdmin))?._serialized || rawAdmin + '@c.us';
+                await say(sock, resolved, `Hola, ¡el bot se ha iniciado con éxito! ✅`, ctx);
             }
-        } else if (connection === 'open') {
-            console.log('✅ Conectado como', sock.user.id);
-            await say(sock, sock.user.id, `Hola, ¡el bot se ha iniciado con éxito! ✅...`, ctx);
+        } catch (e) {
+            logger.warn(`No se pudo notificar al admin en inicio: ${e.message}`);
+        }
+    });
+
+    sock.on('disconnected', (reason) => {
+        logger.error({ reason }, '❌ Conexión cerrada.');
+        if (reason !== 'LOGGED_OUT') {
+            console.log('Reconectando...');
+            startBot();
+        } else {
+            console.log('✅ Desconectado. Borra la carpeta .wwebjs_auth si quieres reconectar.');
         }
     });
 
     setupSocketHandlers(sock, ctx);
+
+    await sock.initialize();
 };
 
 // Start the bot and catch top-level startup errors to avoid unhandled rejections
