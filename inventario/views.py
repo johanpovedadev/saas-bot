@@ -106,33 +106,28 @@ def get_gs_client(force_reload=False):
     global_gs_client = None
     return None
 
-# ID de la hoja de cálculo de PRODUCTOS, SABORES Y TOPPINGS
-PRODUCTS_SHEET_ID = '10twtfwsAbyxZ4D_0ChD34oFkwa_EWKAWPGVfk1FdEHM'
+# ============================================================================
+# CONFIGURACIÓN DE GOOGLE SHEETS - UN SOLO SPREADSHEET CON MÚLTIPLES HOJAS
+# ============================================================================
+# Usamos UN SOLO spreadsheet con dos hojas:
+# 1. "Productos" → Inventario, categorías
+# 2. "Domicilios" → Registro de pedidos/entregas
+# ============================================================================
 
-# ID de la hoja de cálculo de ENTREGAS
-DELIVERIES_SHEET_ID = '1479sKgwA2ES503noFusdM-rOYv412-ogcqEouI6zQgI'
+# ID único del spreadsheet (cargado dinámicamente desde .env)
+# CRÍTICO: Leer dinámicamente para asegurar que se use el .env correcto
+def get_spreadsheet_id():
+    """Obtiene el SPREADSHEET_ID desde variables de entorno, recargando .env si es necesario."""
+    # Compatibilidad: usar GOOGLE_SHEET_ID si existe, si no SPREADSHEET_ID
+    # Prefer explicit per-business sheet id from env. Do NOT default to another business id.
+    return os.environ.get('GOOGLE_SHEET_ID') or os.environ.get('SPREADSHEET_ID', '')
 
-# Local fallback file (useful when gspread client can't be initialized)
-LOCAL_SABORES_PATH = os.path.join(str(settings.BASE_DIR), 'tmp', 'resp_sabores.json')
+# Mantener variable global para compatibilidad, pero se actualiza dinámicamente
+SPREADSHEET_ID = get_spreadsheet_id()
 
-def _load_local_sabores_toppings():
-    """Attempt to load a local JSON fallback for sabores/toppings.
-    The file may contain a leading comment line produced by tools; strip leading '//' lines before parsing."""
-    try:
-        if not os.path.exists(LOCAL_SABORES_PATH):
-            return None
-        raw = open(LOCAL_SABORES_PATH, 'r', encoding='utf8').read()
-        # Remove leading lines that start with '//' (some debug dumps include a filepath comment)
-        lines = raw.splitlines()
-        while lines and lines[0].strip().startswith('//'):
-            lines.pop(0)
-        cleaned = '\n'.join(lines).strip()
-        if not cleaned:
-            return None
-        return json.loads(cleaned)
-    except Exception as e:
-        print('WARN: Failed to load local sabores/toppings fallback:', e)
-        return None
+# Nombres de las hojas dentro del spreadsheet
+PRODUCTS_WORKSHEET_NAME = 'Inventario'   # Hoja con inventario (nombre real en el sheet)
+DELIVERIES_WORKSHEET_NAME = 'Domicilios'  # Hoja con pedidos/entregas
 
 # ---------- Helpers de normalización ----------
 def _strip_accents(s: str) -> str:
@@ -144,76 +139,67 @@ def _norm(s: str) -> str:
 
 # ---------- Funciones de la API de Google Sheets ----------
 def _get_sheet_data(sheet_id, sheet_name):
-    # Attempt to ensure the client is initialized lazily
-    client_local = get_gs_client()
-    if client_local is None:
-        # Try local fallback file
-        fallback = _load_local_sabores_toppings()
-        if fallback:
-            print('INFO: gspread client no configurado, usando fallback local tmp/resp_sabores.json')
-            # If caller expects 'Productos' sheet, we return flattened list
-            if sheet_name.lower().startswith('producto') or sheet_name.lower() in ('productos', 'productos'):
-                data = []
-                data.extend(fallback.get('sabores', []))
-                data.extend(fallback.get('toppings', []))
-                return data
-            # Otherwise, return fallback dict
-            return fallback
-        print('ERROR: gspread client no configurado. Revise credenciales.')
-        return None
+    """Obtiene datos de una hoja de Google Sheets.
+    Retorna lista de dicts con keys según la primera fila (headers)."""
     try:
-        sheet = client_local.open_by_key(sheet_id).worksheet(sheet_name)
+        print(f"\n📖 _get_sheet_data('{sheet_name}')")
+        client_local = get_gs_client()
+        if client_local is None:
+            print("   ⚠️  Cliente no disponible, intentando fallback...")
+            return None
+        print(f"   📊 Abriendo spreadsheet: {sheet_id[:20]}...")
+        spreadsheet = client_local.open_by_key(sheet_id)
+        print(f"   [OK] Spreadsheet: '{spreadsheet.title}'")
+        print(f"   📑 Buscando hoja: '{sheet_name}'")
+        sheet = spreadsheet.worksheet(sheet_name)
+        print(f"   [OK] Hoja encontrada: {sheet.row_count} filas x {sheet.col_count} columnas")
+        print(f"   📥 Obteniendo datos...")
         data = sheet.get_all_values()
         if not data:
+            print(f"   ⚠️  Hoja vacía")
             return None
+        print(f"   📊 {len(data)} filas obtenidas (incluyendo headers)")
         headers = data[0]
+        print(f"   📋 Headers: {headers}")
         records = [dict(zip(headers, row)) for row in data[1:]]
+        print(f"   [OK] {len(records)} registros procesados")
         return records
     except Exception as e:
-        print(f"Error al obtener datos de '{sheet_name}': {e}")
+        print(f"   ❌ Error en _get_sheet_data('{sheet_name}'): {e}")
+        import traceback
+        traceback.print_exc()
         return None
+
+def obtener_categorias_genericas():
+    """Obtiene las categorías genéricas definidas en la hoja de inventario y .env."""
+    _load_dotenv_files_if_present()
+    categoria1 = os.environ.get('ITEM_PRIMARY_PLURAL', 'categoria1')
+    categoria2 = os.environ.get('ITEM_SECONDARY_PLURAL', 'categoria2')
+    return categoria1, categoria2
 
 def obtener_inventario():
-    # If gspread client isn't configured, try to use local fallback for offline testing
-    client = get_gs_client()
-    if client is None:
-        fallback = _load_local_sabores_toppings()
-        if fallback and isinstance(fallback, dict) and 'sabores' in fallback:
-            # Build a flattened inventory from the sample data: combine sabores + toppings
-            data = []
-            data.extend(fallback.get('sabores', []))
-            data.extend(fallback.get('toppings', []))
-        else:
-            return None
-    else:
-        data = _get_sheet_data(PRODUCTS_SHEET_ID, 'Productos')
-        if not data:
-            return None
-    productos = [row for row in data if _norm(row.get('Categoria', '')) not in ['sabores_helado', 'toppings']]
-    return productos
+    """
+    Obtiene el inventario limpio y sin duplicados.
+    Usa google_sheets.get_clean_inventory() para obtener datos limpios.
+    """
+    from . import google_sheets
+    return google_sheets.get_clean_inventory()
 
-def obtener_sabores_y_toppings():
-    # Prefer live Google Sheets, but fall back to local sample JSON when client is not available
-    client = get_gs_client()
-    if client is None:
-        fallback = _load_local_sabores_toppings()
-        if fallback and isinstance(fallback, dict):
-            return {
-                'sabores': fallback.get('sabores', []),
-                'toppings': fallback.get('toppings', [])
-            }
-        return None
-    data = _get_sheet_data(PRODUCTS_SHEET_ID, 'Productos')
+def obtener_categorias_desde_inventario():
+    """Obtiene las categorías presentes en la hoja de inventario, según columnas genéricas."""
+    current_spreadsheet_id = get_spreadsheet_id()
+    data = _get_sheet_data(current_spreadsheet_id, PRODUCTS_WORKSHEET_NAME)
     if not data:
-        return None
-    sabores = [row for row in data if _norm(row.get('Categoria', '')) == 'sabores_helado']
-    toppings = [row for row in data if _norm(row.get('Categoria', '')) == 'toppings']
-    return {"sabores": sabores, "toppings": toppings}
+        return []
+    categorias = set(row.get('Categoria', '').strip() for row in data if row.get('Categoria'))
+    return list(categorias)
 
 def agregar_entrega(data):
     try:
         client = get_gs_client()
-        sheet = client.open_by_key(DELIVERIES_SHEET_ID).worksheet('Entregas')
+        # CRÍTICO: Leer SPREADSHEET_ID dinámicamente
+        current_spreadsheet_id = get_spreadsheet_id()
+        sheet = client.open_by_key(current_spreadsheet_id).worksheet(DELIVERIES_WORKSHEET_NAME)
         
         # Obtenemos la fecha y hora actuales
         fecha_actual = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -248,6 +234,15 @@ def marcar_entrega(codigo, entregado):
 
 @csrf_exempt
 def consultar_productos_gsheet(request):
+    # CRÍTICO: Verificar que el BIZ_ID coincida (si se proporciona)
+    request_biz_id = request.GET.get('biz_id') or request.GET.get('business_id')
+    env_biz_id = os.environ.get('BIZ_ID') or os.environ.get('BUSINESS_ID')
+    
+    if request_biz_id and env_biz_id and request_biz_id != env_biz_id:
+        return JsonResponse({
+            'error': f'BIZ_ID mismatch: request={request_biz_id}, env={env_biz_id}'
+        }, status=403)
+    
     inv_raw = obtener_inventario()
     if not inv_raw:
         return JsonResponse({'error': 'No se pudieron obtener los datos de los productos.'}, status=500)
@@ -263,16 +258,12 @@ def consultar_productos_gsheet(request):
         nombre = str(it.get('NombreProducto', '')).strip()
         precio = it.get('Precio_Venta', 0)
         categoria = str(it.get('Categoria', '')).strip()
-        num_sabores = int(it.get('Numero_de_Sabores', 0) or 0)
-        num_toppings = int(it.get('Numero_de_Toppings', 0) or 0)
         
         normalized.append({
             'nombre': nombre,
             'codigo': codigo,
             'precio': precio,
             'categoria': categoria,
-            'numSabores': num_sabores,
-            'numToppings': num_toppings,
         })
 
     out = []
@@ -333,13 +324,18 @@ def buscar_producto_por_nombre(request):
     if not query:
         return JsonResponse({'error': 'Falta el parámetro de búsqueda "q"'}, status=400)
 
+    # CRÍTICO: Verificar que el BIZ_ID coincida (si se proporciona)
+    request_biz_id = request.GET.get('biz_id') or request.GET.get('business_id')
+    env_biz_id = os.environ.get('BIZ_ID') or os.environ.get('BUSINESS_ID')
+    
+    if request_biz_id and env_biz_id and request_biz_id != env_biz_id:
+        return JsonResponse({
+            'error': f'BIZ_ID mismatch: request={request_biz_id}, env={env_biz_id}'
+        }, status=403)
+
     inv_raw = obtener_inventario()
     if not inv_raw:
         return JsonResponse({'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
-
-    sabores_y_toppings_data = obtener_sabores_y_toppings()
-    if not sabores_y_toppings_data:
-        return JsonResponse({'error': 'No se pudieron cargar los sabores y toppings.'}, status=500)
 
     # Normalizar la consulta del usuario y dividirla en palabras clave
     query_normalized = _norm(query)
@@ -348,30 +344,24 @@ def buscar_producto_por_nombre(request):
     matched_products = []
 
     for producto in inv_raw:
-        nombre_normalized = _norm(producto.get('NombreProducto', ''))
-        codigo_normalized = _norm(producto.get('CodigoProducto', ''))
-        
-        # Verificar si TODAS las palabras clave del usuario se encuentran en el nombre del producto
-        if all(word in nombre_normalized for word in query_words) or query_normalized in codigo_normalized:
+        # Concatenar todos los campos string relevantes del producto para búsqueda
+        searchable_fields = []
+        for k, v in producto.items():
+            if isinstance(v, str):
+                searchable_fields.append(_norm(v))
+        searchable_text = ' '.join(searchable_fields)
+
+        # Verificar si TODAS las palabras clave del usuario se encuentran en cualquier campo relevante
+        if all(word in searchable_text for word in query_words):
             matched_products.append(producto)
 
     if not matched_products:
         return JsonResponse({'error': 'Producto no encontrado.'}, status=404)
     elif len(matched_products) == 1:
         producto_encontrado = matched_products[0]
-        producto_encontrado['sabores'] = sabores_y_toppings_data.get('sabores', [])
-        producto_encontrado['toppings'] = sabores_y_toppings_data.get('toppings', [])
         return JsonResponse(producto_encontrado)
     else:
         return JsonResponse({'matches': matched_products})
-
-@csrf_exempt
-def consultar_sabores_y_toppings(request):
-    data = obtener_sabores_y_toppings()
-    if data:
-        return JsonResponse(data)
-    
-    return JsonResponse({'error': 'No se pudieron obtener los datos de sabores y toppings.'}, status=500)
 
 @csrf_exempt
 def registrar_entrega(request):
@@ -443,3 +433,21 @@ def registrar_confirmacion(request):
         return JsonResponse({'ok': False, 'error': 'JSON inválido'}, status=400)
     except Exception as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
+# Elimina endpoint legacy y reemplaza por uno genérico
+# Ejemplo: consultar_categorias_genericas
+from django.views.decorators.http import require_GET
+
+@require_GET
+def consultar_categorias_genericas(request):
+    """Endpoint genérico para consultar categorías desde inventario."""
+    categorias = obtener_categorias_desde_inventario()
+    return JsonResponse({'categorias': categorias})
+
+@csrf_exempt
+def obtener_todos_los_productos(request):
+    """Endpoint para traer todos los productos del inventario sin filtro."""
+    inv_raw = obtener_inventario()
+    if not inv_raw:
+        return JsonResponse({'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
+    return JsonResponse({'matches': inv_raw})

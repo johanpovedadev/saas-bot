@@ -11,10 +11,21 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 import os
 from pathlib import Path
-from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# ============================================================================
+# CARGAR VARIABLES DE ENTORNO DESDE .env
+# ============================================================================
+# CRÍTICO: Django DEBE cargar .env antes de acceder a os.environ
+# Cada negocio tiene su propio .env en la raíz del proyecto
+env_path = BASE_DIR / '.env'
+load_dotenv(dotenv_path=env_path)
+
+print(f"Django cargando .env desde: {env_path}")
+print(f"GOOGLE_SHEET_ID detectado: {os.environ.get('GOOGLE_SHEET_ID', 'NO ENCONTRADO')}")
 
 
 # Quick-start development settings - unsuitable for production
