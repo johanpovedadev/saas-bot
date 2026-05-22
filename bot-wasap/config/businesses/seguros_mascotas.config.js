@@ -324,7 +324,8 @@ Por favor selecciona una opción del menú.`
 
     admin: {
         jids: [
-            '573138777115@c.us'
+            '573138777115@c.us',
+            '573028465015@c.us'
         ],
         notifications: {
             newOrder: true,
