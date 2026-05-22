@@ -1,21 +1,16 @@
 // services/productService.js
 const axios = require('axios');
 const { logger } = require('../utils/logger');
-const CONFIG = require('../config.json');
-const SECRETS = require('../config.secrets');
+const envConfig = require('../config/env.loader');
 
 // Resolve API_BASE robustly
-const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-let ENDPOINTS = null;
-try {
-    ENDPOINTS = process.env.ENDPOINTS_JSON ? JSON.parse(process.env.ENDPOINTS_JSON) : (SECRETS.ENDPOINTS || CONFIG.ENDPOINTS);
-} catch (e) {
-    ENDPOINTS = SECRETS.ENDPOINTS || CONFIG.ENDPOINTS || null;
-}
-ENDPOINTS = ENDPOINTS || { 
-    BUSCAR_PRODUCTO: '/buscar_producto_por_nombre/', 
-    LISTAR_SABORES_TOPPINGS: '/consultar_sabores_y_toppings/', 
-    REGISTRAR_CONFIRMACION: '/registrar_entrega/' 
+const rawApiBase = (envConfig.api.baseUrl || process.env.API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const API_BASE = rawApiBase.includes('/api') ? rawApiBase : rawApiBase + '/api';
+let ENDPOINTS = envConfig.api.endpoints || {
+    searchProduct: '/buscar_producto_por_nombre/',
+    createOrder: '/crear_pedido/',
+    getFlavors: '/sabores/',
+    getToppings: '/toppings/'
 };
 
 /**
@@ -25,14 +20,44 @@ ENDPOINTS = ENDPOINTS || {
  */
 async function searchProducts(query) {
     try {
-        const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, {
-            params: { q: query },
+        // CRÍTICO: Incluir BIZ_ID en todas las llamadas a la API
+        const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+        const params = { q: query };
+        if (bizId) {
+            params.biz_id = bizId;
+        }
+        const url = `${API_BASE}${ENDPOINTS.searchProduct}`;
+        const response = await axios.get(url, {
+            params: params,
             timeout: 8000
         });
-        
-        return response.data.matches || [];
+        // LOG TEMPORAL: Mostrar siempre la respuesta de la API para depuración
+        logger.info(`Respuesta cruda de la API para búsqueda de "${query}": ${JSON.stringify(response.data)}`);
+        // Permitir también respuesta directa como array o matches
+        if (Array.isArray(response.data)) {
+            return response.data;
+        }
+        if (response.data.matches && Array.isArray(response.data.matches)) {
+            return response.data.matches;
+        }
+        // Si la respuesta es un objeto con productos, pero sin matches
+        if (response.data && typeof response.data === 'object') {
+            // Si tiene productos como array
+            if (Array.isArray(response.data.productos)) {
+                return response.data.productos;
+            }
+            // Si tiene algún array de productos bajo otra clave
+            const arr = Object.values(response.data).find(v => Array.isArray(v) && v.length && v[0].NombreProducto);
+            if (arr) return arr;
+        }
+        return [];
     } catch (error) {
-        logger.error(`Error buscando productos para "${query}": ${error.message}`);
+        logger.error(`Error buscando productos para "${query}" en URL: ${API_BASE}${ENDPOINTS.searchProduct} - ${error.message}`);
+        if (error.response) {
+            logger.error(`API status: ${error.response.status}`);
+            logger.error(`API data: ${JSON.stringify(error.response.data)}`);
+            logger.error(`API url: ${error.config && error.config.url ? error.config.url : 'N/A'}`);
+        }
         return [];
     }
 }
@@ -143,22 +168,56 @@ function chooseProductFromSearch(searchData, query, options = {}) {
 }
 
 /**
- * Obtiene sabores y toppings disponibles
- * @returns {Promise<Object>} - { sabores: [], toppings: [] }
+ * Obtiene categorías genéricas disponibles
+ * @returns {Promise<Object>} - { categorias: [] }
  */
-async function getSaboresYToppings() {
+async function getCategoriasGenericas() {
     try {
-        const response = await axios.get(`${API_BASE}${ENDPOINTS.LISTAR_SABORES_TOPPINGS}`, {
+        const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+        const params = {};
+        if (bizId) {
+            params.biz_id = bizId;
+        }
+        const response = await axios.get(`${API_BASE}${ENDPOINTS.LISTAR_CATEGORIAS}`, {
+            params: params,
             timeout: 8000
         });
-        
         return {
-            sabores: response.data.sabores || [],
-            toppings: response.data.toppings || []
+            categorias: response.data.categorias || []
         };
     } catch (error) {
-        logger.error(`Error obteniendo sabores y toppings: ${error.message}`);
-        return { sabores: [], toppings: [] };
+        logger.error(`Error obteniendo categorias: ${error.message}`);
+        return { categorias: [] };
+    }
+}
+
+/**
+ * Obtiene todos los productos del inventario (sin filtro)
+ * @returns {Promise<Array>} - Lista de todos los productos
+ */
+async function getAllProducts() {
+    try {
+        const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+        const params = {};
+        if (bizId) {
+            params.biz_id = bizId;
+        }
+        const endpoint = ENDPOINTS.getAllProducts || '/obtener_todos_los_productos/';
+        const response = await axios.get(`${API_BASE}${endpoint}`, {
+            params: params,
+            timeout: 8000
+        });
+        // LOG TEMPORAL: Mostrar siempre la respuesta de la API para depuración
+        logger.info(`Respuesta cruda de la API para obtener todos los productos: ${JSON.stringify(response.data)}`);
+        // No fallback, solo retornar los productos del inventario
+        return response.data.matches || [];
+    } catch (error) {
+        logger.error(`Error obteniendo todos los productos: ${error.message}`);
+        if (error.response) {
+            logger.error(`API status: ${error.response.status}`);
+            logger.error(`API data: ${JSON.stringify(error.response.data)}`);
+        }
+        return [];
     }
 }
 
@@ -166,7 +225,8 @@ module.exports = {
     searchProducts,
     findProduct,
     chooseProductFromSearch,
-    getSaboresYToppings,
+    getCategoriasGenericas,
+    getAllProducts,
     levenshtein,
     similarityScore,
     normalizeText

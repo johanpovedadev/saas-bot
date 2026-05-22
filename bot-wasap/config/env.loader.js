@@ -5,7 +5,7 @@
  * Hace el bot completamente genérico y multi-negocio.
  * 
  * CARACTERÍSTICAS:
- * - Carga variables de .env
+ * - Carga variables de .env desde la RAÍZ del proyecto
  * - Valores por defecto para cada variable
  * - Validación automática
  * - Soporte para plantillas de mensajes con placeholders
@@ -21,55 +21,139 @@
  * @module config/env.loader
  */
 
-require('dotenv').config();
+const path = require('path');
+
+// ============================================================================
+// CARGAR .ENV DESDE LA RAÍZ DEL PROYECTO (UN SOLO ARCHIVO)
+// ============================================================================
+// bot-wasap/ está dentro de la raíz, por lo tanto subimos 1 nivel
+const projectRoot = path.resolve(__dirname, '..', '..');
+const envPath = path.join(projectRoot, '.env');
+
+require('dotenv').config({ path: envPath });
+
+console.log(`✅ Bot cargando .env desde: ${envPath}`);
+
+// Cargar config de negocio dinámicamente
+let businessConfig = null;
+try {
+    const configFile = process.env.BUSINESS_CONFIG || 'template.config.js';
+    businessConfig = require(`./businesses/${configFile}`);
+} catch (e) {
+    businessConfig = require('./businesses/template.config.js');
+}
 
 /**
  * Configuración completa cargada desde ENV
  */
 const envConfig = {
-    
     // =========================================================================
     // INFORMACIÓN DEL NEGOCIO
     // =========================================================================
     business: {
-        type: process.env.BUSINESS_TYPE || 'heladeria',
-        name: process.env.BUSINESS_NAME || 'Mundo Helados',
-        shortName: process.env.BUSINESS_SHORT_NAME || 'Mundo Helados',
-        id: process.env.BUSINESS_ID || 'BUSINESS_DEFAULT',
+        // Merge businessConfig.business con defaults (businessConfig tiene prioridad)
+        ...(businessConfig.business || {}),
+        
+        // Pero SIEMPRE garantizar que existan estos campos con defaults
+        type: (businessConfig.business && businessConfig.business.type) || process.env.BUSINESS_TYPE || 'heladeria',
+        name: (businessConfig.business && businessConfig.business.name) || process.env.BUSINESS_NAME || 'Mundo Helados',
+        shortName: (businessConfig.business && businessConfig.business.shortName) || process.env.BUSINESS_SHORT_NAME || 'Mundo Helados',
+        id: (businessConfig.business && businessConfig.business.id) || process.env.BUSINESS_ID || 'BUSINESS_DEFAULT',
         
         location: {
-            city: process.env.BUSINESS_CITY || 'Riohacha',
-            address: process.env.BUSINESS_ADDRESS || '',
-            timezone: process.env.BUSINESS_TIMEZONE || 'America/Bogota',
+            ...(businessConfig.business && businessConfig.business.location || {}),
+            city: (businessConfig.business && businessConfig.business.location && businessConfig.business.location.city) || process.env.BUSINESS_CITY || 'Riohacha',
+            address: (businessConfig.business && businessConfig.business.location && businessConfig.business.location.address) || process.env.BUSINESS_ADDRESS || '',
+            timezone: (businessConfig.business && businessConfig.business.location && businessConfig.business.location.timezone) || process.env.BUSINESS_TIMEZONE || 'America/Bogota',
         },
         
         contact: {
-            phone: process.env.BUSINESS_PHONE || '',
-            whatsapp: process.env.BUSINESS_WHATSAPP || '',
-            email: process.env.BUSINESS_EMAIL || '',
-            website: process.env.BUSINESS_WEBSITE || '',
+            ...(businessConfig.business && businessConfig.business.contact || {}),
+            phone: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.phone) || process.env.BUSINESS_PHONE || '',
+            whatsapp: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.whatsapp) || process.env.BUSINESS_WHATSAPP || '',
+            email: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.email) || process.env.BUSINESS_EMAIL || '',
+            website: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.website) || process.env.BUSINESS_WEBSITE || '',
+            googleMapsLink: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.googleMapsLink) || process.env.BUSINESS_GOOGLE_MAPS_LINK || '',
         },
         
         socialMedia: {
-            instagram: process.env.BUSINESS_INSTAGRAM || '',
-            facebook: process.env.BUSINESS_FACEBOOK || '',
-            tiktok: process.env.BUSINESS_TIKTOK || '',
+            ...(businessConfig.business && businessConfig.business.socialMedia || {}),
+            instagram: (businessConfig.business && businessConfig.business.socialMedia && businessConfig.business.socialMedia.instagram) || process.env.BUSINESS_INSTAGRAM || '',
+            facebook: (businessConfig.business && businessConfig.business.socialMedia && businessConfig.business.socialMedia.facebook) || process.env.BUSINESS_FACEBOOK || '',
+            tiktok: (businessConfig.business && businessConfig.business.socialMedia && businessConfig.business.socialMedia.tiktok) || process.env.BUSINESS_TIKTOK || '',
         },
         
+        // ✅ SIEMPRE incluir hours, aunque businessConfig.business exista
         hours: {
             weekday: {
-                open: process.env.BUSINESS_HOURS_WEEKDAY_OPEN || '09:00',
-                close: process.env.BUSINESS_HOURS_WEEKDAY_CLOSE || '20:00',
+                open: (businessConfig.business && businessConfig.business.hours && businessConfig.business.hours.weekday && businessConfig.business.hours.weekday.open) || process.env.BUSINESS_HOURS_WEEKDAY_OPEN || '09:00',
+                close: (businessConfig.business && businessConfig.business.hours && businessConfig.business.hours.weekday && businessConfig.business.hours.weekday.close) || process.env.BUSINESS_HOURS_WEEKDAY_CLOSE || '20:00',
             },
             weekend: {
-                open: process.env.BUSINESS_HOURS_WEEKEND_OPEN || '10:00',
-                close: process.env.BUSINESS_HOURS_WEEKEND_CLOSE || '21:00',
+                open: (businessConfig.business && businessConfig.business.hours && businessConfig.business.hours.weekend && businessConfig.business.hours.weekend.open) || process.env.BUSINESS_HOURS_WEEKEND_OPEN || '10:00',
+                close: (businessConfig.business && businessConfig.business.hours && businessConfig.business.hours.weekend && businessConfig.business.hours.weekend.close) || process.env.BUSINESS_HOURS_WEEKEND_CLOSE || '21:00',
             },
-            closedDays: process.env.BUSINESS_CLOSED_DAYS 
-                ? process.env.BUSINESS_CLOSED_DAYS.split(',').map(d => d.trim()) 
-                : [],
+            closedDays: (businessConfig.business && businessConfig.business.hours && businessConfig.business.hours.closedDays) || (process.env.BUSINESS_CLOSED_DAYS ? process.env.BUSINESS_CLOSED_DAYS.split(',').map(d => d.trim()) : []),
         },
     },
+    
+    contact: businessConfig.contact || {},
+    schedule: businessConfig.schedule || {},
+    // bot: se mergea más abajo con valores ENV (línea 350)
+    catalog: businessConfig.catalog || {},
+    checkout: businessConfig.checkout || {},
+    admin: businessConfig.admin || {},
+    
+    // =========================================================================
+    // BACKEND - SIEMPRE desde ENV, NO desde businessConfig
+    // =========================================================================
+    backend: {
+        fields: {
+            // Campos de producto
+            productName: process.env.DB_FIELD_PRODUCT_NAME || 'NombreProducto',
+            productCode: process.env.DB_FIELD_PRODUCT_CODE || 'CodigoProducto',
+            productPrice: process.env.DB_FIELD_PRODUCT_PRICE || 'Precio_Venta',
+            productCategory: process.env.DB_FIELD_PRODUCT_CATEGORY || 'Categoria',
+            productImage: process.env.DB_FIELD_PRODUCT_IMAGE || 'Imagen_URL',
+            // Campos de personalización (si no existen, poner string vacío para evitar undefined)
+            itemPrimaryCount: process.env.DB_FIELD_ITEM_PRIMARY_COUNT || '',
+            itemSecondaryCount: process.env.DB_FIELD_ITEM_SECONDARY_COUNT || '',
+            
+            // 🎯 TICKET 3: Opciones extra genéricas para salto automático
+            // Mapea a diferentes columnas según el negocio:
+            // - Empanadas: Numero_de_Sabores
+            // - Pescadería: NumeroEntrada
+            // - Heladería: Numero_de_Toppings
+            opcionesExtra1: process.env.DB_FIELD_OPCIONES_EXTRA_1 || 'Numero_de_Sabores',
+            opcionesExtra2: process.env.DB_FIELD_OPCIONES_EXTRA_2 || 'Numero_de_Toppings',
+        },
+        
+        sheets: {
+            products: process.env.SHEET_NAME_PRODUCTS || 'Productos',
+            flavors: process.env.SHEET_NAME_FLAVORS || 'Sabores',
+            toppings: process.env.SHEET_NAME_TOPPINGS || 'Toppings',
+            orders: process.env.SHEET_NAME_ORDERS || 'Entregas',
+        },
+          ranges: {
+            products: process.env.SHEET_RANGE_PRODUCTS || 'Productos!A:Z',
+            flavors: process.env.SHEET_RANGE_FLAVORS || 'Sabores!A:Z',
+            toppings: process.env.SHEET_RANGE_TOPPINGS || 'Toppings!A:Z',
+            orders: process.env.SHEET_RANGE_ORDERS || 'Entregas!A:Z',
+        },
+        
+        // ✅ API Base y Endpoints (desde businessConfig o process.env)
+        apiBase: (businessConfig.backend && businessConfig.backend.apiBase) || process.env.API_BASE || 'http://127.0.0.1:8000/api',
+        timeout: (businessConfig.backend && businessConfig.backend.timeout) || 8000,
+        
+        endpoints: {
+            products: (businessConfig.backend && businessConfig.backend.endpoints && businessConfig.backend.endpoints.products) || '/productos/',
+            productImage: (businessConfig.backend && businessConfig.backend.endpoints && businessConfig.backend.endpoints.productImage) || '/producto_imagen/',
+            search: (businessConfig.backend && businessConfig.backend.endpoints && businessConfig.backend.endpoints.search) || '/buscar_producto/',
+            orders: (businessConfig.backend && businessConfig.backend.endpoints && businessConfig.backend.endpoints.orders) || '/registrar_entrega/',
+            reservations: (businessConfig.backend && businessConfig.backend.endpoints && businessConfig.backend.endpoints.reservations) || '/registrar_entrega/',
+        },
+    },
+    features: businessConfig.features || {},
     
     // =========================================================================
     // NOMENCLATURA (¡CRÍTICO PARA GENERICIDAD!)
@@ -83,9 +167,33 @@ const envConfig = {
         itemPrimary: process.env.ITEM_PRIMARY_PLURAL || 'sabores',
         itemPrimarySingular: process.env.ITEM_PRIMARY_SINGULAR || 'sabor',
         
+        // Aliases para compatibilidad (apuntan a las mismas propiedades)
+        get itemPrimaryPlural() { return this.itemPrimary; },
+        
         // Item secundario (toppings, extras, acompañamientos, etc.)
         itemSecondary: process.env.ITEM_SECONDARY_PLURAL || 'toppings',
         itemSecondarySingular: process.env.ITEM_SECONDARY_SINGULAR || 'topping',
+        
+        // Aliases para compatibilidad
+        get itemSecondaryPlural() { return this.itemSecondary; },
+        
+        // Labels para UI (con mayúscula inicial)
+        get itemPrimaryLabel() { 
+            const label = process.env.ITEM_PRIMARY_LABEL || 'Sabores';
+            return label.charAt(0).toUpperCase() + label.slice(1);
+        },
+        get itemPrimaryLabelSingular() { 
+            const label = process.env.ITEM_PRIMARY_LABEL_SINGULAR || 'Sabor';
+            return label.charAt(0).toUpperCase() + label.slice(1);
+        },
+        get itemSecondaryLabel() { 
+            const label = process.env.ITEM_SECONDARY_LABEL || 'Toppings';
+            return label.charAt(0).toUpperCase() + label.slice(1);
+        },
+        get itemSecondaryLabelSingular() { 
+            const label = process.env.ITEM_SECONDARY_LABEL_SINGULAR || 'Topping';
+            return label.charAt(0).toUpperCase() + label.slice(1);
+        },
     },
     
     // =========================================================================
@@ -96,38 +204,6 @@ const envConfig = {
         itemPrimaryLabelSingular: process.env.ITEM_PRIMARY_LABEL_SINGULAR || 'Sabor',
         itemSecondaryLabel: process.env.ITEM_SECONDARY_LABEL || 'Toppings',
         itemSecondaryLabelSingular: process.env.ITEM_SECONDARY_LABEL_SINGULAR || 'Topping',
-    },
-    
-    // =========================================================================
-    // CAMPOS DE BASE DE DATOS
-    // =========================================================================
-    backend: {
-        fields: {
-            // Campos de producto
-            productName: process.env.DB_FIELD_PRODUCT_NAME || 'NombreProducto',
-            productCode: process.env.DB_FIELD_PRODUCT_CODE || 'CodigoProducto',
-            productPrice: process.env.DB_FIELD_PRODUCT_PRICE || 'Precio_Venta',
-            productCategory: process.env.DB_FIELD_PRODUCT_CATEGORY || 'Categoria',
-            productImage: process.env.DB_FIELD_PRODUCT_IMAGE || 'Imagen_URL',
-            
-            // Campos de personalización
-            itemPrimaryCount: process.env.DB_FIELD_ITEM_PRIMARY_COUNT || 'Numero_de_Sabores',
-            itemSecondaryCount: process.env.DB_FIELD_ITEM_SECONDARY_COUNT || 'Numero_de_Toppings',
-        },
-        
-        sheets: {
-            products: process.env.SHEET_NAME_PRODUCTS || 'Productos',
-            flavors: process.env.SHEET_NAME_FLAVORS || 'Sabores',
-            toppings: process.env.SHEET_NAME_TOPPINGS || 'Toppings',
-            orders: process.env.SHEET_NAME_ORDERS || 'Entregas',
-        },
-        
-        ranges: {
-            products: process.env.SHEET_RANGE_PRODUCTS || 'Productos!A:Z',
-            flavors: process.env.SHEET_RANGE_FLAVORS || 'Sabores!A:Z',
-            toppings: process.env.SHEET_RANGE_TOPPINGS || 'Toppings!A:Z',
-            orders: process.env.SHEET_RANGE_ORDERS || 'Entregas!A:Z',
-        },
     },
     
     // =========================================================================
@@ -154,19 +230,62 @@ const envConfig = {
     },
     
     // =========================================================================
+    // KEYWORDS (para compatibilidad con código existente)
+    // =========================================================================
+    keywords: {
+        get products() {
+            return process.env.PRODUCT_KEYWORDS 
+                ? process.env.PRODUCT_KEYWORDS.split(',').map(k => k.trim())
+                : ['caja', 'copa', 'litro', 'paleta', 'helado'];
+        },
+        get greetings() {
+            return ['hola', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'que tal'];
+        },
+    },
+    
+    // =========================================================================
+    // MENÚ CONFIGURABLE (Genérico - activar/desactivar opciones)
+    // =========================================================================
+    menu: {
+        // Opciones del menú principal (activar/desactivar desde .env)
+        options: {
+            showProducts: process.env.MENU_OPTION_PRODUCTS !== 'false', // Por defecto: true
+            showLocation: process.env.MENU_OPTION_LOCATION !== 'false', // Por defecto: true
+            showCustomOrders: process.env.MENU_OPTION_CUSTOM_ORDERS !== 'false', // Por defecto: true
+        },
+        
+        // Textos de las opciones del menú
+        labels: {
+            option1: process.env.MENU_LABEL_OPTION1 || 'Ver Menú de Productos',
+            option1Description: process.env.MENU_DESC_OPTION1 || 'Explora nuestros deliciosos {productTypePlural}',
+            option2: process.env.MENU_LABEL_OPTION2 || 'Dirección y Horarios',
+            option2Description: process.env.MENU_DESC_OPTION2 || 'Encuentra nuestra ubicación',
+            option3: process.env.MENU_LABEL_OPTION3 || 'Encargar para Evento',
+            option3Description: process.env.MENU_DESC_OPTION3 || 'Pedidos especiales',
+        },
+        
+        // Mensajes adicionales del menú
+        footer: process.env.MENU_FOOTER || '💬 También puedes escribir:\n• El nombre de un producto\n• "hablar" para atención humana\n• "carrito" para ver tu pedido actual',
+        helpText: process.env.MENU_HELP_TEXT || '¿Cómo te puedo ayudar? 😊',
+    },
+    
+    // =========================================================================
     // MENSAJES Y PLANTILLAS
     // =========================================================================
     messages: {
         templates: {
-            greeting: process.env.MESSAGE_GREETING || '¿Cómo estás? Somos {businessName} en {city} 🍦',
-            welcome: process.env.MESSAGE_WELCOME || '¡Bienvenido a {businessName}! 🍨',
-            mainMenu: process.env.MESSAGE_MAIN_MENU || '🍨 *¡Bienvenido a {businessName}!* 🍨',
-            customOrderStart: process.env.MESSAGE_CUSTOM_ORDER_START || '¡Claro! Con gusto te ayudamos...',
+            greeting: process.env.MESSAGE_GREETING || '¿Cómo estás? Somos {businessName} en {city} {emoji}',
+            welcome: process.env.MESSAGE_WELCOME || '¡Bienvenido a {businessName}! {emoji}',
+            mainMenu: process.env.MESSAGE_MAIN_MENU || '{emoji} *¡Bienvenido a {businessName}!* {emoji}',
+            customOrderStart: process.env.MESSAGE_CUSTOM_ORDER_START || '¡Claro! Con gusto te ayudamos con tu pedido por encargo. 😊\nPor favor, describe con detalle el pedido que necesitas:\n_Ej: 50 {productTypePlural} para un evento, etc._',
+            customOrderExamples: process.env.MESSAGE_CUSTOM_ORDER_EXAMPLES || '📝 *Escribe tu pedido así:*\n"3 {productTypePlural} de {itemPrimarySingular} y 2 {productTypePlural} de {itemPrimarySingular}"\n\nO simplemente describe lo que necesitas:\n"Quiero {productType} para una fiesta de 20 personas"',
             selectPrimaryItems: process.env.MESSAGE_SELECT_PRIMARY_ITEMS || 'Por favor, selecciona {itemPrimaryLabel}...',
             selectSecondaryItems: process.env.MESSAGE_SELECT_SECONDARY_ITEMS || '¿Quieres agregar {itemSecondaryLabel}?',
             selectionError: process.env.MESSAGE_SELECTION_ERROR || '❌ No entendí tu respuesta.',
             orderConfirmation: process.env.MESSAGE_ORDER_CONFIRMATION || '✅ *¡Perfecto!* Tu pedido ha sido confirmado.',
             outOfHours: process.env.MESSAGE_OUT_OF_HOURS || '🕐 Actualmente estamos fuera de horario.',
+            browseInstructions: process.env.MESSAGE_BROWSE_INSTRUCTIONS || '🔍 Paso 1:\nEscribe el nombre o una palabra del producto\nEjemplos: {productKeywords}\n(si no coincide exacto, te muestro opciones parecidas)',
+            menuDay: process.env.MESSAGE_MENU_DAY || '📋 ¡Aquí está nuestro delicioso menú del día!',
         },
         
         /**
@@ -194,6 +313,7 @@ const envConfig = {
                 emoji: envConfig.ui.emoji.main,
                 weekdayHours: `${envConfig.business.hours.weekday.open} - ${envConfig.business.hours.weekday.close}`,
                 weekendHours: `${envConfig.business.hours.weekend.open} - ${envConfig.business.hours.weekend.close}`,
+                productKeywords: envConfig.keywords.products.slice(0, 4).join(', '), // Primeros 4 keywords como ejemplos
             };
             
             const allVars = { ...defaultVars, ...vars };
@@ -228,9 +348,13 @@ const envConfig = {
     // BOT E IA
     // =========================================================================
     bot: {
+        // Spread config file data first (welcomeMessage, mainMenu, insuranceFlow, etc.)
+        ...(businessConfig.bot || {}),
+        
         assistantName: process.env.BOT_ASSISTANT_NAME || 'MIA',
         
         ai: {
+            ...((businessConfig.bot && businessConfig.bot.ai) || {}),
             enabled: process.env.BOT_AI_ENABLED === 'true',
             model: process.env.BOT_AI_MODEL || 'gpt-4',
             maxTokens: parseInt(process.env.BOT_AI_MAX_TOKENS || '500', 10),
@@ -266,13 +390,14 @@ const envConfig = {
     // API Y BACKEND
     // =========================================================================
     api: {
-        baseUrl: process.env.API_BASE_URL || 'http://localhost:8000',
+        baseUrl: process.env.API_BASE_URL || 'http://localhost:8000/api',
         
         endpoints: {
             searchProduct: process.env.API_ENDPOINT_SEARCH_PRODUCT || '/buscar_producto_por_nombre/',
             createOrder: process.env.API_ENDPOINT_CREATE_ORDER || '/crear_pedido/',
             getFlavors: process.env.API_ENDPOINT_GET_FLAVORS || '/sabores/',
             getToppings: process.env.API_ENDPOINT_GET_TOPPINGS || '/toppings/',
+            getAllProducts: process.env.API_ENDPOINT_GET_ALL_PRODUCTS || '/obtener_todos_los_productos/',
         },
     },
     
@@ -310,6 +435,23 @@ const envConfig = {
         port: parseInt(process.env.PORT || '3000', 10),
     },
 };
+
+// Fallback robusto para horarios de atención
+if (!envConfig.business.hours) {
+    envConfig.business.hours = {};
+}
+if (!envConfig.business.hours.weekday || typeof envConfig.business.hours.weekday !== 'object') {
+    envConfig.business.hours.weekday = {
+        open: process.env.BUSINESS_HOURS_WEEKDAY_OPEN || '09:00',
+        close: process.env.BUSINESS_HOURS_WEEKDAY_CLOSE || '20:00',
+    };
+}
+if (!envConfig.business.hours.weekend || typeof envConfig.business.hours.weekend !== 'object') {
+    envConfig.business.hours.weekend = {
+        open: process.env.BUSINESS_HOURS_WEEKEND_OPEN || '10:00',
+        close: process.env.BUSINESS_HOURS_WEEKEND_CLOSE || '21:00',
+    };
+}
 
 // =============================================================================
 // UTILIDADES
@@ -352,11 +494,11 @@ envConfig.validate = function() {
         errors.push('BUSINESS_NAME es requerido');
     }
     
-    if (!this.backend.fields.productName) {
+    if (!(this.backend.fields && this.backend.fields.productName)) {
         errors.push('DB_FIELD_PRODUCT_NAME es requerido');
     }
     
-    if (!this.backend.fields.itemPrimaryCount) {
+    if (!(this.backend.fields && this.backend.fields.itemPrimaryCount)) {
         errors.push('DB_FIELD_ITEM_PRIMARY_COUNT es requerido');
     }
     
@@ -378,10 +520,10 @@ envConfig.printSummary = function() {
     console.log('📋 CONFIGURACIÓN ENV CARGADA');
     console.log('='.repeat(60));
     console.log(`🏢 Negocio: ${this.business.name} (${this.business.type})`);
-    console.log(`📍 Ubicación: ${this.business.location.city}`);
+    console.log(`📍 Ubicación: ${(this.business.location && this.business.location.city) ? this.business.location.city : (this.business.city || 'Ciudad')}`);
     console.log(`📦 Producto: ${this.nomenclature.productType} → ${this.nomenclature.productTypePlural}`);
-    console.log(`🔧 Item Primario: ${this.nomenclature.itemPrimary} (Campo: ${this.backend.fields.itemPrimaryCount})`);
-    console.log(`🔧 Item Secundario: ${this.nomenclature.itemSecondary} (Campo: ${this.backend.fields.itemSecondaryCount})`);
+    console.log(`🔧 Item Primario: ${this.nomenclature.itemPrimary} (Campo: ${(this.backend.fields && this.backend.fields.itemPrimaryCount) ? this.backend.fields.itemPrimaryCount : (this.itemPrimaryCount || 'Campo no definido')})`);
+    console.log(`🔧 Item Secundario: ${this.nomenclature.itemSecondary} (Campo: ${(this.backend.fields && this.backend.fields.itemSecondaryCount) ? this.backend.fields.itemSecondaryCount : (this.itemSecondaryCount || 'Campo no definido')})`);
     console.log(`🔍 Keywords: ${this.search.productKeywords.slice(0, 5).join(', ')}...`);
     console.log(`🤖 Asistente: ${this.bot.assistantName}`);
     console.log(`🌐 Ambiente: ${this.env.nodeEnv}`);

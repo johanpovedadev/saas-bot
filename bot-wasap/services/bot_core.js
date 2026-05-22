@@ -72,7 +72,8 @@ function getProgressIndicator(producto, currentStep, ctx) {
  * REGLA: Usar get_clean_inventory() del backend para obtener datos limpios
  */
 async function loadAllProductsCache(ctx) {
-    const apiBase = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+    const rawBase = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+    const apiBase = rawBase.includes('/api') ? rawBase : rawBase + '/api';
     const listAllEndpoint = process.env.API_ENDPOINT_GET_ALL_PRODUCTS || '/obtener_todos_los_productos/';
     const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
     
