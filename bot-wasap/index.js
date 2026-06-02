@@ -261,7 +261,10 @@ const startBot = async () => {
         puppeteer: {
             executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox', '--disable-setuid-sandbox',
+                ...(process.env.CHROME_PORT ? [`--remote-debugging-port=${process.env.CHROME_PORT}`] : [])
+            ]
         }
     });
 

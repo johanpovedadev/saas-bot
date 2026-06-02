@@ -1,0 +1,5 @@
+{
+  "tenants": ["pescaderia", "mascotas"],
+  "base_chrome_port": 9222,
+  "description": "Agrega aqui los business keys de los negocios que quieras correr simultaneamente"
+}
