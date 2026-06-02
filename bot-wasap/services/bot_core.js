@@ -129,11 +129,14 @@ async function loadAllProductsCache(ctx) {
 
 function resetChat(jid, ctx) {
     const nomenclature = envConfig.nomenclature;
+    const isInsurance = envConfig.business?.type === 'seguros_mascotas' ||
+                        envConfig.business?.industry === 'insurance' ||
+                        envConfig.bot?.insuranceFlow?.enabled === true;
     
     // En lugar de borrar, sobreescribimos la sesión con un estado limpio y por defecto.
     // Esto asegura que la sesión SIEMPRE exista después de un reseteo.
     ctx.sessions[jid] = {
-        phase: PHASE.SELECCION_OPCION, // ✅ Usar constante en lugar de string hardcodeado
+        phase: isInsurance ? PHASE.INS_SALUDO : PHASE.SELECCION_OPCION,
         lastPromptAt: Date.now(),
         errorCount: 0,
         order: { items: [] },

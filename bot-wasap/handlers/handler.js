@@ -51,8 +51,7 @@ const { isGreeting } = require('../config/greetings/greetings.colombia');
 const envConfig = require('../config/env.loader');
 
 // Detectar si es flujo de seguros mascotas
-const IS_INSURANCE = envConfig.business?.type === 'seguros_mascotas' ||
-                     envConfig.business?.industry === 'insurance' ||
+const IS_INSURANCE = envConfig.business?.industry === 'insurance' ||
                      envConfig.bot?.insuranceFlow?.enabled === true;
 
 // ===================================
@@ -204,10 +203,16 @@ async function processIncomingMessage(sock, messageData, ctx) {
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
         if (!userSession.phase || !Object.values(PHASE).includes(userSession.phase)) {
-            logger.warn(`[${jid}] ⚠️ Fase indefinida o inválida: "${userSession.phase}". Reiniciando a SELECCION_OPCION.`);
-            userSession.phase = PHASE.SELECCION_OPCION;
+            const fallbackPhase = IS_INSURANCE ? PHASE.INS_SALUDO : PHASE.SELECCION_OPCION;
+            logger.warn(`[${jid}] ⚠️ Fase indefinida o inválida: "${userSession.phase}". Reiniciando a ${fallbackPhase}.`);
+            userSession.phase = fallbackPhase;
             userSession.errorCount = 0;
-            await menuHandler.sendMainMenu(sock, jid, ctx);
+            if (IS_INSURANCE) {
+                const segurosFlow = require('./flows/seguros.flow');
+                await segurosFlow.showWelcome(sock, jid, ctx);
+            } else {
+                await menuHandler.sendMainMenu(sock, jid, ctx);
+            }
             return;
         }
         
@@ -420,10 +425,16 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
         // ===================================
         default:
             logger.error(`[${jid}] ❌ Fase desconocida o no manejada: "${phase}"`);
-            logger.warn(`[${jid}] Reiniciando a SELECCION_OPCION por fase inválida`);
-            userSession.phase = PHASE.SELECCION_OPCION;
-            userSession.errorCount = 0;
-            await menuHandler.sendMainMenu(sock, jid, ctx);
+            if (IS_INSURANCE) {
+                userSession.phase = PHASE.INS_SALUDO;
+                userSession.errorCount = 0;
+                const segurosFlow = require('./flows/seguros.flow');
+                await segurosFlow.showWelcome(sock, jid, ctx);
+            } else {
+                userSession.phase = PHASE.SELECCION_OPCION;
+                userSession.errorCount = 0;
+                await menuHandler.sendMainMenu(sock, jid, ctx);
+            }
             break;    }
     
     // Log de transición de fase
@@ -524,9 +535,30 @@ function setupSocketHandlers(sock, ctx) {
         return;
     }
 
+    if (ctx._handlersInstalled) {
+        logger.warn('setupSocketHandlers ya fue llamado, omitiendo duplicado');
+        return;
+    }
+    ctx._handlersInstalled = true;
+
+    if (!ctx._processedMsgIds) {
+        ctx._processedMsgIds = new Set();
+    }
+    setInterval(() => {
+        if (ctx._processedMsgIds.size > 1000) ctx._processedMsgIds.clear();
+    }, 60000);
+
     // Handler de mensajes entrantes
     sock.on('message', async (msg) => {
         try {
+            if (msg.id && ctx._processedMsgIds.has(msg.id._serialized || msg.id.id || msg.id)) {
+                logger.debug(`Mensaje duplicado ignorado: ${msg.id._serialized || msg.id}`);
+                return;
+            }
+            if (msg.id) {
+                ctx._processedMsgIds.add(msg.id._serialized || msg.id.id || msg.id);
+            }
+
             // Extraer datos del mensaje usando el módulo existente
             const messageData = messageHandler.extractMessageData(msg);
 
@@ -538,7 +570,7 @@ function setupSocketHandlers(sock, ctx) {
 
             // Procesar mensaje (fire-and-forget con manejo de errores)
             processIncomingMessage(sock, messageData, ctx).catch(err => {
-                logger.error('❌ Error crítico al procesar mensaje:', err?.stack || err);
+                logger.error('Error critico al procesar mensaje:', err?.stack || err);
                 messageHandler.handleProcessingError(sock, messageData.from, err, ctx);
             });
 
@@ -547,7 +579,7 @@ function setupSocketHandlers(sock, ctx) {
         }
     });
 
-    logger.info('🎯 Event handlers de whatsapp-web.js configurados correctamente');
+    logger.info('Event handlers de whatsapp-web.js configurados correctamente');
 }
 
 // ===================================

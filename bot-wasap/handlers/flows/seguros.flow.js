@@ -6,6 +6,7 @@ const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
 const notificationService = require('../../services/notificationService');
+const writeQueue = require('../../services/writeQueue');
 
 const INSURANCE_PHASES = [
     PHASE.INS_SALUDO,
@@ -58,10 +59,7 @@ async function handle(sock, jid, text, userSession, ctx) {
 // ISSUE #1 — Mensaje de bienvenida
 // ===================================
 async function showWelcome(sock, jid, ctx) {
-    const flow = envConfig.bot?.insuranceFlow;
-    const msg = flow?.messages?.gato
-        ? envConfig.bot.welcomeMessage
-        : `🐾 Hola, bienvenido a TE ASEGURAMOS\nAliados de Seguros Mundial ❤️\n\nSabemos que tu mascota es parte de tu familia.\n\n¿A quién deseas proteger hoy?\n\n1️⃣ Perro 🐶\n2️⃣ Gato 🐱`;
+    const msg = envConfig.bot.welcomeMessage || `🐾 Hola, bienvenido a ${envConfig.business.name}\n\n¿A quién deseas proteger hoy?\n\n1️⃣ Perro 🐶\n2️⃣ Gato 🐱`;
     await say(sock, jid, msg, ctx);
 }
 
@@ -104,7 +102,19 @@ async function handleFlujoGato(sock, jid, t, userSession, ctx) {
             logger.warn(`[${jid}] No se pudo enviar imagen gato: ${e.message}`);
         }
 
-        const msg = flow?.messages?.gato || `🐱 *Plan Gato*\n\n💰 Valor: $20.000/mes\n\n¿Deseas continuar?\n\n1️⃣ Sí, continuar`;
+        const msg = flow?.messages?.gato || `🐱 *Plan Gatos*
+
+💰 Valor anual: $200.900
+
+📅 Vigencia: 1 año
+
+✅ Protección especializada para gatos
+✅ Cobertura veterinaria
+✅ Cobertura por accidentes
+✅ Asistencia exequial
+
+1️⃣ Elegir este plan
+2️⃣ Volver al menu`;
 
         await say(sock, jid, msg, ctx);
         userSession.phase = PHASE.INS_FLUJO_GATO;
@@ -113,7 +123,7 @@ async function handleFlujoGato(sock, jid, t, userSession, ctx) {
         return;
     }
 
-    if (t === '1' || /^(si|sí|continuar|dale|ok)$/i.test(t)) {
+    if (t === '1' || /^(si|sí|continuar|dale|ok|elegir)$/i.test(t)) {
         delete userSession._gatoOpcionMostrada;
         userSession.datosTitular = {};
         userSession.pasoDatos = 0;
@@ -122,10 +132,18 @@ async function handleFlujoGato(sock, jid, t, userSession, ctx) {
         return;
     }
 
+    if (t === '2' || t.includes('volver') || t.includes('menu')) {
+        delete userSession._gatoOpcionMostrada;
+        userSession.phase = PHASE.INS_SALUDO;
+        setTimeout(() => showWelcome(sock, jid, userSession, ctx), 1000);
+        return;
+    }
+
     userSession.errorCount++;
     await say(sock, jid, `❌ Opción no válida
 
-1️⃣ Sí, continuar`, ctx);
+1️⃣ Elegir este plan
+2️⃣ Volver al menu`, ctx);
 }
 
 async function handleFlujoPerro(sock, jid, t, userSession, ctx) {
@@ -140,7 +158,18 @@ async function handleFlujoPerro(sock, jid, t, userSession, ctx) {
             logger.warn(`[${jid}] No se pudo enviar imagen perro plus: ${e.message}`);
         }
 
-        const msg = flow?.messages?.perroPlus || `🐶 *Plan PLUS*\n\n💰 Valor: $25.000/mes\n\n1️⃣ Elegir este plan\n2️⃣ Ver plan PREMIUM`;
+        const msg = flow?.messages?.perroPlus || `🐶 *Plan PLUS*
+
+💰 Valor anual: $259.900
+
+📅 Vigencia: 1 año
+
+✅ Cubrimiento veterinario básico
+✅ Cobertura por accidentes
+✅ Asistencia exequial
+
+1️⃣ Elegir este plan
+2️⃣ Ver plan PREMIUM`;
 
         await say(sock, jid, msg, ctx);
         userSession.phase = PHASE.INS_FLUJO_PERRO;
@@ -185,7 +214,19 @@ async function handleFlujoPerroPremium(sock, jid, t, userSession, ctx) {
             logger.warn(`[${jid}] No se pudo enviar imagen perro premium: ${e.message}`);
         }
 
-        const msg = flow?.messages?.perroPremium || `🐶 *Plan PREMIUM*\n\n💰 Valor: $45.000/mes\n\n1️⃣ Elegir este plan`;
+        const msg = flow?.messages?.perroPremium || `🐶 *Plan PREMIUM*
+
+💰 Valor anual: $354.900
+
+📅 Vigencia: 1 año
+
+✅ Cobertura ampliada
+✅ Mayor protección veterinaria
+✅ Cobertura por accidentes
+✅ Asistencia exequial
+
+1️⃣ Elegir este plan
+2️⃣ Volver a planes`;
 
         await say(sock, jid, msg, ctx);
         userSession.phase = PHASE.INS_FLUJO_PERRO_PREMIUM;
@@ -204,14 +245,22 @@ async function handleFlujoPerroPremium(sock, jid, t, userSession, ctx) {
         return;
     }
 
+    if (t === '2' || t.includes('volver') || t.includes('planes')) {
+        delete userSession._premiumOpcionMostrada;
+        delete userSession._perroOpcionMostrada;
+        userSession.phase = PHASE.INS_FLUJO_PERRO;
+        return await handleFlujoPerro(sock, jid, t, userSession, ctx);
+    }
+
     userSession.errorCount++;
     await say(sock, jid, `❌ Opción no válida
 
-1️⃣ Elegir este plan`, ctx);
+1️⃣ Elegir este plan
+2️⃣ Volver a planes`, ctx);
 }
 
 // ===================================
-// ISSUE #9 — Preguntas reducidas (6 titular + 3 mascota)
+// ISSUE #9 — Preguntas (8 titular + 5 mascota)
 // ISSUE #4 — Tipo documento enumerado
 // ISSUE #5 — Fecha nacimiento DD/MM/YYYY
 // ISSUE #6 — Ciudad + departamento
@@ -222,13 +271,17 @@ const DATOS_TITULAR_PREGUNTAS = [
     { field: 'numeroDocumento', label: 'número de identificación', ask: true },
     { field: 'fechaNacimiento', label: 'fecha de nacimiento (DD/MM/YYYY)', ask: true },
     { field: 'ciudad', label: 'ciudad y departamento', ask: true },
-    { field: 'contacto', label: 'número de celular', ask: true }
+    { field: 'direccion', label: 'dirección de residencia', ask: true },
+    { field: 'contacto', label: 'número de celular', ask: true },
+    { field: 'correo', label: 'correo electrónico', ask: true }
 ];
 
 const DATOS_MASCOTA_PREGUNTAS = [
     { field: 'nombreMascota', label: 'nombre de la mascota', ask: true },
     { field: 'edadMascota', label: 'edad de la mascota (solo números)', ask: true },
-    { field: 'raza', label: 'raza', ask: true }
+    { field: 'raza', label: 'raza', ask: true },
+    { field: 'color', label: 'color del pelaje', ask: true },
+    { field: 'genero', label: 'género (1=Macho, 2=Hembra)', ask: true }
 ];
 
 function getMensajeDato(field) {
@@ -241,10 +294,14 @@ function getMensajeDato(field) {
         numeroDocumento: flow.datosTitularNumero,
         fechaNacimiento: flow.datosTitularFechaNacimiento,
         ciudad: flow.datosTitularCiudad,
+        direccion: flow.datosTitularDireccion,
         contacto: flow.datosTitularContacto,
+        correo: flow.datosTitularCorreo,
         nombreMascota: flow.datosMascotaNombre,
         edadMascota: flow.datosMascotaEdad,
-        raza: flow.datosMascotaRaza
+        raza: flow.datosMascotaRaza,
+        color: flow.datosMascotaColor,
+        genero: flow.datosMascotaGenero
     };
     return map[field] || null;
 }
@@ -254,10 +311,17 @@ function getMensajeDato(field) {
 // ===================================
 function normalizarTipoDocumento(input) {
     const t = input.trim().toLowerCase();
-    if (t === '1' || t.includes('cedula') || t === 'cc') return 'Cédula de Ciudadanía';
+    if (t === '1' || t.includes('cedula') || t === 'cc') return 'Cedula de Ciudadania';
     if (t === '2' || t.includes('nit')) return 'NIT';
     if (t === '3' || t.includes('tarjeta') || t === 'ti') return 'Tarjeta de Identidad';
-    if (t === '4' || t.includes('extranjeria') || t.includes('extranjería')) return 'Cédula de Extranjería';
+    if (t === '4' || t.includes('extranjeria') || t.includes('extranjeria')) return 'Cedula de Extranjeria';
+    return input.trim();
+}
+
+function normalizarGenero(input) {
+    const t = input.trim().toLowerCase();
+    if (t === '1' || t.includes('macho') || t === 'm') return 'Macho';
+    if (t === '2' || t.includes('hembra') || t === 'h') return 'Hembra';
     return input.trim();
 }
 
@@ -316,41 +380,27 @@ async function handleDatosTitularStep(sock, jid, userSession, ctx) {
 
 async function handleDatosTitular(sock, jid, text, userSession, ctx) {
     const paso = userSession.pasoDatos || 0;
+    const valor = text.trim();
+    const pregunta = DATOS_TITULAR_PREGUNTAS[paso];
 
-    if (paso > 0 || userSession.datosTitular?.nombre) {
-        const pregunta = DATOS_TITULAR_PREGUNTAS[paso - 1];
-        if (pregunta) {
-            const valor = text.trim();
-
-            // ISSUE #4 — Normalizar tipoDocumento
-            if (pregunta.field === 'tipoDocumento') {
-                userSession.datosTitular.tipoDocumento = normalizarTipoDocumento(valor);
-            }
-            // ISSUE #5 — Validar fecha nacimiento
-            else if (pregunta.field === 'fechaNacimiento') {
-                if (!validarFecha(valor)) {
-                    userSession.errorCount = (userSession.errorCount || 0) + 1;
-                    await say(sock, jid, `❌ Formato inválido. Por favor escribe la fecha así: DD/MM/YYYY
+    if (pregunta) {
+        if (pregunta.field === 'tipoDocumento') {
+            userSession.datosTitular.tipoDocumento = normalizarTipoDocumento(valor);
+        } else if (pregunta.field === 'fechaNacimiento') {
+            if (!validarFecha(valor)) {
+                userSession.errorCount = (userSession.errorCount || 0) + 1;
+                await say(sock, jid, `❌ Formato inválido. Por favor escribe la fecha así: DD/MM/YYYY
 
 Ejemplo: 15/03/1990`, ctx);
-                    userSession.pasoDatos = paso; // no avanza
-                    return;
-                }
-                userSession.datosTitular.fechaNacimiento = valor;
+                return;
             }
-            else {
-                userSession.datosTitular[pregunta.field] = valor;
-            }
+            userSession.datosTitular.fechaNacimiento = valor;
+        } else {
+            userSession.datosTitular[pregunta.field] = valor;
         }
     }
 
-    if (paso === 0 && !userSession.datosTitular?.nombre) {
-        userSession.datosTitular.nombre = text.trim();
-        userSession.pasoDatos = 1;
-    } else {
-        userSession.pasoDatos = paso + 1;
-    }
-
+    userSession.pasoDatos = paso + 1;
     setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 1000);
 }
 
@@ -373,41 +423,45 @@ async function handleDatosMascotaStep(sock, jid, userSession, ctx) {
     }
 
     const pregunta = DATOS_MASCOTA_PREGUNTAS[paso];
-    const msg = getMensajeDato(pregunta.field) || `🐾 ¿Cuál es ${pregunta.label}?`;
+    let msg;
+
+    if (pregunta.field === 'raza') {
+        const tipoMascota = userSession.tipoMascota || userSession.tipoAnimal || '';
+        const flowMsgs = envConfig.bot?.insuranceFlow?.messages;
+        if (tipoMascota === 'perro') {
+            msg = flowMsgs?.datosMascotaRazaPerro || `🦴 ¿Que raza es tu perro?\n\nEjemplos:\n• Labrador\n• Golden Retriever\n• Pastor Aleman\n• Bulldog\n• Criollo\n\n✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.`;
+        } else {
+            msg = flowMsgs?.datosMascotaRazaGato || `🐱 ¿Que raza es tu gato?\n\nEjemplos:\n• Criollo\n• Siamés\n• Persa\n• Angora\n\n✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.`;
+        }
+    } else {
+        msg = getMensajeDato(pregunta.field) || `🐾 ¿Cual es ${pregunta.label}?`;
+    }
+
     await say(sock, jid, msg, ctx);
 }
 
 async function handleDatosMascota(sock, jid, text, userSession, ctx) {
     const paso = userSession.pasoDatos || 0;
+    const valor = text.trim();
+    const pregunta = DATOS_MASCOTA_PREGUNTAS[paso];
 
-    if (paso > 0 || userSession.datosMascota?.nombreMascota) {
-        const pregunta = DATOS_MASCOTA_PREGUNTAS[paso - 1];
-        if (pregunta) {
-            const valor = text.trim();
-
-            // ISSUE #7 — Validar que edadMascota sea número
-            if (pregunta.field === 'edadMascota') {
-                const edad = validarEdadMascota(valor);
-                if (edad === null) {
-                    userSession.errorCount = (userSession.errorCount || 0) + 1;
-                    await say(sock, jid, `❌ Por favor escribe solo números (ej: 3, 5, 8)`, ctx);
-                    userSession.pasoDatos = paso; // no avanza
-                    return;
-                }
-                userSession.datosMascota.edadMascota = String(edad);
-            } else {
-                userSession.datosMascota[pregunta.field] = valor;
+    if (pregunta) {
+        if (pregunta.field === 'edadMascota') {
+            const edad = validarEdadMascota(valor);
+            if (edad === null) {
+                userSession.errorCount = (userSession.errorCount || 0) + 1;
+                await say(sock, jid, `❌ Por favor escribe solo números (ej: 3, 5, 8)`, ctx);
+                return;
             }
+            userSession.datosMascota.edadMascota = String(edad);
+        } else if (pregunta.field === 'genero') {
+            userSession.datosMascota.genero = normalizarGenero(valor);
+        } else {
+            userSession.datosMascota[pregunta.field] = valor;
         }
     }
 
-    if (paso === 0 && !userSession.datosMascota?.nombreMascota) {
-        userSession.datosMascota.nombreMascota = text.trim();
-        userSession.pasoDatos = 1;
-    } else {
-        userSession.pasoDatos = paso + 1;
-    }
-
+    userSession.pasoDatos = paso + 1;
     setTimeout(() => handleDatosMascotaStep(sock, jid, userSession, ctx), 1000);
 }
 
@@ -418,19 +472,23 @@ async function mostrarConfirmacion(sock, jid, userSession, ctx) {
     const flow = envConfig.bot?.insuranceFlow?.messages;
     const template = flow?.confirmacion || `💛 Ya casi terminamos
 
-Confirma tu información:
+Confirma tu informacion:
 
 👤 *Titular:*
 Nombre: {nombre}
 Documento: {documento}
 Fecha Nac.: {fechaNac}
 Ciudad/Dep: {ciudad}
+Direccion: {direccion}
 Celular: {contacto}
+Email: {correo}
 
 🐾 *Mascota:*
 Nombre: {mascota}
-Edad: {edad} años
+Edad: {edad} anos
 Raza: {raza}
+Color: {color}
+Genero: {genero}
 
 📦 *Plan:* {plan}
 
@@ -445,10 +503,14 @@ Raza: {raza}
         .replace(/{documento}/g, `${dt.tipoDocumento || '___'}: ${dt.numeroDocumento || '___'}`)
         .replace(/{fechaNac}/g, dt.fechaNacimiento || '___')
         .replace(/{ciudad}/g, dt.ciudad || '___')
+        .replace(/{direccion}/g, dt.direccion || '___')
         .replace(/{contacto}/g, dt.contacto || '___')
+        .replace(/{correo}/g, dt.correo || '___')
         .replace(/{mascota}/g, dm.nombreMascota || '___')
         .replace(/{edad}/g, dm.edadMascota || '___')
         .replace(/{raza}/g, dm.raza || '___')
+        .replace(/{color}/g, dm.color || '___')
+        .replace(/{genero}/g, dm.genero || '___')
         .replace(/{plan}/g, userSession.planSeleccionado || '___');
 
     await say(sock, jid, msg, ctx);
@@ -457,9 +519,9 @@ Raza: {raza}
 
 async function handleConfirmacion(sock, jid, t, userSession, ctx) {
     if (t === '1' || /^(si|sí|confirmar|confirmo|correcto|ok|dale)$/i.test(t)) {
-        // ISSUE #3 — Eliminar pago, ir directo a guardar + final
         await guardarSolicitud(sock, jid, userSession, ctx, 'pendiente', '');
         userSession.phase = PHASE.INS_FINAL;
+        await handleFinal(sock, jid, '', userSession, ctx);
         return;
     }
 
@@ -486,7 +548,7 @@ async function handleConfirmacion(sock, jid, t, userSession, ctx) {
 async function handleRechazo(sock, jid, t, userSession, ctx) {
     const msg = envConfig.bot?.insuranceFlow?.messages?.rechazoEdad
         ? envConfig.bot.insuranceFlow.messages.rechazoEdad.replace('{nombre}', userSession.datosTitular?.nombre || '')
-        : `😔 Lo sentimos, ${userSession.datosTitular?.nombre || ''}.\n\nActualmente no es posible asegurar mascotas mayores de 12 años.\n\nGracias por comunicarte con TE ASEGURAMOS.`;
+        : `😔 Lo sentimos, ${userSession.datosTitular?.nombre || ''}.\n\nActualmente no es posible asegurar mascotas mayores de 12 años.\n\nGracias por comunicarte con ${envConfig.business.name}.`;
 
     // ISSUE #8 — Guardar rechazo en Google Sheets
     await guardarSolicitud(sock, jid, userSession, ctx, 'rechazado', 'edad mayor a 12 años');
@@ -508,38 +570,40 @@ async function guardarSolicitud(sock, jid, userSession, ctx, status, cancelReaso
         const productoTexto = `Plan ${plan} - ${tipoMascota === 'gato' ? 'Gato' : 'Perro'}` +
             (dm.nombreMascota ? ` (${dm.nombreMascota})` : '');
 
-        const observacionesTexto = JSON.stringify({
-            titular: dt,
-            mascota: dm,
-            plan: plan,
-            tipoMascota: tipoMascota,
-            status: status,
-            cancel_reason: cancelReason
-        }, null, 2);
-
         const payload = {
-            nombre: dt.nombre || '',
-            producto: productoTexto,
-            codigo: plan,
+            tipoMascota: tipoMascota,
+            plan: plan,
+            nombreTitular: dt.nombre || '',
+            tipoDocumento: dt.tipoDocumento || '',
+            numeroDocumento: dt.numeroDocumento || '',
+            fechaNacimiento: dt.fechaNacimiento || '',
+            ciudadDepartamento: dt.ciudad || '',
+            direccion: dt.direccion || '',
             telefono: dt.contacto || '',
-            direccion: dt.ciudad || '',
-            monto: 0,
-            pago: 'Cotización',
+            correoElectronico: dt.correo || '',
+            nombreMascota: dm.nombreMascota || '',
+            edadMascota: dm.edadMascota || '',
+            raza: dm.raza || '',
+            color: dm.color || '',
+            genero: dm.genero || '',
             estado: status,
-            observaciones: observacionesTexto,
-            referido_por: '',
+            motivoCancelacion: cancelReason || '',
+            asesor: '',
+            observaciones: cancelReason || '',
             cliente_jid: jid
         };
 
         const baseUrl = (envConfig.backend.apiBase || 'http://127.0.0.1:8001').replace(/\/+$/, '');
-        const url = baseUrl.includes('/api') ? `${baseUrl}/registrar_entrega/` : `${baseUrl}/api/registrar_entrega/`;
+        const url = baseUrl.includes('/api') ? `${baseUrl}/registrar_lead/` : `${baseUrl}/api/registrar_lead/`;
 
         logger.info(`[${jid}] Guardando solicitud (${status}) en backend: ${url}`);
-        const resp = await axios.post(url, payload, { timeout: 10000 });
-        logger.info(`[${jid}] Backend respondió: ${resp.status} - ${status}`);
-
-        // ISSUE #13 — Logging
-        logger.info({ jid, status, plan, nombre: dt.nombre }, 'Solicitud registrada en Google Sheets');
+        const result = await writeQueue.enqueue(url, payload, { retries: 3, timeout: 15000 });
+        if (result.ok) {
+            logger.info(`[${jid}] Backend respondió: ${result.status} - ${status}`);
+            logger.info({ jid, status, plan, nombre: dt.nombre }, 'Solicitud registrada en Google Sheets');
+        } else {
+            logger.error(`[${jid}] Error al guardar en backend (${result.status}): ${result.error}`);
+        }
 
         await notificationService.notifyAdminsNewOrder(sock, jid, payload, 0, ctx);
     } catch (e) {
@@ -551,22 +615,20 @@ async function guardarSolicitud(sock, jid, userSession, ctx, status, cancelReaso
 // ISSUE #10 — Mensaje final con nombre
 // ===================================
 async function handleFinal(sock, jid, t, userSession, ctx) {
+    if (userSession._finalSent) return;
+    userSession._finalSent = true;
+
     const flow = envConfig.bot?.insuranceFlow?.messages;
     const dt = userSession.datosTitular || {};
     const nombre = dt.nombre || '';
 
-    // Si ya se guardó desde confirmación, no guardar de nuevo
-    // El guardado ya ocurrió en handleConfirmacion o handleRechazo
-
     const msg = flow?.final
         ? flow.final.replace(/{nombre}/g, nombre)
-        : `💛 Perfecto, ${nombre}.
+        : `✅ Solicitud registrada exitosamente.
 
-Tu solicitud fue registrada exitosamente.
-
-📞 Un asesor de TE ASEGURAMOS y Seguros Mundial se pondrá en contacto contigo para continuar el proceso de emisión y pago de la póliza.
-
-¡Gracias por proteger a tu compañero de vida! 🐾`;
+💛 Gracias por confiar en ${envConfig.business.name}.
+ 
+📞 Un asesor se pondrá en contacto contigo para continuar con la validacion y emision de la poliza.`;
 
     await say(sock, jid, msg, ctx);
 }

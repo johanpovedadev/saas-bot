@@ -1,6 +1,11 @@
 // services/sessionService.js
 const PHASE = require('../utils/phases');
 const { logger } = require('../utils/logger');
+const envConfig = require('../config/env.loader');
+
+const IS_INSURANCE = envConfig.business?.type === 'seguros_mascotas' ||
+                     envConfig.business?.industry === 'insurance' ||
+                     envConfig.bot?.insuranceFlow?.enabled === true;
 
 /**
  * Inicializa o retorna una sesión de usuario existente
@@ -15,7 +20,7 @@ function initializeUserSession(jid, ctx) {
     
     if (!ctx.sessions[jid]) {
         ctx.sessions[jid] = {
-            phase: PHASE.SELECCION_OPCION,
+            phase: IS_INSURANCE ? PHASE.INS_SALUDO : PHASE.SELECCION_OPCION,
             currentProduct: null,
             saboresSeleccionados: [],
             toppingsSeleccionados: [],
@@ -60,7 +65,7 @@ function resetChat(jid, ctx) {
     const hadItems = previousOrder.length > 0;
     
     ctx.sessions[jid] = {
-        phase: PHASE.SELECCION_OPCION,
+        phase: IS_INSURANCE ? PHASE.INS_SALUDO : PHASE.SELECCION_OPCION,
         currentProduct: null,
         saboresSeleccionados: [],
         toppingsSeleccionados: [],
