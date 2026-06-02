@@ -240,14 +240,19 @@ const startBot = async () => {
     // Cleanup stale Chrome locks
     try {
         execSync(
-            `powershell -Command "Get-CimInstance Win32_Process -Filter \\"Name='chrome.exe'\\" | Where-Object { $_.CommandLine -like '*${sessionDir.replace(/\\/g, '\\\\')}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`,
+            `wmic process where "name='chrome.exe' and commandline like '%${sessionDir.replace(/\\/g, '\\\\')}%'" delete`,
             { timeout: 5000, stdio: 'pipe' }
         );
     } catch (_) { /* best effort */ }
     try {
         for (const f of ['lockfile', 'SingletonLock', 'SingletonSocket', 'SingletonCookie', 'DevToolsActivePort']) {
             const fp = path.join(sessionDir, f);
-            if (fs.existsSync(fp)) fs.unlinkSync(fp);
+            if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch (_) {} }
+        }
+        // Also clean lingering Chrome lockfiles in the parent auth dir
+        for (const f of ['SingletonLock', 'SingletonSocket']) {
+            const fp = path.join(AUTH_DIR, f);
+            if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch (_) {} }
         }
     } catch (_) { /* best effort */ }
 
@@ -263,7 +268,7 @@ const startBot = async () => {
             headless: true,
             args: [
                 '--no-sandbox', '--disable-setuid-sandbox',
-                ...(process.env.CHROME_PORT ? [`--remote-debugging-port=${process.env.CHROME_PORT}`] : [])
+                '--disable-gpu', '--disable-dev-shm-usage'
             ]
         }
     });
