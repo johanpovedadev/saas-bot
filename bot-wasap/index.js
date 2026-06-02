@@ -1,13 +1,20 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { say, loadAllProductsCache } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
+const notificationService = require('./services/notificationService');
 
 const { logger } = require('./utils/logger');
-const { spawnSync } = require('child_process');
+const { execSync } = require('child_process');
+
+// ISSUE 45: Business key from env
+const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'mascotas').replace(/[^a-z0-9_-]/gi, '');
+const AUTH_DIR = path.join(__dirname, 'auth', BUSINESS_KEY);
+const QR_PATH = path.join(__dirname, 'assets', BUSINESS_KEY, 'qr_code.png');
 
 // Install console filter to suppress noisy outputs coming directly from WhatsApp libraries
 function installConsoleFilter() {
@@ -199,10 +206,31 @@ const startBot = async () => {
         console.warn('Gemini API key no configurada. El bot usará el parser determinista y respuestas simples en su lugar.');
     }
 
+    // ISSUE 44: Session per business key
+    const sessionDir = path.join(AUTH_DIR, 'session');
+    // Ensure auth dir exists
+    if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+    // Cleanup stale Chrome locks
+    try {
+        execSync(
+            `powershell -Command "Get-CimInstance Win32_Process -Filter \\"Name='chrome.exe'\\" | Where-Object { $_.CommandLine -like '*${sessionDir.replace(/\\/g, '\\\\')}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`,
+            { timeout: 5000, stdio: 'pipe' }
+        );
+    } catch (_) { /* best effort */ }
+    try {
+        for (const f of ['lockfile', 'SingletonLock', 'SingletonSocket', 'SingletonCookie', 'DevToolsActivePort']) {
+            const fp = path.join(sessionDir, f);
+            if (fs.existsSync(fp)) fs.unlinkSync(fp);
+        }
+    } catch (_) { /* best effort */ }
+
+    console.log(`🔐 Usando sesion: ${AUTH_DIR}`);
+
     const sock = new Client({
         authStrategy: new LocalAuth({
-            dataPath: path.join(__dirname, '.wwebjs_auth')
+            dataPath: AUTH_DIR
         }),
+        authTimeoutMs: 600000,
         puppeteer: {
             executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             headless: true,
@@ -213,8 +241,10 @@ const startBot = async () => {
     sock.on('qr', (qr) => {
         console.log('Escanea este código QR para conectar el bot:');
         // Guardar QR como imagen PNG
-        qrcode.toFile(path.join(__dirname, 'qr_code.png'), qr, { type: 'png', width: 400, margin: 2 }, (err) => {
-            if (!err) console.log('QR guardado como: qr_code.png (ábrelo y escanea con WhatsApp)');
+        const qrDir = path.dirname(QR_PATH);
+        if (!fs.existsSync(qrDir)) fs.mkdirSync(qrDir, { recursive: true });
+        qrcode.toFile(QR_PATH, qr, { type: 'png', width: 400, margin: 2 }, (err) => {
+            if (!err) console.log(`QR guardado como: ${QR_PATH} (ábrelo y escanea con WhatsApp)`);
         });
         qrcode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
             if (err) return console.log(err);
@@ -225,27 +255,42 @@ const startBot = async () => {
     sock.on('ready', async () => {
         const botJid = sock.info.wid._serialized;
         console.log('✅ Conectado como', botJid);
-        // Enviar mensaje de inicio al admin
+        // ISSUE #31 - Alerta de reconexion a system admins
+        try {
+            await notificationService.notifyBotReconnected(sock, ctx);
+        } catch (e) {
+            logger.warn(`No se pudo notificar reconexion a admins sistema: ${e.message}`);
+        }
+        // Enviar mensaje de inicio al admin (legacy)
         try {
             const rawAdmin = process.env.ADMIN_JID || '';
             if (rawAdmin) {
                 const resolved = rawAdmin.includes('@')
                     ? rawAdmin
                     : (await sock.getNumberId(rawAdmin))?._serialized || rawAdmin + '@c.us';
-                await say(sock, resolved, `Hola, ¡el bot se ha iniciado con éxito! ✅`, ctx);
+                await say(sock, resolved, `Hola, el bot se ha iniciado con exito! ✅`, ctx);
             }
         } catch (e) {
             logger.warn(`No se pudo notificar al admin en inicio: ${e.message}`);
         }
+        // ISSUE #33+#34 - Iniciar heartbeat SOLO despues de conectar WhatsApp
+        const healthMonitor = require('./services/healthMonitor');
+        healthMonitor.init(sock, ctx);
     });
 
-    sock.on('disconnected', (reason) => {
-        logger.error({ reason }, '❌ Conexión cerrada.');
+    sock.on('disconnected', async (reason) => {
+        logger.error({ reason }, '❌ Conexion cerrada.');
+        // ISSUE #30 - Alerta de desconexion a system admins
+        try {
+            await notificationService.notifyBotDisconnected(sock, ctx, reason);
+        } catch (e) {
+            logger.warn(`No se pudo notificar desconexion a admins sistema: ${e.message}`);
+        }
         if (reason !== 'LOGGED_OUT') {
             console.log('Reconectando...');
             startBot();
         } else {
-            console.log('✅ Desconectado. Borra la carpeta .wwebjs_auth si quieres reconectar.');
+            console.log(`❌ Desconectado. Borra la carpeta ${AUTH_DIR} si quieres reconectar.`);
         }
     });
 

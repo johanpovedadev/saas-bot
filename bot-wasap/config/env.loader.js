@@ -35,10 +35,80 @@ require('dotenv').config({ path: envPath });
 console.log(`✅ Bot cargando .env desde: ${envPath}`);
 
 // Cargar config de negocio dinámicamente
+// ISSUE 41+45: JSON config via BUSINESS_KEY, fallback a JS config via BUSINESS_CONFIG
 let businessConfig = null;
+const fs = require('fs');
 try {
-    const configFile = process.env.BUSINESS_CONFIG || 'template.config.js';
-    businessConfig = require(`./businesses/${configFile}`);
+    const businessKey = (process.env.BUSINESS_KEY || 'mascotas').replace(/\.json$/, '');
+    const jsonPath = path.join(__dirname, 'businesses', `${businessKey}.json`);
+    if (fs.existsSync(jsonPath)) {
+        const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+        businessConfig = {
+            business: {
+                name: raw.business_name || 'Mi Negocio',
+                shortName: raw.business_name || 'Mi Negocio',
+                id: businessKey.toUpperCase(),
+                type: raw.business_type || 'insurance',
+                industry: (raw.business_type || '').toLowerCase(),
+                city: raw.city || '',
+                department: raw.department || '',
+                timezone: raw.timezone || 'America/Bogota',
+                currency: raw.currency || 'COP',
+                location: {
+                    city: raw.city || '',
+                    timezone: raw.timezone || 'America/Bogota'
+                },
+                contact: {
+                    phone: raw.contact_phone || '',
+                    whatsapp: raw.contact_whatsapp || '',
+                    email: raw.contact_email || '',
+                    website: raw.contact_website || ''
+                }
+            },
+            contact: {
+                phone: raw.contact_phone || '',
+                whatsapp: raw.contact_whatsapp || '',
+                email: raw.contact_email || ''
+            },
+            admin: {
+                business_admin_jids: raw.business_admin_jids || [],
+                system_admin_jids: raw.system_admin_jids || [],
+                jids: raw.business_admin_jids || []
+            },
+            backend: {
+                apiBase: raw.api_base || process.env.API_BASE || 'http://127.0.0.1:8001/api',
+                timeout: raw.api_timeout || 8000,
+                endpoints: {
+                    products: raw.endpoint_products || '/obtener_todos_los_productos/',
+                    orders: raw.endpoint_orders || '/registrar_lead/',
+                    reservations: raw.endpoint_reservations || '/registrar_lead/',
+                    search: raw.endpoint_search || '',
+                    productImage: raw.endpoint_product_image || ''
+                },
+                sheets: {
+                    spreadsheetId: raw.sheet_id || '',
+                    orders: raw.sheet_tab || 'LEADS'
+                }
+            },
+            checkout: {},
+            catalog: {},
+            features: {},
+            bot: {
+                welcomeMessage: raw.welcome_message || '',
+                mainMenu: raw.main_menu || null,
+                insuranceFlow: {
+                    enabled: raw.business_type === 'INSURANCE',
+                    plans: raw.plans || {},
+                    images: raw.insurance_images || {},
+                    messages: raw.insurance_messages || {}
+                }
+            }
+        };
+        console.log(`✅ Cargada config JSON para negocio: ${raw.business_name} (${businessKey})`);
+    } else {
+        const configFile = process.env.BUSINESS_CONFIG || 'template.config.js';
+        businessConfig = require(`./businesses/${configFile}`);
+    }
 } catch (e) {
     businessConfig = require('./businesses/template.config.js');
 }
@@ -405,7 +475,7 @@ const envConfig = {
     // GOOGLE SHEETS
     // =========================================================================
     googleSheets: {
-        sheetId: process.env.GOOGLE_SHEET_ID || '',
+        sheetId: (businessConfig && businessConfig.backend && businessConfig.backend.sheets && businessConfig.backend.sheets.spreadsheetId) || process.env.GOOGLE_SHEET_ID || '',
     },
     
     // =========================================================================

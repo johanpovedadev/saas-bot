@@ -3,229 +3,196 @@ const { logger } = require('../utils/logger');
 const { say } = require('./bot_core');
 const envConfig = require('../config/env.loader');
 
-/**
- * Normaliza un número de teléfono a formato JID de WhatsApp
- * @param {string} jid - Número o JID
- * @returns {string} JID normalizado
- */
 function normalizeJid(jid) {
     if (!jid) return jid;
     if (jid.includes('@')) return jid;
-    // Solo el número → asumir @c.us (whatsapp-web.js maneja LID internamente)
     return `${jid}@c.us`;
 }
 
-/**
- * Obtiene los JIDs de administradores
- * @returns {Array<string>} - Lista de JIDs de admins
- */
-function getAdminJids() {
-    const admins = [];
-    
-    // Priorizar envConfig, luego process.env
+function getBusinessAdminJids() {
+    const config = envConfig.admin?.business_admin_jids;
+    if (config && Array.isArray(config) && config.length > 0) {
+        return config.map(normalizeJid).filter(Boolean);
+    }
+    const configJids = envConfig.admin?.jids;
+    if (configJids && Array.isArray(configJids) && configJids.length > 0) {
+        return configJids.map(normalizeJid).filter(Boolean);
+    }
     const adminJid = normalizeJid(envConfig.security.adminJid || process.env.ADMIN_JID);
     const sociaJid = normalizeJid(envConfig.security.sociaJid || process.env.SOCIA_JID);
-    
+    const admins = [];
     if (adminJid) admins.push(adminJid);
     if (sociaJid && sociaJid !== adminJid) admins.push(sociaJid);
-    
     return admins;
 }
 
-/**
- * Notifica a los admins sobre un cliente con problemas
- * @param {Object} sock - Socket de WhatsApp
- * @param {string} jid - JID del cliente
- * @param {string} lastMessage - Último mensaje del cliente
- * @param {Object} ctx - Contexto global
- */
+function getSystemAdminJids() {
+    const config = envConfig.admin?.system_admin_jids;
+    if (config && Array.isArray(config) && config.length > 0) {
+        return config.map(normalizeJid).filter(Boolean);
+    }
+    return getBusinessAdminJids();
+}
+
+// ISSUE #29 - Compatibilidad: getAdminJids retorna business_admin_jids
+function getAdminJids() {
+    return getBusinessAdminJids();
+}
+
+async function _sendToJids(sock, jids, msg, ctx, excludeJid) {
+    for (const jid of jids) {
+        try {
+            if (jid && jid !== excludeJid) {
+                let resolved = jid;
+                if (sock && typeof sock.getNumberId === 'function') {
+                    try {
+                        const clean = jid.replace(/@[a-zA-Z.]+$/, '');
+                        const resolvedWid = await sock.getNumberId(clean);
+                        if (resolvedWid && resolvedWid._serialized) {
+                            resolved = resolvedWid._serialized;
+                        }
+                    } catch (_) { /* usar jid original si falla resolucion */ }
+                }
+                await say(sock, resolved, msg, ctx);
+            }
+        } catch (e) {
+            logger.error(`Error notificando a ${jid}: ${e.message}`);
+        }
+    }
+}
+
 async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
     try {
-        const admins = getAdminJids();
+        const admins = getBusinessAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-        
-        const adminMsg = `🔔 Atención: Cliente con dificultades.
-
-Cliente: ${jid.split('@')[0]}
-Último mensaje: "${lastMessage}"
-Abrir chat: ${chatLink}
-
-Por favor, toma el control de este chat.`;
-        
-        for (const admin of admins) {
-            try {
-                if (admin) {
-                    await say(sock, admin, adminMsg, ctx);
-                    logger.info(`Notificado admin ${admin} sobre problema con ${jid}`);
-                }
-            } catch (notifyError) {
-                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
-            }
-        }
-        
-    } catch (error) {
-        logger.error(`Error en notifyAdminsAboutCustomerIssue: ${error.message}`);
+        const msg = `🔔 Atencion: Cliente con dificultades.\n\nCliente: ${jid.split('@')[0]}\nUltimo mensaje: "${lastMessage}"\nAbrir chat: ${chatLink}\n\nPor favor, toma el control de este chat.`;
+        await _sendToJids(sock, admins, msg, ctx);
+        logger.info(`Notificados admins negocio sobre problema con ${jid}`);
+    } catch (e) {
+        logger.error(`Error en notifyAdminsAboutCustomerIssue: ${e.message}`);
     }
 }
 
-/**
- * Notifica a los admins sobre errores de MIA
- * @param {Object} sock - Socket de WhatsApp
- * @param {string} jid - JID del cliente
- * @param {Error} error - Error ocurrido
- * @param {Object} ctx - Contexto global
- */
 async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
     try {
-        const admins = getAdminJids();
+        const admins = getBusinessAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-        
-        const adminMsg = `🔴 Error de MIA
-
-Cliente: ${jid.split('@')[0]}
-Error: ${error.message}
-Abrir chat: ${chatLink}
-
-La IA ha sido desactivada para este chat.`;
-        
-        for (const admin of admins) {
-            try {
-                if (admin) {
-                    await say(sock, admin, adminMsg, ctx);
-                    logger.info(`Notificado admin ${admin} sobre error MIA con ${jid}`);
-                }
-            } catch (notifyError) {
-                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
-            }
-        }
-        
-    } catch (error) {
-        logger.error(`Error en notifyAdminsAboutMIAError: ${error.message}`);
+        const msg = `🔴 Error de MIA\n\nCliente: ${jid.split('@')[0]}\nError: ${error.message}\nAbrir chat: ${chatLink}\n\nLa IA ha sido desactivada para este chat.`;
+        await _sendToJids(sock, admins, msg, ctx);
+        logger.info(`Notificados admins negocio sobre error MIA con ${jid}`);
+    } catch (e) {
+        logger.error(`Error en notifyAdminsAboutMIAError: ${e.message}`);
     }
 }
 
-/**
- * Notifica a los admins sobre una nueva reserva
- * @param {Object} sock - Socket de WhatsApp
- * @param {string} jid - JID del cliente
- * @param {Object} reserva - Datos de la reserva
- * @param {Object} ctx - Contexto global
- */
 async function notifyAdminsAboutReservation(sock, jid, reserva, ctx) {
     try {
-        const admins = getAdminJids();
-        
-        const adminMsg = `📣 Nueva reserva registrada:
-
-- ID: ${reserva.id || 'N/A'}
-- Cliente: ${jid.split('@')[0]}
-- Nombre: ${reserva.name || 'N/A'}
-- Teléfono: ${reserva.telefono || 'N/A'}
-- Tipo: ${reserva.tipo || 'N/A'}
-- Dirección: ${reserva.address || 'N/A'}
-- Pago: ${reserva.payment || 'efectivo'}`;
-        
-        for (const admin of admins) {
-            try {
-                if (admin) {
-                    await say(sock, admin, adminMsg, ctx);
-                    logger.info(`Notificado admin ${admin} sobre reserva de ${jid}`);
-                }
-            } catch (notifyError) {
-                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
-            }
-        }
-        
-    } catch (error) {
-        logger.error(`Error en notifyAdminsAboutReservation: ${error.message}`);
+        const admins = getBusinessAdminJids();
+        const msg = `📣 Nueva reserva registrada:\n\n- ID: ${reserva.id || 'N/A'}\n- Cliente: ${jid.split('@')[0]}\n- Nombre: ${reserva.name || 'N/A'}\n- Telefono: ${reserva.telefono || 'N/A'}\n- Tipo: ${reserva.tipo || 'N/A'}\n- Direccion: ${reserva.address || 'N/A'}\n- Pago: ${reserva.payment || 'efectivo'}`;
+        await _sendToJids(sock, admins, msg, ctx);
+    } catch (e) {
+        logger.error(`Error en notifyAdminsAboutReservation: ${e.message}`);
     }
 }
 
-/**
- * Notifica a los admins sobre un error crítico
- * @param {Object} sock - Socket de WhatsApp
- * @param {string} jid - JID del cliente
- * @param {string} message - Mensaje del cliente
- * @param {Error} error - Error ocurrido
- * @param {Object} ctx - Contexto global
- */
 async function notifyAdminsAboutCriticalError(sock, jid, message, error, ctx) {
     try {
-        const admins = getAdminJids();
-        
-        const adminMsg = `🔴 *¡Error Crítico en el Bot!* 🔴
-
-- *Cliente:* ${jid}
-- *Mensaje:* "${message}"
-- *Error:* ${error.message}
-
-Por favor, revisa la consola o los logs para más detalles.`;
-        
-        for (const admin of admins) {
-            try {
-                if (admin) {
-                    await say(sock, admin, adminMsg, ctx);
-                    logger.error(`Notificado admin ${admin} sobre error crítico con ${jid}`);
-                }
-            } catch (notifyError) {
-                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
-            }
-        }
-        
-    } catch (error) {
-        logger.error(`Error en notifyAdminsAboutCriticalError: ${error.message}`);
+        const admins = getSystemAdminJids();
+        const msg = `🔴 *Error Critico en el Bot* 🔴\n\n- *Cliente:* ${jid}\n- *Mensaje:* "${message}"\n- *Error:* ${error.message}\n\nPor favor, revisa la consola o los logs para mas detalles.`;
+        await _sendToJids(sock, admins, msg, ctx);
+        logger.error(`Notificados admins sistema sobre error critico con ${jid}`);
+    } catch (e) {
+        logger.error(`Error en notifyAdminsAboutCriticalError: ${e.message}`);
     }
 }
 
-/**
- * Notifica a los admins sobre un pedido completado exitosamente
- * @param {Object} sock - Socket de WhatsApp
- * @param {string} jid - JID del cliente
- * @param {Object} payload - Datos del pedido
- * @param {number} total - Total del pedido
- * @param {Object} ctx - Contexto global
- */
+// ISSUE #29 - notificaciones comerciales a business_admin_jids
 async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
     try {
-        const admins = getAdminJids();
+        const admins = getBusinessAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-        
-        const adminMsg = `📦 *NUEVO PEDIDO CONFIRMADO*
 
-👤 *Cliente:* ${payload.nombre || jid.split('@')[0]}
-📞 *Teléfono:* ${payload.telefono || 'N/A'}
-🏠 *Dirección:* ${payload.direccion || 'N/A'}
-
-🛒 *Productos:*
-${payload.producto || 'N/A'}
-
-💰 *Total:* $${total.toLocaleString('es-CO')}
-💳 *Método de pago:* ${payload.pago || 'N/A'}
-📊 *Estado:* ${payload.estado || 'Por despachar'}
-
-🔗 Abrir chat: ${chatLink}`;
-        
-        for (const admin of admins) {
-            try {
-                if (admin) {
-                    await say(sock, admin, adminMsg, ctx);
-                    logger.info(`✅ Notificado admin ${admin} sobre nuevo pedido de ${jid}`);
-                }
-            } catch (notifyError) {
-                logger.error(`Error notificando al admin ${admin}: ${notifyError.message}`);
-            }
+        if (payload.plan) {
+            const msg = `📋 *NUEVO LEAD SEGUROS*\n\n👤 *Titular:* ${payload.nombreTitular || 'N/A'}\n📞 *Telefono:* ${payload.telefono || 'N/A'}\n🏠 *Direccion:* ${payload.direccion || 'N/A'}\n📧 *Email:* ${payload.correoElectronico || 'N/A'}\n\n🐾 *Mascota:* ${payload.nombreMascota || 'N/A'}\n🎂 *Edad:* ${payload.edadMascota || 'N/A'} anos\n🦴 *Raza:* ${payload.raza || 'N/A'}\n🎨 *Color:* ${payload.color || 'N/A'}\n⚤ *Genero:* ${payload.genero || 'N/A'}\n\n📦 *Plan:* ${payload.plan}${payload.tipoMascota ? ' (' + payload.tipoMascota + ')' : ''}\n📊 *Estado:* ${payload.estado || 'pendiente'}${payload.motivoCancelacion ? '\n❌ Motivo: ' + payload.motivoCancelacion : ''}\n\n🔗 Abrir chat: ${chatLink}`;
+            await _sendToJids(sock, admins, msg, ctx, jid);
+            logger.info(`Notificados admins negocio sobre lead seguro de ${jid}`);
+            return;
         }
-        
-    } catch (error) {
-        logger.error(`Error en notifyAdminsNewOrder: ${error.message}`);
+
+        const msg = `📦 *NUEVO PEDIDO CONFIRMADO*\n\n👤 *Cliente:* ${payload.nombre || jid.split('@')[0]}\n📞 *Telefono:* ${payload.telefono || 'N/A'}\n🏠 *Direccion:* ${payload.direccion || 'N/A'}\n\n🛒 *Productos:*\n${payload.producto || 'N/A'}\n\n💰 *Total:* $${total.toLocaleString('es-CO')}\n💳 *Metodo de pago:* ${payload.pago || 'N/A'}\n📊 *Estado:* ${payload.estado || 'Por despachar'}\n\n🔗 Abrir chat: ${chatLink}`;
+        await _sendToJids(sock, admins, msg, ctx, jid);
+        logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
+    } catch (e) {
+        logger.error(`Error en notifyAdminsNewOrder: ${e.message}`);
     }
+}
+
+// =====================================================
+// ISSUE #30 - Alerta de desconexion WhatsApp
+// ISSUE #31 - Alerta de reconexion WhatsApp
+// ISSUE #32 - Monitoreo Google Sheets
+// ISSUE #33 - Health Check Django
+// ISSUE #34 - Heartbeat General
+// ISSUE #39 - Resumen Diario
+// =====================================================
+// Todas estas notificaciones tecnicas van a system_admin_jids
+
+async function notifySystemAlert(sock, ctx, level, title, body) {
+    const admins = getSystemAdminJids();
+    if (admins.length === 0) return;
+    const msg = `${level} *${title}*\n\n${body}`;
+    await _sendToJids(sock, admins, msg, ctx);
+    logger.info(`Alerta de sistema enviada a admins sistema: ${title}`);
+}
+
+async function notifyBotDisconnected(sock, ctx, reason) {
+    const neg = envConfig.business?.name || 'Desconocido';
+    await notifySystemAlert(sock, ctx, '🚨', 'BOT DESCONECTADO',
+        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}\nMotivo: ${reason}`
+    );
+}
+
+async function notifyBotReconnected(sock, ctx) {
+    const neg = envConfig.business?.name || 'Desconocido';
+    await notifySystemAlert(sock, ctx, '✅', 'BOT RECONECTADO',
+        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}`
+    );
+}
+
+async function notifySheetsError(sock, ctx, errorMsg) {
+    const neg = envConfig.business?.name || 'Desconocido';
+    await notifySystemAlert(sock, ctx, '⚠️', 'ERROR GOOGLE SHEETS',
+        `Negocio: ${neg}\nError: ${errorMsg}\nFecha: ${new Date().toLocaleString('es-CO')}`
+    );
+}
+
+async function notifyDjangoOffline(sock, ctx) {
+    const neg = envConfig.business?.name || 'Desconocido';
+    await notifySystemAlert(sock, ctx, '🚨', 'DJANGO OFFLINE',
+        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}`
+    );
+}
+
+async function notifyDjangoRecovered(sock, ctx) {
+    const neg = envConfig.business?.name || 'Desconocido';
+    await notifySystemAlert(sock, ctx, '✅', 'DJANGO RECONECTADO',
+        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}`
+    );
 }
 
 module.exports = {
     getAdminJids,
+    getBusinessAdminJids,
+    getSystemAdminJids,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,
     notifyAdminsAboutCriticalError,
-    notifyAdminsNewOrder  // ✅ Nueva función
+    notifyAdminsNewOrder,
+    notifyBotDisconnected,
+    notifyBotReconnected,
+    notifySheetsError,
+    notifyDjangoOffline,
+    notifyDjangoRecovered,
+    notifySystemAlert
 };

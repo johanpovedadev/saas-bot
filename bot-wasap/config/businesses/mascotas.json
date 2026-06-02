@@ -1,0 +1,59 @@
+{
+  "business_name": "TE ASEGURAMOS",
+  "business_type": "INSURANCE",
+  "sheet_id": "1FEd6iC4x31oaKcuAz7rTnWWWOW76G-saKG5l6wV3Wz0",
+  "sheet_tab": "LEADS",
+  "business_admin_jids": ["573138777115@c.us", "3138777115@c.us"],
+  "system_admin_jids": ["573138777115@c.us", "3138777115@c.us"],
+  "contact_phone": "+57 313 877 7115",
+  "contact_whatsapp": "+573138777115",
+  "contact_email": "seguros@mascotas.co",
+  "contact_website": "https://www.segurosmundial.com.co/pagos/",
+  "city": "Bogota",
+  "department": "Cundinamarca",
+  "contact_website": "https://www.segurosmundial.com.co/pagos/",
+  "timezone": "America/Bogota",
+  "currency": "COP",
+  "api_base": "http://localhost:8001/api",
+  "api_timeout": 8000,
+  "endpoint_products": "/obtener_todos_los_productos/",
+  "endpoint_orders": "/registrar_lead/",
+  "endpoint_reservations": "/registrar_lead/",
+  "welcome_message": "🐾 Hola, bienvenido a TE ASEGURAMOS\nAliados de Seguros Mundial ❤️\n\nSabemos que tu mascota es parte de tu familia.\n\n\u00bfA qui\u00e9n deseas proteger hoy?\n\n1\ufe0f\u20e3 Perro 🐶\n2\ufe0f\u20e3 Gato 🐱",
+  "main_menu": {
+    "options": [
+      { "id": "1", "label": "Perro 🐶", "emoji": "🐶" },
+      { "id": "2", "label": "Gato 🐱", "emoji": "🐱" }
+    ]
+  },
+  "plans": {
+    "perroPlus": { "name": "Plan PLUS", "price": 259900, "code": "PLUS" },
+    "perroPremium": { "name": "Plan PREMIUM", "price": 354900, "code": "PREMIUM" },
+    "gato": { "name": "Plan Gato", "price": 200900, "code": "GATO" }
+  },
+  "insurance_images": {
+    "gato": "assets/mascotas/plan_gato.jpeg",
+    "perroPlus": "assets/mascotas/plan_perro_plus.jpeg",
+    "perroPremium": "assets/mascotas/plan_perro_premium.jpeg"
+  },
+  "insurance_messages": {
+    "gato": "🐱 *Plan Gatos*\n\n💰 *Valor anual: $200.900*\n\n📅 Vigencia: 1 a\u00f1o\n\n✅ Protecci\u00f3n especializada para gatos\n✅ Cobertura veterinaria\n✅ Cobertura por accidentes\n✅ Asistencia exequial\n\n1\ufe0f\u20e3 Elegir este plan\n2\ufe0f\u20e3 Volver al menu",
+    "perroPlus": "🐶 *Plan PLUS*\n\n💰 *Valor anual: $259.900*\n\n📅 Vigencia: 1 a\u00f1o\n\n✅ Cubrimiento veterinario b\u00e1sico\n✅ Cobertura por accidentes\n✅ Asistencia exequial\n\n1\ufe0f\u20e3 Elegir este plan\n2\ufe0f\u20e3 Ver plan PREMIUM",
+    "perroPremium": "🐶 *Plan PREMIUM*\n\n💰 *Valor anual: $354.900*\n\n📅 Vigencia: 1 a\u00f1o\n\n✅ Cobertura ampliada\n✅ Mayor protecci\u00f3n veterinaria\n✅ Cobertura por accidentes\n✅ Asistencia exequial\n\n1\ufe0f\u20e3 Elegir este plan\n2\ufe0f\u20e3 Volver a planes",
+    "datosTitularNombre": "Perfecto 🙌\n\nVamos a proteger a tu mascota 🐾\n\n✍️ \u00bfCu\u00e1l es tu nombre completo?",
+    "datosTitularDocumento": "📄 \u00bfQu\u00e9 tipo de documento tienes?\n\n1\ufe0f\u20e3 C\u00e9dula de Ciudadan\u00eda\n2\ufe0f\u20e3 NIT\n3\ufe0f\u20e3 Tarjeta de Identidad\n4\ufe0f\u20e3 C\u00e9dula de Extranjer\u00eda",
+    "datosTitularNumero": "🔢 \u00bfCu\u00e1l es tu n\u00famero de identificaci\u00f3n?",
+    "datosTitularFechaNacimiento": "🎂 \u00bfCu\u00e1l es tu fecha de nacimiento?\n\n📝 Formato: DD/MM/YYYY\nEjemplo: 15/03/1990",
+    "datosTitularCiudad": "📍 \u00bfCiudad y departamento?\n\nEjemplo: Bogota, Cundinamarca",
+    "datosTitularDireccion": "🏠 Direcci\u00f3n de residencia\n\nEjemplo: Calle 123 #45-67, Barrio Centro",
+    "datosTitularContacto": "📞 \u00bfCu\u00e1l es tu n\u00famero de celular?\n\nEjemplo: 3138777115",
+    "datosMascotaNombre": "🐾 \u00bfC\u00f3mo se llama tu mascota?",
+    "datosMascotaEdad": "🎂 \u00bfCu\u00e1ntos a\u00f1os tiene tu mascota?\n\n📝 Solo n\u00fameros (ej: 3, 5, 8)",
+    "datosMascotaRazaPerro": "🦴 \u00bfQue raza es tu perro?\n\nEjemplos:\n• Labrador\n• Golden Retriever\n• Pastor Aleman\n• Bulldog\n• Criollo\n\n✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.",
+    "datosMascotaRazaGato": "🐱 \u00bfQue raza es tu gato?\n\nEjemplos:\n• Criollo\n• Siam\u00e9s\n• Persa\n• Angora\n\n✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.",
+    "confirmacion": "💛 Ya casi terminamos\n\nConfirma tu informacion:\n\n👤 *Titular:*\nNombre: {nombre}\nDocumento: {documento}\nFecha Nac.: {fechaNac}\nCiudad/Dep: {ciudad}\nDireccion: {direccion}\nCelular: {contacto}\nEmail: {correo}\n\n🐾 *Mascota:*\nNombre: {mascota}\nEdad: {edad} anos\nRaza: {raza}\nColor: {color}\nGenero: {genero}\n\n📦 *Plan:* {plan}\n\n1\ufe0f\u20e3 Confirmar\n2\ufe0f\u20e3 Corregir",
+    "rechazoEdad": "😔 Lo sentimos, {nombre}.\n\nActualmente no es posible asegurar mascotas mayores de 12 a\u00f1os.\n\nGracias por comunicarte con TE ASEGURAMOS, aliados de Seguros Mundial ❤️",
+    "final": "💛 Perfecto, {nombre}.\n\nTu solicitud fue registrada exitosamente.\n\n📞 Un asesor de TE ASEGURAMOS y Seguros Mundial se pondr\u00e1 en contacto contigo para continuar el proceso de emisi\u00f3n y pago de la p\u00f3liza.\n\n\u00a1Gracias por proteger a tu compa\u00f1ero de vida! 🐾",
+    "error": "❌ Opci\u00f3n no v\u00e1lida.\n\nPor favor selecciona una opci\u00f3n del men\u00fa."
+  }
+}

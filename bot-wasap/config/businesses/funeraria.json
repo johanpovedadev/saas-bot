@@ -1,0 +1,21 @@
+{
+  "business_name": "Funeraria La Paz",
+  "business_type": "FUNERAL",
+  "sheet_id": "",
+  "sheet_tab": "SERVICIOS",
+  "business_admin_jids": [],
+  "system_admin_jids": [],
+  "contact_phone": "+57 300 000 0000",
+  "contact_whatsapp": "+573000000000",
+  "contact_email": "contacto@funerarialapaz.com",
+  "city": "Bogota",
+  "department": "Cundinamarca",
+  "timezone": "America/Bogota",
+  "currency": "COP",
+  "api_base": "http://localhost:8002/api",
+  "api_timeout": 8000,
+  "endpoint_products": "/productos/",
+  "endpoint_orders": "/registrar_servicio/",
+  "endpoint_reservations": "/registrar_servicio/",
+  "endpoint_search": "/buscar_producto/"
+}

@@ -1,0 +1,22 @@
+{
+  "business_name": "Empanadas Riohacha",
+  "business_type": "FOOD",
+  "sheet_id": "",
+  "sheet_tab": "DOMICILIOS",
+  "business_admin_jids": [],
+  "system_admin_jids": [],
+  "contact_phone": "+57 300 000 0000",
+  "contact_whatsapp": "+573000000000",
+  "contact_email": "contacto@empanadasriohacha.com",
+  "city": "Riohacha",
+  "department": "La Guajira",
+  "timezone": "America/Bogota",
+  "currency": "COP",
+  "api_base": "http://localhost:8000/api",
+  "api_timeout": 8000,
+  "endpoint_products": "/productos/",
+  "endpoint_orders": "/registrar_entrega/",
+  "endpoint_reservations": "/registrar_entrega/",
+  "endpoint_search": "/buscar_producto/",
+  "endpoint_product_image": "/producto_imagen/"
+}

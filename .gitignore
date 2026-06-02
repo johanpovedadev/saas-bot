@@ -58,9 +58,12 @@ bot-wasap/auth_info_baileys/
 venv/
 .virtualenvs/
 
-# WhatsApp Web JS auth
+# WhatsApp Web JS auth (legacy - ISSUE 44: migrado a auth/)
 .wwebjs_auth/
 bot-wasap/.wwebjs_auth/
+
+# ISSUE 44: Sesiones independientes por negocio
+bot-wasap/auth/
 
 # Logs and local artifacts
 logs/
