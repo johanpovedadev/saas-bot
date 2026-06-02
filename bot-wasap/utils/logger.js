@@ -4,14 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
 
-const CONFIG = require('../config.json');
-const SECRETS = (() => {
-  try { return require('../config.secrets'); } catch (e) { return {}; }
-})();
-
-// Prefer explicit environment variables (from .env) over config.json
-const CONVERSATION_LOG_PATH = process.env.CONVERSATION_LOG_PATH || CONFIG.CONVERSATION_LOG_PATH || SECRETS.CONVERSATION_LOG_PATH || 'conversations.log';
-const LOG_LEVEL = process.env.LOG_LEVEL || CONFIG.LOG_LEVEL || 'info';
+// ISSUE 52: Per-business log files based on BUSINESS_KEY
+const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'default').replace(/[^a-z0-9_-]/gi, '');
+const LOG_FILE_PATH = process.env.LOG_FILE_PATH || `./logs/${BUSINESS_KEY}.log`;
+const CONVERSATION_LOG_PATH = process.env.CONVERSATION_LOG_PATH || `./logs/${BUSINESS_KEY}-conversations.log`;
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 // Resolve to absolute path (inside project by default)
 const conversationLogDest = path.isAbsolute(CONVERSATION_LOG_PATH) ? CONVERSATION_LOG_PATH : path.resolve(__dirname, '..', CONVERSATION_LOG_PATH);

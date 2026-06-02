@@ -172,6 +172,33 @@ async function maybeCleanAppStateOnStartup() {
 const startBot = async () => {
     console.log('Inicializando servicios...');
 
+    // ISSUE 56: Diagnostic banner at startup
+    const bizName = envConfig.business.name || 'N/A';
+    const bizType = envConfig.business.type || 'N/A';
+    const sheetId = envConfig.googleSheets.sheetId || 'N/A';
+    const sheetTab = (envConfig.backend.sheets && envConfig.backend.sheets.orders) || 'N/A';
+    const bizAdmins = (envConfig.admin.business_admin_jids || []).join(', ') || 'N/A';
+    const sysAdmins = (envConfig.admin.system_admin_jids || []).join(', ') || 'N/A';
+    const apiBase = envConfig.backend.apiBase || 'N/A';
+    const logFile = `logs/${BUSINESS_KEY}.log`;
+    const hasSession = fs.existsSync(path.join(AUTH_DIR, 'session', 'Default'));
+    console.log('');
+    console.log('='.repeat(60));
+    console.log(`  [${BUSINESS_KEY.toUpperCase()}] ${bizName}`);
+    console.log('='.repeat(60));
+    console.log(`  Negocio:     ${bizName} (${bizType})`);
+    console.log(`  Auth:        ${AUTH_DIR}`);
+    console.log(`  Sesion:      ${hasSession ? 'EXISTE (reconexion rapida)' : 'NUEVA (requiere QR)'}`);
+    console.log(`  Sheet ID:    ${sheetId}`);
+    console.log(`  Sheet Tab:   ${sheetTab}`);
+    console.log(`  API Base:    ${apiBase}`);
+    console.log(`  Admins:      ${bizAdmins}`);
+    console.log(`  Sys Admins:  ${sysAdmins}`);
+    console.log(`  Log:         ${logFile}`);
+    console.log(`  Estado:      INICIANDO...`);
+    console.log('='.repeat(60));
+    console.log('');
+
     await maybeCleanAppStateOnStartup();
 
     const ctx = {
