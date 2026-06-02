@@ -90,9 +90,17 @@ try {
                     orders: raw.sheet_tab || 'LEADS'
                 }
             },
-            checkout: {},
-            catalog: {},
-            features: {},
+            checkout: raw.checkout || {},
+            catalog: raw.catalog || {},
+            features: raw.features || {},
+            nomenclature: {
+                productType: raw.product_type_singular || '',
+                productTypePlural: raw.product_type_plural || '',
+                itemPrimary: raw.item_primary_plural || '',
+                itemPrimarySingular: raw.item_primary_singular || '',
+                itemSecondary: raw.item_secondary_plural || '',
+                itemSecondarySingular: raw.item_secondary_singular || ''
+            },
             bot: {
                 welcomeMessage: raw.welcome_message || '',
                 mainMenu: raw.main_menu || null,
@@ -230,19 +238,19 @@ const envConfig = {
     // =========================================================================
     nomenclature: {
         // Tipo de producto
-        productType: process.env.PRODUCT_TYPE_SINGULAR || 'helado',
-        productTypePlural: process.env.PRODUCT_TYPE_PLURAL || 'helados',
+        productType: (businessConfig.nomenclature && businessConfig.nomenclature.productType) || process.env.PRODUCT_TYPE_SINGULAR || 'helado',
+        productTypePlural: (businessConfig.nomenclature && businessConfig.nomenclature.productTypePlural) || process.env.PRODUCT_TYPE_PLURAL || 'helados',
         
         // Item primario (sabores, ingredientes, tipos, etc.)
-        itemPrimary: process.env.ITEM_PRIMARY_PLURAL || 'sabores',
-        itemPrimarySingular: process.env.ITEM_PRIMARY_SINGULAR || 'sabor',
+        itemPrimary: (businessConfig.nomenclature && businessConfig.nomenclature.itemPrimary) || process.env.ITEM_PRIMARY_PLURAL || 'sabores',
+        itemPrimarySingular: (businessConfig.nomenclature && businessConfig.nomenclature.itemPrimarySingular) || process.env.ITEM_PRIMARY_SINGULAR || 'sabor',
         
         // Aliases para compatibilidad (apuntan a las mismas propiedades)
         get itemPrimaryPlural() { return this.itemPrimary; },
         
         // Item secundario (toppings, extras, acompañamientos, etc.)
-        itemSecondary: process.env.ITEM_SECONDARY_PLURAL || 'toppings',
-        itemSecondarySingular: process.env.ITEM_SECONDARY_SINGULAR || 'topping',
+        itemSecondary: (businessConfig.nomenclature && businessConfig.nomenclature.itemSecondary) || process.env.ITEM_SECONDARY_PLURAL || 'toppings',
+        itemSecondarySingular: (businessConfig.nomenclature && businessConfig.nomenclature.itemSecondarySingular) || process.env.ITEM_SECONDARY_SINGULAR || 'topping',
         
         // Aliases para compatibilidad
         get itemSecondaryPlural() { return this.itemSecondary; },
