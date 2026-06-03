@@ -17,11 +17,6 @@ db.sqlite3
 /media/
 /static/
 
-# Archivos de Sesión de Baileys
-/auth_info_baileys.json
-/creds.json
-bot-wasap/auth_info_baileys/
-
 # Archivos del Sistema Operativo
 .DS_Store
 Thumbs.db
@@ -49,10 +44,6 @@ bot-wasap/service_account_decoded.json
 # Ignore tmp logs created by local tests
 /tmp/
 tmp/
-
-# Ensure Baileys session folder is ignored at repo root and inside bot-wasap
-auth_info_baileys/
-bot-wasap/auth_info_baileys/
 
 # Virtual environment
 venv/

@@ -1,62 +1,77 @@
 param(
-    [string]$AuthDir = "$PSScriptRoot\..\bot-wasap\auth_info_baileys",
+    [string]$BusinessKey = '',
+    [switch]$All,
     [switch]$Perform
 )
 
-try {
-    $resolved = Resolve-Path -Path $AuthDir -ErrorAction Stop
-    $authDir = $resolved.ProviderPath
-} catch {
-    Write-Error "No se encuentra el directorio especificado: $AuthDir"
+$basePath = Resolve-Path -Path "$PSScriptRoot\..\bot-wasap\auth"
+if (-not $basePath) {
+    Write-Error "No se encuentra el directorio base: bot-wasap\auth"
     exit 1
 }
 
-$parent = Split-Path $authDir -Parent
-$backupDir = Join-Path $parent ("auth_info_baileys_backup_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
-
-Write-Output "Auth directory: $authDir"
-Write-Output "Backup directory: $backupDir"
-
-# Create backup (full copy) - this is the safe step before any deletion
-try {
-    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $authDir '*') -Destination $backupDir -Recurse -Force
-    Write-Output "Backup created successfully."
-} catch {
-    Write-Error "Error creating backup: $_"
-    exit 2
+if ($All) {
+    $targets = Get-ChildItem -Path $basePath -Directory
+} elseif ($BusinessKey) {
+    $targets = @(Get-Item -Path (Join-Path $basePath $BusinessKey) -ErrorAction SilentlyContinue)
+    if (-not $targets) {
+        Write-Error "No existe el directorio de sesion para el negocio: $BusinessKey"
+        exit 1
+    }
+} else {
+    Write-Error "Especifica -BusinessKey (ej: mascotas) o -All para limpiar todas las sesiones"
+    exit 1
 }
 
-$pattern = 'app-state-sync-key-*.json'
-$files = Get-ChildItem -Path $authDir -Filter $pattern -File -ErrorAction SilentlyContinue
+foreach ($t in $targets) {
+    $sessionDir = Join-Path $t.FullName 'session'
+    if (-not (Test-Path $sessionDir)) { Write-Warning "Saltando $($t.Name): no tiene directorio session/"; continue }
 
-if (-not $files -or $files.Count -eq 0) {
-    Write-Output "No se encontraron archivos que coincidan con '$pattern' en $authDir. Nada que limpiar."
-    Write-Output "Se mantuvo el backup en: $backupDir"
-    exit 0
-}
+    Write-Output "`n========== $($t.Name) =========="
+    Write-Output "Directorio: $sessionDir"
 
-Write-Output "Archivos detectados que coinciden con '$pattern':"
-$files | ForEach-Object { Write-Output " - $($_.FullName)" }
+    $backupDir = Join-Path $basePath ("$($t.Name)_backup_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+    Write-Output "Backup: $backupDir"
 
-if (-not $Perform) {
-    Write-Output "\nModo PREVIEW: no se eliminará nada. Para ejecutar la limpieza, vuelve a ejecutar este script con el parámetro -Perform."
-    Write-Output "Ejemplo (desde la raíz del repo en PowerShell):"
-    Write-Output "    .\scripts\clean_appstate.ps1 -Perform"
-    Write-Output "Backup disponible en: $backupDir"
-    exit 0
-}
-
-# Perform deletion
-Write-Output "\nEjecutando borrado de archivos..."
-foreach ($f in $files) {
+    # Backup full session
     try {
-        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
-        Write-Output "Eliminado: $($f.FullName)"
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $sessionDir '*') -Destination $backupDir -Recurse -Force
+        Write-Output "✅ Backup creado."
     } catch {
-        Write-Warning "No se pudo eliminar $($f.FullName): $_"
+        Write-Error "Error creando backup: $_"
+        continue
+    }
+
+    if (-not $Perform) {
+        Write-Output "Modo PREVIEW: no se eliminara nada. Usa -Perform para limpiar."
+        Write-Output "Para restaurar: Remove-Item -Recurse $sessionDir; Copy-Item -Recurse $backupDir $sessionDir"
+        continue
+    }
+
+    try {
+        # Stop bot first via PM2
+        $pm2 = "C:\Program Files\nodejs\node.exe C:\Users\Administrador\AppData\Roaming\npm\node_modules\pm2\bin\pm2"
+        $botName = "bot-$($t.Name)"
+        & cmd /c "$pm2 stop $botName 2>nul"
+
+        # Wait for Chrome to release locks
+        Start-Sleep -Seconds 3
+
+        # Kill any Chrome process using this session
+        Get-CimInstance Win32_Process -Filter "name='chrome.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape($sessionDir) } | ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force
+            Write-Output "   Chrome PID $($_.ProcessId) terminado."
+        }
+        Start-Sleep -Seconds 2
+
+        # Remove session directory
+        Remove-Item -LiteralPath $sessionDir -Recurse -Force -ErrorAction Stop
+        Write-Output "✅ Sesion eliminada: $sessionDir"
+    } catch {
+        Write-Error "Error durante limpieza: $_"
     }
 }
 
-Write-Output "Limpieza finalizada. Conserva el backup en: $backupDir"
-Write-Output "Si necesitas restaurar, copia los archivos del backup nuevamente a: $authDir"
+Write-Output "`nProceso completado."
+Write-Output "Para reiniciar el bot: pm2 start bot-<businessKey>"

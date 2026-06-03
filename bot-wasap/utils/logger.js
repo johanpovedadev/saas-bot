@@ -15,7 +15,7 @@ const conversationLogDest = path.isAbsolute(CONVERSATION_LOG_PATH) ? CONVERSATIO
 // Ensure parent directory exists
 try { fs.mkdirSync(path.dirname(conversationLogDest), { recursive: true }); } catch (e) { /* ignore */ }
 
-// Fields that often contain binary keys or sensitive buffers from Baileys auth/session objects
+// Fields that often contain binary keys or sensitive buffers from WhatsApp auth/session objects
 const REDACT_PATHS = [
   'currentRatchet.ephemeralKeyPair.privKey',
   'currentRatchet.ephemeralKeyPair.pubKey',
@@ -72,7 +72,7 @@ function logUserError(jid, phase, message, errorMsg) {
 }
 
 // --- Filtering wrapper -------------------------------------------------
-// Allows silencing very noisy logs coming from Baileys (history notifications,
+// Allows silencing very noisy logs coming from WhatsApp Web (history notifications,
 // inline bootstrap payloads, etc.) while letting important lines pass through.
 const VERBOSE_FILTER_DISABLED = String(process.env.LOG_FILTER_VERBOSE || '').trim() === '1';
 
@@ -87,7 +87,7 @@ const NOISY_PATTERNS = [
     /remoteIdentityKey/i,
     /<Buffer\s*[0-9a-fA-F,\s]*>/i,
     /<Buffer/i,
-    // Baileys app-state sync noise
+    // App-state sync noise
     /\bresyncing\b/i,
     /restored state of/i,
     /failed to sync state/i,

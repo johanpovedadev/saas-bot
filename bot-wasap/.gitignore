@@ -1,9 +1,8 @@
 # Dependencias
 /node_modules
 
-# Archivos de Sesión de Baileys (MUY IMPORTANTE)
-/auth_info_baileys/
-auth_info_baileys/
+# ISSUE 58: Sesiones de WhatsApp Web (Chrome LocalAuth)
+auth/
 
 # Variables de Entorno (NUNCA SUBAS TUS SECRETOS)
 .env

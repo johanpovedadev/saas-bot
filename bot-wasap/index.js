@@ -16,6 +16,33 @@ const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'mascotas').replace(/[^a-z0-9_
 const AUTH_DIR = path.join(__dirname, 'auth', BUSINESS_KEY);
 const QR_PATH = path.join(__dirname, 'assets', BUSINESS_KEY, 'qr_code.png');
 
+// ISSUE 58+59: Module-level references for graceful shutdown
+let currentSock = null;
+let shuttingDown = false;
+
+// ISSUE 58+59: Graceful shutdown — cierra Chrome limpia mente en SIGTERM/SIGINT
+async function gracefulShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n🛑 Recibida senal ${signal}. Cerrando sesion...`);
+    logger.info({ signal }, 'Graceful shutdown iniciado');
+    if (currentSock) {
+        try {
+            if (currentSock.pupBrowser) {
+                await currentSock.pupBrowser.close();
+                console.log('✅ Browser Chrome cerrado.');
+            }
+        } catch (e) {
+            logger.warn(`Error cerrando browser: ${e.message}`);
+        }
+    }
+    console.log('✅ Shutdown completo.');
+    process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 // Install console filter to suppress noisy outputs coming directly from WhatsApp libraries
 function installConsoleFilter() {
     // Allow developers to disable the noisy filter temporarily by setting LOG_FILTER_VERBOSE=1
@@ -256,6 +283,17 @@ const startBot = async () => {
         }
     } catch (_) { /* best effort */ }
 
+    // ISSUE 58+59: Si hay un client previo, cerrar su browser antes de crear uno nuevo
+    if (currentSock) {
+        try {
+            console.log('Cerrando cliente anterior...');
+            if (currentSock.pupBrowser) {
+                await currentSock.pupBrowser.close().catch(() => {});
+            }
+        } catch (_) {}
+        currentSock = null;
+    }
+
     console.log(`🔐 Usando sesion: ${AUTH_DIR}`);
 
     const sock = new Client({
@@ -272,6 +310,8 @@ const startBot = async () => {
             ]
         }
     });
+
+    currentSock = sock;
 
     sock.on('qr', (qr) => {
         console.log('Escanea este código QR para conectar el bot:');
@@ -314,6 +354,7 @@ const startBot = async () => {
     });
 
     sock.on('disconnected', async (reason) => {
+        if (shuttingDown) return;
         logger.error({ reason }, '❌ Conexion cerrada.');
         // ISSUE #30 - Alerta de desconexion a system admins
         try {
@@ -322,10 +363,19 @@ const startBot = async () => {
             logger.warn(`No se pudo notificar desconexion a admins sistema: ${e.message}`);
         }
         if (reason !== 'LOGGED_OUT') {
-            console.log('Reconectando...');
+            console.log(`Reconectando (${reason})...`);
+            // ISSUE 58+59: Cerrar browser muerto antes de reconectar
+            try {
+                if (sock.pupBrowser) {
+                    await sock.pupBrowser.close().catch(() => {});
+                }
+            } catch (_) {}
+            // Pequena pausa para que el SO libere recursos
+            await new Promise(r => setTimeout(r, 2000));
+            currentSock = null;
             startBot();
         } else {
-            console.log(`❌ Desconectado. Borra la carpeta ${AUTH_DIR} si quieres reconectar.`);
+            console.log(`❌ Desconectado (LOGGED_OUT). Borra la carpeta ${AUTH_DIR} si quieres reconectar.`);
         }
     });
 

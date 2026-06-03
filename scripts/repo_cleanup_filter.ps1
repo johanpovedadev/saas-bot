@@ -57,8 +57,6 @@ if (Test-Path $replaceFile) {
 # Paths to remove from history (relative to repo root)
 $pathsToRemove = @(
     'service_account.json',
-    'bot-wasap/auth_info_baileys',
-    'bot-wasap/auth_info_baileys/creds.json',
     'bot-wasap/service_account.json'
 )
 

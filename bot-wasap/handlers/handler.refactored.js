@@ -75,7 +75,7 @@ function getAdminJids() {
 /**
  * Procesa un mensaje entrante y lo delega al módulo correspondiente
  * 
- * @param {Object} sock - Socket de Baileys
+ * @param {Object} sock - Socket de WhatsApp Web
  * @param {Object} messageData - Datos del mensaje (from, text, key)
  * @param {Object} ctx - Contexto global
  */
@@ -130,7 +130,7 @@ async function processIncomingMessage(sock, messageData, ctx) {
 /**
  * Delega el manejo del mensaje al módulo correspondiente según la fase
  * 
- * @param {Object} sock - Socket de Baileys
+ * @param {Object} sock - Socket de WhatsApp Web
  * @param {string} jid - WhatsApp JID
  * @param {string} text - Texto del mensaje
  * @param {Object} userSession - Sesión del usuario
@@ -216,9 +216,9 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
 // ===================================
 
 /**
- * Configura los event handlers del socket de Baileys
+ * Configura los event handlers del socket de WhatsApp Web
  * 
- * @param {Object} sock - Socket de Baileys
+ * @param {Object} sock - Socket de WhatsApp Web
  * @param {Object} ctx - Contexto global
  */
 function setupSocketHandlers(sock, ctx) {

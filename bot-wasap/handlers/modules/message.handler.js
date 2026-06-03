@@ -16,10 +16,22 @@ const { say } = require('../../services/bot_core');
  * @param {Object} msg - Mensaje de WhatsApp
  * @returns {Object} { from, text, key }
  */
+/**
+ * Normaliza un JID de WhatsApp al formato @c.us
+ * @param {string} jid - JID a normalizar
+ * @returns {string}
+ */
+function normalizeJid(jid) {
+    if (!jid) return jid;
+    // whatsapp-web.js usa @c.us (otros clientes usaban @s.whatsapp.net)
+    return jid.replace(/@s\.whatsapp\.net$/g, '@c.us');
+}
+
 function extractMessageData(msg) {
     try {
         const key = msg && (msg.key || {});
-        const from = msg.from || key.remoteJid || msg.remoteJid || msg.sender || null;
+        let from = msg.from || key.remoteJid || msg.remoteJid || msg.sender || null;
+        from = normalizeJid(from);
 
         // Extraer texto de diferentes ubicaciones
         let text = null;
@@ -27,6 +39,8 @@ function extractMessageData(msg) {
             text = msg.text;
         } else if (typeof msg.body === 'string' && msg.body.trim()) {
             text = msg.body;
+        } else if (typeof msg.caption === 'string' && msg.caption.trim()) {
+            text = msg.caption;
         } else if (msg.message) {
             if (typeof msg.message.conversation === 'string' && msg.message.conversation.trim()) {
                 text = msg.message.conversation;
@@ -41,10 +55,13 @@ function extractMessageData(msg) {
             }
         }
 
-        return { from, text, key };
+        // whatsapp-web.js expone fromMe directamente en el mensaje
+        const fromMe = msg.fromMe === true || key.fromMe === true;
+
+        return { from, text, key, fromMe };
     } catch (error) {
         logger.error('Error extracting message data:', error.message);
-        return { from: null, text: null, key: {} };
+        return { from: null, text: null, key: {}, fromMe: false };
     }
 }
 
@@ -53,9 +70,10 @@ function extractMessageData(msg) {
  * @param {string} from - JID del remitente
  * @param {string} text - Texto del mensaje
  * @param {Object} key - Clave del mensaje
+ * @param {boolean} fromMe - Si el mensaje fue enviado por el bot
  * @returns {boolean}
  */
-function shouldProcessMessage(from, text, key) {
+function shouldProcessMessage(from, text, key, fromMe = false) {
     // Ignorar mensajes sin remitente o texto
     if (!from || !text) return false;
     
@@ -69,7 +87,7 @@ function shouldProcessMessage(from, text, key) {
     if (from.includes('@newsletter')) return false;
     
     // Ignorar mensajes propios
-    if (key.fromMe) return false;
+    if (fromMe || key.fromMe) return false;
     
     return true;
 }
@@ -222,7 +240,7 @@ function isValidMessage(messageData) {
         return false;
     }
     
-    return shouldProcessMessage(messageData.from, text, messageData.key || {});
+    return shouldProcessMessage(messageData.from, text, messageData.key || {}, messageData.fromMe);
 }
 
 /**
@@ -241,7 +259,7 @@ function logIncomingMessage(jid, text, userSession) {
 
 /**
  * Maneja errores en el procesamiento de mensajes
- * @param {Object} sock - Socket de Baileys
+ * @param {Object} sock - Cliente de whatsapp-web.js
  * @param {string} jid - JID del usuario
  * @param {Error} error - Error ocurrido
  * @param {Object} ctx - Contexto global
@@ -263,6 +281,7 @@ async function handleProcessingError(sock, jid, error, ctx) {
 }
 
 module.exports = {
+    normalizeJid,
     extractMessageData,
     shouldProcessMessage,
     isDuplicateMessage,
