@@ -3,6 +3,9 @@ const { logger } = require('../utils/logger');
 const { say } = require('./bot_core');
 const envConfig = require('../config/env.loader');
 
+// ISSUE 60: Cola de notificaciones para cuando WhatsApp está offline
+const pendingNotifications = [];
+
 function normalizeJid(jid) {
     if (!jid) return jid;
     if (jid.includes('@')) return jid;
@@ -145,18 +148,40 @@ async function notifySystemAlert(sock, ctx, level, title, body) {
     logger.info(`Alerta de sistema enviada a admins sistema: ${title}`);
 }
 
+// ISSUE 60: Seguimiento de desconexion para informar duracion al reconectar
+let _disconnectedAt = null;
+
 async function notifyBotDisconnected(sock, ctx, reason) {
+    _disconnectedAt = new Date();
     const neg = envConfig.business?.name || 'Desconocido';
-    await notifySystemAlert(sock, ctx, '🚨', 'BOT DESCONECTADO',
-        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}\nMotivo: ${reason}`
-    );
+    try {
+        await notifySystemAlert(sock, ctx, '🚨', 'BOT DESCONECTADO',
+            `Negocio: ${neg}\nFecha: ${_disconnectedAt.toLocaleString('es-CO')}\nMotivo: ${reason}`
+        );
+    } catch (_) {
+        logger.warn('No se pudo notificar desconexion (WhatsApp probablemente offline). Pendiente para cuando reconecte.');
+    }
 }
 
 async function notifyBotReconnected(sock, ctx) {
     const neg = envConfig.business?.name || 'Desconocido';
-    await notifySystemAlert(sock, ctx, '✅', 'BOT RECONECTADO',
-        `Negocio: ${neg}\nFecha: ${new Date().toLocaleString('es-CO')}`
-    );
+    const ahora = new Date();
+    let body = `Negocio: ${neg}\nReconectado: ${ahora.toLocaleString('es-CO')}`;
+
+    if (_disconnectedAt) {
+        const diffMin = Math.round((ahora - _disconnectedAt) / 60000);
+        if (diffMin >= 1) {
+            const hrs = Math.floor(diffMin / 60);
+            const mins = diffMin % 60;
+            const duracion = hrs > 0
+                ? `${hrs}h ${mins}min`
+                : `${mins}min`;
+            body += `\nTiempo caido: ${duracion}`;
+        }
+        _disconnectedAt = null;
+    }
+
+    await notifySystemAlert(sock, ctx, '✅', 'BOT RECONECTADO', body);
 }
 
 async function notifySheetsError(sock, ctx, errorMsg) {
