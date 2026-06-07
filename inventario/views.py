@@ -128,6 +128,7 @@ SPREADSHEET_ID = get_spreadsheet_id()
 # Nombres de las hojas dentro del spreadsheet
 PRODUCTS_WORKSHEET_NAME = 'Inventario'   # Hoja con inventario (nombre real en el sheet)
 DELIVERIES_WORKSHEET_NAME = 'Domicilios'  # Hoja con pedidos/entregas
+LEADS_WORKSHEET_NAME = 'LEADS'  # Hoja con leads de seguros
 
 # ---------- Helpers de normalización ----------
 def _strip_accents(s: str) -> str:
@@ -220,9 +221,108 @@ def agregar_entrega(data):
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        return True, "Entrega registrada con éxito."
+        return True, "Entrega registrada con exito."
     except Exception as e:
         return False, str(e)
+
+LEADS_HEADERS = [
+    'Fecha Registro', 'Estado', 'Motivo Cancelacion', 'Tipo Mascota',
+    'Plan', 'Nombre Titular', 'Tipo Documento', 'Numero Documento',
+    'Fecha Nacimiento Titular', 'Ciudad Departamento', 'Direccion',
+    'Telefono', 'Correo Electronico', 'Nombre Mascota', 'Edad Mascota',
+    'Raza', 'Color', 'Genero', 'Asesor', 'Fecha Contacto', 'Observaciones'
+]
+
+# Cache de encabezados: evitar leer Google Sheets en cada request (rate limit)
+_leads_cache = {'verified': False, 'last_check': 0}
+
+def asegurar_encabezados_leads(sheet):
+    """Verifica que los encabezados de LEADS esten actualizados.
+    Usa cache para evitar exceder quota de lectura de Google Sheets API."""
+    now = __import__('time').time()
+    # Re-verificar solo cada 5 minutos
+    if _leads_cache['verified'] and (now - _leads_cache['last_check']) < 300:
+        return
+    try:
+        existing = sheet.row_values(1)
+        if len(existing) < len(LEADS_HEADERS) or existing != LEADS_HEADERS:
+            sheet.update(range_name='A1', values=[LEADS_HEADERS], value_input_option='USER_ENTERED')
+            print("   Encabezados LEADS actualizados")
+        _leads_cache['verified'] = True
+        _leads_cache['last_check'] = now
+    except Exception:
+        try:
+            sheet.update(range_name='A1', values=[LEADS_HEADERS], value_input_option='USER_ENTERED')
+            print("   Encabezados LEADS creados")
+        except Exception:
+            pass
+        _leads_cache['verified'] = True
+        _leads_cache['last_check'] = now
+
+# Cache de worksheet LEADS para evitar abrir el spreadsheet en cada request
+_leads_worksheet_cache = {'sheet': None, 'id': '', 'last_open': 0}
+
+def _get_leads_worksheet():
+    """Obtiene (con cache) la worksheet de LEADS."""
+    now = __import__('time').time()
+    sid = get_spreadsheet_id()
+    # Re-abrir solo si cambia el ID o cada 5 minutos
+    if (_leads_worksheet_cache['sheet'] is not None
+            and _leads_worksheet_cache['id'] == sid
+            and (now - _leads_worksheet_cache['last_open']) < 300):
+        return _leads_worksheet_cache['sheet']
+    client = get_gs_client()
+    sheet = client.open_by_key(sid).worksheet(LEADS_WORKSHEET_NAME)
+    _leads_worksheet_cache['sheet'] = sheet
+    _leads_worksheet_cache['id'] = sid
+    _leads_worksheet_cache['last_open'] = now
+    return sheet
+
+def agregar_lead(data):
+    """Guarda un lead de seguro de mascotas en la hoja LEADS."""
+    try:
+        sheet = _get_leads_worksheet()
+        asegurar_encabezados_leads(sheet)
+        fecha_actual = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        row = [
+            fecha_actual,                     # FechaRegistro
+            data.get('estado', ''),           # Estado
+            data.get('motivoCancelacion', ''),# MotivoCancelacion
+            data.get('tipoMascota', ''),      # TipoMascota
+            data.get('plan', ''),             # Plan
+            data.get('nombreTitular', ''),    # NombreTitular
+            data.get('tipoDocumento', ''),    # TipoDocumento
+            data.get('numeroDocumento', ''),  # NumeroDocumento
+            data.get('fechaNacimiento', ''),  # FechaNacimientoTitular
+            data.get('ciudadDepartamento', ''),# CiudadDepartamento
+            data.get('direccion', ''),        # Direccion
+            data.get('telefono', ''),         # Telefono
+            data.get('correoElectronico', ''),# CorreoElectronico
+            data.get('nombreMascota', ''),    # NombreMascota
+            data.get('edadMascota', ''),      # EdadMascota
+            data.get('raza', ''),             # Raza
+            data.get('color', ''),            # Color
+            data.get('genero', ''),           # Genero
+            data.get('asesor', ''),           # Asesor
+            fecha_actual,                     # FechaContacto
+            data.get('observaciones', '')     # Observaciones
+        ]
+        
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        return True, "Lead registrado con exito."
+    except Exception as e:
+        err_str = str(e)
+        # Si es rate limiting, reintentar una vez con backoff
+        if '429' in err_str or 'Quota exceeded' in err_str:
+            import time as _time
+            _time.sleep(2)
+            try:
+                sheet.append_row(row, value_input_option='USER_ENTERED')
+                return True, "Lead registrado con exito (tras reintento)."
+            except Exception as e2:
+                return False, f"Rate limit tras reintento: {e2}"
+        return False, err_str
 
 def marcar_pago(codigo, pagado):
     return True, "Estado de pago actualizado."
@@ -377,6 +477,19 @@ def registrar_entrega(request):
         return JsonResponse({'ok': False, 'error': str(e)}, status=500)
 
 @csrf_exempt
+def registrar_lead(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Metodo no permitido'}, status=405)
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        ok, msg = agregar_lead(data)
+        if not ok:
+            return JsonResponse({'ok': False, 'error': msg}, status=400)
+        return JsonResponse({'ok': True})
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
+@csrf_exempt
 def actualizar_pago(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Método no permitido'}, status=405)
@@ -451,3 +564,16 @@ def obtener_todos_los_productos(request):
     if not inv_raw:
         return JsonResponse({'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
     return JsonResponse({'matches': inv_raw})
+
+# ISSUE #33 - Health Check Django
+@require_GET
+def health_check(request):
+    return JsonResponse({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'service': 'django-seguros',
+        'version': '1.0.0',
+        'google_sheets': {
+            'status': 'unknown'
+        }
+    })
