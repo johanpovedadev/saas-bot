@@ -272,12 +272,13 @@ const startBot = async () => {
     const sessionDir = path.join(AUTH_DIR, 'session');
     // Ensure auth dir exists
     if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
-    // Cleanup stale Chrome locks
+    // Cleanup stale Chrome locks (ISSUE 60: Kill Chrome que use esta carpeta de sesion)
     try {
-        execSync(
-            `wmic process where "name='chrome.exe' and commandline like '%${sessionDir.replace(/\\/g, '\\\\')}%'" delete`,
-            { timeout: 5000, stdio: 'pipe' }
-        );
+        const cp = require('child_process');
+        const dir = sessionDir.replace(/\\/g, '\\\\');
+        cp.execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+            `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like '*${dir}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
+        ], { timeout: 8000, stdio: 'pipe' });
     } catch (_) { /* best effort */ }
     try {
         for (const f of ['lockfile', 'SingletonLock', 'SingletonSocket', 'SingletonCookie', 'DevToolsActivePort']) {
@@ -392,11 +393,27 @@ const startBot = async () => {
 
     setupSocketHandlers(sock, ctx);
 
-    try {
-        await sock.initialize();
-    } catch (e) {
-        isStarting = false;
-        throw e;
+    // ISSUE 60: Reintentar initialize si falla por Chrome ya corriendo
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            await sock.initialize();
+            break;
+        } catch (e) {
+            if (attempt === 1 && e.message && e.message.includes('browser is already running')) {
+                console.log('Chrome ocupado, matando proceso y reintentando...');
+                try {
+                    const cp = require('child_process');
+                    const dir = sessionDir.replace(/\\/g, '\\\\');
+                    cp.execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+                        `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like '*${dir}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
+                    ], { timeout: 8000, stdio: 'pipe' });
+                } catch (_) {}
+                await new Promise(r => setTimeout(r, 2000));
+                continue;
+            }
+            isStarting = false;
+            throw e;
+        }
     }
     isStarting = false;
 };
