@@ -17,8 +17,10 @@ const AUTH_DIR = path.join(__dirname, 'auth', BUSINESS_KEY);
 const QR_PATH = path.join(__dirname, 'assets', BUSINESS_KEY, 'qr_code.png');
 
 // ISSUE 58+59: Module-level references for graceful shutdown
+// ISSUE 60: Guard para evitar multiples inicializaciones concurrentes
 let currentSock = null;
 let shuttingDown = false;
+let isStarting = false;
 
 // ISSUE 58+59: Graceful shutdown — cierra Chrome limpia mente en SIGTERM/SIGINT
 async function gracefulShutdown(signal) {
@@ -197,6 +199,12 @@ async function maybeCleanAppStateOnStartup() {
 }
 
 const startBot = async () => {
+    // ISSUE 60: Evitar que startBot se ejecute en paralelo
+    if (isStarting) {
+        console.log('startBot ya esta en ejecucion, ignorando llamada duplicada.');
+        return;
+    }
+    isStarting = true;
     console.log('Inicializando servicios...');
 
     // ISSUE 56: Diagnostic banner at startup
@@ -373,7 +381,10 @@ const startBot = async () => {
             // Pequena pausa para que el SO libere recursos
             await new Promise(r => setTimeout(r, 2000));
             currentSock = null;
-            startBot();
+            // ISSUE 60: En lugar de llamar startBot() recursivamente (crea duplicados),
+            // salimos del proceso para que PM2 lo reinicie limpio
+            console.log('Saliendo para que PM2 reinicie el proceso...');
+            process.exit(0);
         } else {
             console.log(`❌ Desconectado (LOGGED_OUT). Borra la carpeta ${AUTH_DIR} si quieres reconectar.`);
         }
@@ -381,11 +392,18 @@ const startBot = async () => {
 
     setupSocketHandlers(sock, ctx);
 
-    await sock.initialize();
+    try {
+        await sock.initialize();
+    } catch (e) {
+        isStarting = false;
+        throw e;
+    }
+    isStarting = false;
 };
 
 // Start the bot and catch top-level startup errors to avoid unhandled rejections
 startBot().catch(err => {
+    isStarting = false;
     try {
         console.error('Fallo al iniciar el bot:', err && err.stack ? err.stack : err);
     } catch (e) {
