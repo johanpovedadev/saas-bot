@@ -211,6 +211,7 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'chat':
         case 'help':
         case 'upgrade':
+        case 'goals':
             await say(sock, jid, result.response, ctx);
             break;
 
@@ -327,11 +328,19 @@ async function showWelcome(sock, jid, ctx) {
         if (lastCheck !== today && userSession.phase !== PHASE.FIN_CHECKIN) {
             userSession.phase = PHASE.FIN_CHECKIN;
         }
+        const txCount = fin.transactions.length;
         await say(sock, jid,
-            `🦁 ¡Hola de nuevo *${fin.name}*! Aquí andamos, al tanto de tu plata.\n\n` +
-            `• Registrar gasto o ingreso\n` +
-            `• Ver resumen\n` +
-            `• Contame en qué va la cosa`,
+            `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.\n\n` +
+            (txCount > 0
+                ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
+                  `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n` +
+                  `¿Qué necesitás?\n` +
+                  `• Registrar movimiento\n` +
+                  `• Ver resumen\n` +
+                  `• Hablar de metas\n` +
+                  (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`)
+                : `Todavía no registraste nada. Podés arrancar cuando quieras:\n\n` +
+                  `_"Gasté 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`),
             ctx);
         return;
     }
@@ -374,7 +383,7 @@ module.exports = {
             website: 'https://lion-ai.com'
         },
         bot: {
-            welcomeMessage: `🦁 ¡Hola! Soy LION AI Finance. ¿Cómo prefieres que te llame?`,
+            welcomeMessage: `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas. ¿Cómo te llamo?`,
             mainMenu: null,
             phases: { enableAIAssistant: true },
             ai: { enabled: true, model: 'gemini-2.5-flash' },

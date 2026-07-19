@@ -24,7 +24,7 @@ function buildFinanceContext(userSession) {
 
 function buildSystemPrompt(ctx) {
     const c = buildFinanceContext(ctx);
-    return `Eres LION AI Finance 🦁, un asistente financiero personal empático, cercano y motivador.
+    return `Eres Leo 🦁, un asistente financiero personal empático, cercano y motivador.
 
 Contexto del usuario:
 - Nombre: ${c.name || 'aún no registrado'}
@@ -228,7 +228,7 @@ function fallbackInterpret(message, userSession) {
             amount: 0,
             category: '',
             description: '',
-            response: `🦁 ¡Hola! Soy LION AI Finance. ¿Cómo prefieres que te llame?`,
+            response: `🦁 ¡Rrrraaawr! Soy Leo. ¿Cómo te llamo?`,
             needs_confirmation: false
         };
     }
@@ -297,7 +297,8 @@ function fallbackInterpret(message, userSession) {
 
     // Query patterns: "cuanto tengo", "saldo", "resumen diario", "como voy", etc.
     if (/cuanto\s+(tengo|gaste|dinero|plata|saldo|hay|gasto)/i.test(t) || /\bsaldo\b/i.test(t) ||
-        /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t)) {
+        /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t) ||
+        /\bmeta(s| financiera)?\b/i.test(t)) {
         const balance = fin.balance || 0;
         const today = fin.todaySpending || 0;
         return {
