@@ -117,6 +117,36 @@ function stripAccents(s) {
     return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+function cleanDescription(rawDesc, amount) {
+    let d = rawDesc.trim();
+    // Remove the parsed amount as raw number string
+    const amountStr = String(amount);
+    if (d.includes(amountStr)) {
+        d = d.replace(amountStr, '');
+    }
+    // Remove raw number patterns like "18 mil", "2 millones", "50k" (order: longest first)
+    d = d.replace(/\d[\d.]*\s*(?:millones|millon|mil|k)/gi, '');
+    // Remove standalone "mil", "millon", "millones" (left after removing digits)
+    d = d.replace(/\b(millones|millon|mil|k)\b/gi, '');
+    // Remove common filler/verb words
+    d = d.replace(/\b(gaste|pague|pagar|compre|compro|costo|valio|recibi|gane|ingreso|ingrese|pago|pagaron|de|en|por|un|una|el|la|los|las|del|que|con|para|mi|se)\b/gi, ' ');
+    // Remove any remaining digits
+    d = d.replace(/\d[\d.]*/g, '');
+    // Remove extra whitespace
+    d = d.replace(/\s+/g, ' ').trim();
+    // Capitalize first letter
+    if (d.length > 0) {
+        d = d[0].toUpperCase() + d.slice(1);
+    }
+    // Fallback: if nothing remains, use raw desc truncated
+    if (!d) {
+        d = rawDesc.replace(/\d[\d.]*\s*(?:millones|millon|mil|k)?/gi, '').replace(/\s+/g, ' ').trim();
+        if (d.length > 0) d = d[0].toUpperCase() + d.slice(1);
+        return d.substring(0, 50);
+    }
+    return d.substring(0, 50);
+}
+
 function parseAmount(text) {
     // "18 mil" -> 18000, "18k" -> 18000, "18.000" -> 18000
     // "2 millones" -> 2000000, "1.5 millones" -> 1500000
@@ -167,14 +197,15 @@ function fallbackInterpret(message, userSession) {
     const gastoPat = /(?:gaste|pague|compre|costo|valio|compre|compro|gasto)\s+(?:un[oa]|el|la|los|las)?\s*(.+)/i;
     const gastoMatch = t.match(gastoPat);
     if (gastoMatch) {
-        const desc = gastoMatch[1].trim();
+        const rawDesc = gastoMatch[1].trim();
         const amount = parseAmount(raw);
         if (amount > 0) {
+            const desc = cleanDescription(rawDesc, amount);
             return {
                 intent: 'register_expense',
                 amount,
                 category: 'Otros',
-                description: desc.substring(0, 50),
+                description: desc,
                 needs_confirmation: true,
                 response: `📝 *Registrado:* $${amount.toLocaleString('es-CO')} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
@@ -185,16 +216,41 @@ function fallbackInterpret(message, userSession) {
     const ingresoPat = /(?:recibi|gane|ingreso|recibi|ingrese|pago|pagaron|me\s+pagaron)\s+(?:de|en|por)?\s*(.+)/i;
     const ingresoMatch = t.match(ingresoPat);
     if (ingresoMatch) {
-        const desc = ingresoMatch[1].trim();
+        const rawDesc = ingresoMatch[1].trim();
         const amount = parseAmount(raw);
         if (amount > 0) {
+            const desc = cleanDescription(rawDesc, amount);
             return {
                 intent: 'register_income',
                 amount,
                 category: 'Salario',
-                description: desc.substring(0, 50),
+                description: desc,
                 needs_confirmation: true,
                 response: `💰 *Registrado:* $${amount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
+            };
+        }
+    }
+
+    // Generic bidirectional: any number + remaining text -> expense
+    // Covers: "20000 arreglo celular", "arreglo celular 20000", "8000 de pizza"
+    const anyAmount = parseAmount(raw);
+    if (anyAmount > 0) {
+        // Determine intent: income if income-related keywords present
+        const isIncome = /recibi|gane|ingreso|pago|pagaron|sueldo|salario|nomina|nomina/i.test(t);
+        const rawDesc = isIncome
+            ? raw.replace(/recibi|gane|ingreso|pago|pagaron|me\s+pagaron/gi, '').trim()
+            : raw.replace(/gaste|pague|compre|costo|valio|gasto/i, '').trim();
+        const desc = cleanDescription(rawDesc, anyAmount);
+        if (desc.length > 0) {
+            return {
+                intent: isIncome ? 'register_income' : 'register_expense',
+                amount: anyAmount,
+                category: isIncome ? 'Salario' : 'Otros',
+                description: desc,
+                needs_confirmation: true,
+                response: isIncome
+                    ? `💰 *Registrado:* $${anyAmount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
+                    : `📝 *Registrado:* $${anyAmount.toLocaleString('es-CO')} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
