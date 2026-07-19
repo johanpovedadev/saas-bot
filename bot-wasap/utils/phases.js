@@ -46,6 +46,8 @@ const PHASE = {
     // 🦁 FASES FLUJO FINANCE LION AI (conversacional)
     // ===================================
     FIN_ONBOARDING: 'fin_onboarding',
+    FIN_DIAGNOSTIC: 'fin_diagnostic',
+    FIN_CHECKIN: 'fin_checkin',
     FIN_MAIN: 'fin_main'
 };
 

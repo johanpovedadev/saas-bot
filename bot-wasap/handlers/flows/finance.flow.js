@@ -6,7 +6,7 @@ const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
 
-const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_MAIN];
+const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
 const CONFIRM_VARIANTS = [
     'Anotado 🦁 Vamos sumando.',
@@ -29,7 +29,10 @@ function initFinance(userSession) {
             lastResetDate: new Date().toDateString(),
             streak: 0,
             lastStreakDate: '',
-            trialLastShown: 0
+            trialLastShown: 0,
+            diagnosticAnswer: 0,
+            firstTransactionDone: false,
+            lastCheckinDate: ''
         };
     }
     const today = new Date().toDateString();
@@ -70,6 +73,16 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Diagnostic phase
+    if (userSession.phase === PHASE.FIN_DIAGNOSTIC) {
+        return await handleDiagnostic(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Check-in for returning users
+    if (userSession.phase === PHASE.FIN_CHECKIN) {
+        return await handleCheckin(sock, jid, t, userSession, ctx, fin);
+    }
+
     // Onboarding
     if (!fin.name || userSession.phase === PHASE.FIN_ONBOARDING) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
@@ -83,31 +96,69 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
     if (!fin.name) {
         fin.name = text.trim();
         financeStore.saveFinance(jid, fin);
-        userSession.phase = PHASE.FIN_MAIN;
+        userSession.phase = PHASE.FIN_DIAGNOSTIC;
         fin.trialStart = Date.now();
         await say(sock, jid,
-            `🦁 ¡Hola *${fin.name}*! Encantado de conocerte. 🎉
-
-Durante los próximos *30 días* tendrás acceso GRATIS a todas las funciones:
-
-• 💰 Registrar gastos e ingresos con solo decirlo
-• 📊 Consultar tu dinero cuando quieras
-• 📋 Resumen diario automático
-• 🏷️ Categorización inteligente
-
-Puedes empezar con frases como:
-
-_"Gasté 18 mil en almuerzo"_
-_"Recibí 2 millones de sueldo"_
-_"¿Cuánto tengo ahorrado?"_
-
-¿Qué quieres hacer hoy?`,
+            `🦁 Un gusto, *${fin.name}*. Antes de arrancar, contame: ¿qué es lo que más te choca de tu plata ahorita?\n\n` +
+            `1️⃣ Se me va sin darme cuenta\n` +
+            `2️⃣ Tengo deudas encima\n` +
+            `3️⃣ Quiero ahorrar pero no logro\n` +
+            `4️⃣ Ni idea, por eso estoy aquí`,
             ctx);
         return;
     }
     userSession.phase = PHASE.FIN_MAIN;
     await say(sock, jid,
-        `¡Hola de nuevo *${fin.name}*! 🦁 ¿En qué puedo ayudarte con tus finanzas hoy?`,
+        `🦁 ¡Hola de nuevo *${fin.name}*! ¿Qué necesitás hoy?\n\n` +
+        `• Registrar un gasto o ingreso\n` +
+        `• Ver tu resumen\n` +
+        `• Hablar de metas`,
+        ctx);
+}
+
+async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
+    const t = text.trim();
+    const option = parseInt(t);
+    const answers = {
+        1: 'Se me va sin darme cuenta',
+        2: 'Tengo deudas encima',
+        3: 'Quiero ahorrar pero no logro',
+        4: 'Ni idea, por eso estoy aquí'
+    };
+
+    if (option >= 1 && option <= 4) {
+        fin.diagnosticAnswer = option;
+        financeStore.saveFinance(jid, fin);
+        userSession.phase = PHASE.FIN_MAIN;
+        await say(sock, jid,
+            `Uff, "${answers[option]}" — le pasa a 8 de cada 10 colombianos, no estás solo 🦁\n\n` +
+            `No es que ganés poco, es que nadie te ha ayudado a verlo claro. Yo sí voy a estar aquí.\n\n` +
+            `Podés empezar con frases como:\n\n` +
+            `_"Gasté 18 mil en almuerzo"_\n` +
+            `_"Recibí 2 millones de sueldo"_\n` +
+            `_"¿Cuánto tengo?"_\n\n` +
+            `¿Qué querés registrar hoy?`,
+            ctx);
+    } else {
+        await say(sock, jid,
+            `Escribí el número de la opción que más te describa (1, 2, 3 o 4) 🦁`,
+            ctx);
+    }
+}
+
+async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
+    fin.lastCheckinDate = new Date().toDateString();
+    userSession.phase = PHASE.FIN_MAIN;
+    const txCount = fin.transactions.length;
+    await say(sock, jid,
+        `🦁 ¡Qué bueno verte de nuevo, *${fin.name}*!\n\n` +
+        (txCount > 0
+            ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
+              `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n` +
+              `¿Querés seguir registrando, ver tu resumen o hablar de metas?`
+            : `Todavía no has registrado nada. Podés empezar cuando quieras:\n\n` +
+              `_"Gasté 15 mil en desayuno"_\n` +
+              `_"Recibí 500 mil de freelance"_`),
         ctx);
 }
 
@@ -161,31 +212,6 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'help':
         case 'upgrade':
             await say(sock, jid, result.response, ctx);
-            break;
-
-        case 'onboarding_name':
-            fin.name = text.trim();
-            financeStore.saveFinance(jid, fin);
-            userSession.phase = PHASE.FIN_MAIN;
-            fin.trialStart = Date.now();
-            await say(sock, jid,
-                `🦁 ¡Hola *${fin.name}*! Encantado de conocerte. 🎉
-
-Durante los próximos *30 días* tendrás acceso GRATIS a todas las funciones:
-
-• 💰 Registrar gastos e ingresos con solo decirlo
-• 📊 Consultar tu dinero cuando quieras
-• 📋 Resumen diario automático
-• 🏷️ Categorización inteligente
-
-Puedes empezar con frases como:
-
-_"Gasté 18 mil en almuerzo"_
-_"Recibí 2 millones de sueldo"_
-_"¿Cuánto tengo ahorrado?"_
-
-¿Qué quieres hacer hoy?`,
-                ctx);
             break;
 
         default:
@@ -280,10 +306,12 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         streakMsg +
         milestoneMsg +
         trialLine +
+        (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
         `\n¿Algo más? 🦁`,
         ctx);
 
     fin.trialLastShown = Date.now();
+    fin.firstTransactionDone = true;
 
     financeStore.saveFinance(jid, fin);
     logger.info({ jid, type, amount, category, description, balance: fin.balance }, 'Finance transaction saved');
@@ -293,26 +321,23 @@ async function showWelcome(sock, jid, ctx) {
     const userSession = ctx?.sessions?.[jid];
     const fin = userSession?.finance;
     if (fin?.name) {
-        // Ya onboarding, no repetir
+        // Check-in every 48h
+        const lastCheck = fin.lastCheckinDate;
+        const today = new Date().toDateString();
+        if (lastCheck !== today && userSession.phase !== PHASE.FIN_CHECKIN) {
+            userSession.phase = PHASE.FIN_CHECKIN;
+        }
         await say(sock, jid,
-            `🦁 ¡Hola de nuevo *${fin.name}*! ¿En qué puedo ayudarte con tus finanzas hoy?\n\n` +
-            `Puedes decirme:\n` +
-            `• "Gasté 18 mil en almuerzo"\n` +
-            `• "Recibí 2 millones de sueldo"\n` +
-            `• "¿Cuánto tengo?"`,
+            `🦁 ¡Hola de nuevo *${fin.name}*! Aquí andamos, al tanto de tu plata.\n\n` +
+            `• Registrar gasto o ingreso\n` +
+            `• Ver resumen\n` +
+            `• Contame en qué va la cosa`,
             ctx);
         return;
     }
     await say(sock, jid,
-        `🦁 ¡Hola! Soy *LION AI Finance*.
-
-Estoy aquí para ayudarte a organizar tu dinero de una forma sencilla.
-
-No necesitas aprender a usar una aplicación ni llenar formularios.
-
-Solo cuéntame tus ingresos y gastos como si estuvieras hablando con un amigo.
-
-¿Cómo prefieres que te llame?`,
+        `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas.\n\n` +
+        `¿Cómo te llamo?`,
         ctx);
 }
 
@@ -323,7 +348,11 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
         await handleConversation(sock, jid, text, userSession, ctx, fin);
     } else {
         userSession.phase = PHASE.FIN_ONBOARDING;
-        await showWelcome(sock, jid, ctx);
+        // Mensaje 1: bienvenida emocional
+        await say(sock, jid,
+            `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas.\n\n` +
+            `¿Cómo te llamo?`,
+            ctx);
     }
 }
 
