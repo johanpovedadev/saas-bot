@@ -1,10 +1,11 @@
 'use strict';
 
 const PHASE = require('../../utils/phases');
-const { say } = require('../../services/bot_core');
+const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
+const { generateCard, getNewMilestones } = require('../../services/financeCard');
 
 const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
@@ -38,7 +39,8 @@ function initFinance(userSession) {
             goalStep: 0,
             goalTempName: '',
             notifiedNewFeatures: false,
-            lastReportDate: ''
+            lastReportDate: '',
+            milestonesSent: []
         };
     }
     const today = new Date().toDateString();
@@ -238,6 +240,20 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                     fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
                     fin.lastStreakDate = today;
                 }
+                // Check immediate goal milestones
+                const goalMs = getNewMilestones(fin, { goalTarget: 0, balance: 0 });
+                for (const mId of goalMs) {
+                    if (!fin.milestonesSent.includes(mId)) {
+                        try {
+                            const imgPath = await generateCard(fin.name, mId, fin.goalName);
+                            await sendImage(sock, jid, imgPath, `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`, ctx);
+                            fin.milestonesSent.push(mId);
+                        } catch (e) {
+                            logger.error(`[${jid}] Error generating goal card ${mId}: ${e.message}`);
+                        }
+                    }
+                }
+                financeStore.saveFinance(jid, fin);
                 await say(sock, jid,
                     `🎯 *Meta guardada!* Vas a ahorrar $${val.toLocaleString('es-CO')} para "${fin.goalName}".\n\n` +
                     `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
@@ -349,6 +365,8 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
 }
 
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx) {
+    const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
+
     const tx = {
         type,
         amount,
@@ -410,6 +428,21 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
 
     fin.trialLastShown = Date.now();
     fin.firstTransactionDone = true;
+
+    // Generate milestone cards
+    const newMilestones = getNewMilestones(fin, prevFin);
+    for (const mId of newMilestones) {
+        if (!fin.milestonesSent.includes(mId)) {
+            try {
+                const extra = mId.startsWith('goal-') && fin.goalName ? `${fin.goalName}` : undefined;
+                const imgPath = await generateCard(fin.name, mId, extra);
+                await sendImage(sock, jid, imgPath, `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`, ctx);
+                fin.milestonesSent.push(mId);
+            } catch (e) {
+                logger.error(`[${jid}] Error generating milestone card ${mId}: ${e.message}`);
+            }
+        }
+    }
 
     financeStore.saveFinance(jid, fin);
     logger.info({ jid, type, amount, category, description, balance: fin.balance }, 'Finance transaction saved');

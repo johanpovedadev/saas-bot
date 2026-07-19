@@ -67,7 +67,8 @@ function rowToFinance(row) {
         goalStep: extra.goalStep || 0,
         goalTempName: extra.goalTempName || '',
         notifiedNewFeatures: extra.notifiedNewFeatures || false,
-        lastReportDate: extra.lastReportDate || ''
+        lastReportDate: extra.lastReportDate || '',
+        milestonesSent: extra.milestonesSent || []
     };
 }
 
@@ -93,7 +94,8 @@ function financeToRow(jid, fin) {
             goalStep: fin.goalStep || 0,
             goalTempName: fin.goalTempName || '',
             notifiedNewFeatures: fin.notifiedNewFeatures || false,
-            lastReportDate: fin.lastReportDate || ''
+            lastReportDate: fin.lastReportDate || '',
+            milestonesSent: fin.milestonesSent || []
         })
     };
 }
