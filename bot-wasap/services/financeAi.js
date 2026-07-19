@@ -295,8 +295,9 @@ function fallbackInterpret(message, userSession) {
         }
     }
 
-    // Query patterns
-    if (/cuanto\s+(tengo|gaste|dinero|plata|saldo|hay|gasto)/i.test(t) || /\bsaldo\b/i.test(t)) {
+    // Query patterns: "cuanto tengo", "saldo", "resumen diario", "como voy", etc.
+    if (/cuanto\s+(tengo|gaste|dinero|plata|saldo|hay|gasto)/i.test(t) || /\bsaldo\b/i.test(t) ||
+        /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t)) {
         const balance = fin.balance || 0;
         const today = fin.todaySpending || 0;
         return {
