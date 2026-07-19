@@ -8,6 +8,14 @@ const financeStore = require('../../services/financeStore');
 
 const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_MAIN];
 
+const CONFIRM_VARIANTS = [
+    'Anotado 🦁 Vamos sumando.',
+    'Recibido. El león nunca olvida 🔥',
+    'Guardado. Así se hace.',
+    'Listo, ya quedó contigo 🦁',
+    'Hecho. Un paso más cerca de tus metas 💪'
+];
+
 function initFinance(userSession) {
     if (!userSession.finance) {
         userSession.finance = {
@@ -18,7 +26,10 @@ function initFinance(userSession) {
             trialStart: Date.now(),
             isPremium: false,
             pendingConfirm: null,
-            lastResetDate: new Date().toDateString()
+            lastResetDate: new Date().toDateString(),
+            streak: 0,
+            lastStreakDate: '',
+            trialLastShown: 0
         };
     }
     const today = new Date().toDateString();
@@ -178,7 +189,10 @@ _"¿Cuánto tengo ahorrado?"_
             break;
 
         default:
-            await say(sock, jid, result.response || `😊 ¿En qué más puedo ayudarte?`, ctx);
+            await say(sock, jid, result.response || `😅 No entendí. Recuerda que puedes decirme cosas como:\n\n` +
+                `• "Gasté 18 mil en almuerzo"\n` +
+                `• "Recibí 2 millones de sueldo"\n` +
+                `• "¿Cuánto tengo?"`, ctx);
     }
 }
 
@@ -188,22 +202,25 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
     const confirm = fin.pendingConfirm;
     if (!confirm) return;
 
-    if (/^(1|si|sip|sep|ok|okay|dale|confirmo|correcto|yes|claro|listo|dale|simon|simon)/i.test(t)) {
+    if (/^(1|si|sip|sep|ok|okay|dale|confirmo|correcto|yes|claro|listo|dale|simon)/i.test(t)) {
         await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx);
         fin.pendingConfirm = null;
     } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
         fin.pendingConfirm = null;
-        await say(sock, jid,
-            `✅ Cancelado. Puedes intentarlo de nuevo cuando quieras.`,
-            ctx);
+        const cancelMsg = [
+            'Cancelado. Sin problema 🦁',
+            'Listo, lo descartamos. ¿Qué más?',
+            'Olvídalo. Puedes intentar de nuevo cuando quieras.',
+            'Deshecho. Cuéntame el correcto.'
+        ][Math.floor(Math.random() * 4)];
+        await say(sock, jid, `✅ ${cancelMsg}`, ctx);
     } else {
-        await say(sock, jid,
-            `¿Es correcto?\n\n` +
-            `${confirm.type === 'expense' ? '💸 Gasto' : '💰 Ingreso'}: $${confirm.amount.toLocaleString('es-CO')}\n` +
-            `Categoría: ${confirm.category}\n` +
-            `${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}\n` +
-            `*Responde*: sí / no`,
-            ctx);
+        const rePrompt = [
+            `¿Es correcto?\n\n💸 Gasto: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
+            `Confirmación:\n\n💰 $${confirm.amount.toLocaleString('es-CO')} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? (sí/no)`,
+            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Gasto' : '💰 Ingreso'}: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
+        ][Math.floor(Math.random() * 3)];
+        await say(sock, jid, rePrompt, ctx);
     }
 }
 
@@ -225,14 +242,48 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     }
 
     const trialDaysLeft = 30 - daysSince(fin.trialStart);
+    const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
+
+    // #8 — racha
+    const today = new Date().toDateString();
+    if (fin.lastStreakDate !== today) {
+        const yesterday = new Date(Date.now() - 86400000).toDateString();
+        fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
+        fin.lastStreakDate = today;
+    }
+
+    // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
+    const hasIncome = fin.transactions.some(t => t.type === 'income');
+    const balanceLine = !hasIncome && fin.balance < 0
+        ? `💸 Gastado hoy: $${fin.todaySpending.toLocaleString('es-CO')}`
+        : `💵 Saldo: $${fin.balance.toLocaleString('es-CO')}`;
+
+    const todayMsg = fin.todaySpending > 0
+        ? `📊 Hoy: $${fin.todaySpending.toLocaleString('es-CO')}\n`
+        : '';
+    const streakMsg = fin.streak >= 2 ? `🔥 ${fin.streak} días seguidos\n` : '';
+    const milestoneMsg = fin.streak === 5 ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 ? `🏆 10 días! Imparable.\n` : '';
+
+    // #5 — oferta solo 1 vez al día o si quedan ≤5 días
+    const trialLine = fin.isPremium ? ''
+        : (daysSince(fin.trialLastShown || 0) >= 1 || trialDaysLeft <= 5)
+            ? `📅 ${trialDaysLeft} días de prueba.\n`
+            : '';
+
     await say(sock, jid,
-        `✅ *${type === 'expense' ? 'Gasto' : 'Ingreso'} registrado!*\n\n` +
+        `✅ *${type === 'expense' ? 'Gasto' : 'Ingreso'} registrado!*\n` +
+        confirmMsg + '\n\n' +
         `${type === 'expense' ? '💸' : '💰'} $${amount.toLocaleString('es-CO')} — ${description}\n` +
         `🏷️ ${category}\n\n` +
-        `💵 Saldo disponible: $${fin.balance.toLocaleString('es-CO')}\n` +
-        (trialDaysLeft > 0 ? `📅 Te quedan *${trialDaysLeft} días* de prueba gratis.` : ``) +
-        `\n\n¿Algo más en lo que pueda ayudarte?`,
+        balanceLine + '\n' +
+        todayMsg +
+        streakMsg +
+        milestoneMsg +
+        trialLine +
+        `\n¿Algo más? 🦁`,
         ctx);
+
+    fin.trialLastShown = Date.now();
 
     financeStore.saveFinance(jid, fin);
     logger.info({ jid, type, amount, category, description, balance: fin.balance }, 'Finance transaction saved');
