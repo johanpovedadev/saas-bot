@@ -12,6 +12,7 @@ const { isGreeting, getMatchingGreeting } = require('../../config/greetings/gree
 const { say } = require('../../services/bot_core');
 const PHASE = require('../../utils/phases');
 const { logger } = require('../../utils/logger');
+const envConfig = require('../../config/env.loader');
 
 /**
  * Verifica si un mensaje es un saludo
@@ -64,12 +65,36 @@ async function handleGreeting(sock, jid, userSession, ctx) {
  * @param {Object} ctx - Contexto global
  */
 async function sendWelcomeMenu(sock, jid, ctx) {
+    // Usar configuración genérica desde .env
+    const businessName = envConfig.business.name || 'Negocio';
+    const city = envConfig.business.location.city || '';
+    const emoji = envConfig.ui.emoji.main || '😊';
+    const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+    
+    // Construir menú dinámicamente según opciones activadas
+    const menuConfig = envConfig.menu;
+    let menuOptions = [];
+    let optionNumber = 1;
+    
+    if (menuConfig.options.showProducts) {
+        menuOptions.push(`*${optionNumber})* 🛍️ Ver nuestro menú y hacer un pedido`);
+        optionNumber++;
+    }
+    
+    if (menuConfig.options.showCustomOrders) {
+        menuOptions.push(`*${optionNumber})* 📦 Pedidos por encargo (${productTypePlural}, eventos y grandes cantidades)`);
+        optionNumber++;
+    }
+    
+    if (menuConfig.options.showLocation) {
+        menuOptions.push(`*${optionNumber})* 📍 Dirección y horarios`);
+        optionNumber++;
+    }
+    
     const welcomeMessage = `Holiii ☺️
-¿Cómo estás? Somos Mundo Helados en Riohacha 🍦
+${envConfig.messages.render(envConfig.messages.templates.greeting)}
 
-*1)* 🛍️ Ver nuestro menú y hacer un pedido
-*2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
-*3)* 📍 Dirección y horarios
+${menuOptions.join('\n')}
 
 ✨ Escribe solo el número de la opción (1, 2 o 3).
 Si te equivocas, no pasa nada 💛`;

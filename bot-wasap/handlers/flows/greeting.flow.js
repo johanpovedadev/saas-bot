@@ -4,6 +4,7 @@ const { say } = require('../../services/bot_core');
 const sessionService = require('../../services/sessionService');
 const { logger } = require('../../utils/logger');
 const { handleGreeting: detectGreeting } = require('../../utils/greetings');
+const envConfig = require('../../config/env.loader');
 
 /**
  * Detecta si el texto es un saludo o comando de inicio
@@ -49,12 +50,31 @@ async function handle(sock, jid, text, userSession, ctx) {
  * @param {Object} ctx - Contexto global
  */
 async function sendMainMenu(sock, jid, ctx) {
+    // Usar configuración genérica desde .env
+    const menuConfig = envConfig.menu;
+    let menuOptions = [];
+    let optionNumber = 1;
+    
+    if (menuConfig.options.showProducts) {
+        menuOptions.push(`*${optionNumber})* 🛍️ Ver nuestro menú y hacer un pedido`);
+        optionNumber++;
+    }
+    
+    if (menuConfig.options.showCustomOrders) {
+        const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+        menuOptions.push(`*${optionNumber})* 📦 Pedidos por encargo (${productTypePlural}, eventos y grandes cantidades)`);
+        optionNumber++;
+    }
+    
+    if (menuConfig.options.showLocation) {
+        menuOptions.push(`*${optionNumber})* 📍 Dirección y horarios`);
+        optionNumber++;
+    }
+    
     const welcomeMessage = `Holiii ☺️
-¿Cómo estás? Somos Mundo Helados en Riohacha 🍦
+${envConfig.messages.render(envConfig.messages.templates.greeting)}
 
-*1)* 🛍️ Ver nuestro menú y hacer un pedido
-*2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
-*3)* 📍 Dirección y horarios
+${menuOptions.join('\n')}
 
 ✨ Escribe solo el número de la opción (1, 2 o 3).
 Si te equivocas, no pasa nada 💛`;
@@ -82,33 +102,48 @@ async function handleMenuSelection(sock, jid, text, userSession, ctx) {
     }
     
     if (option === '2') {
-        // Encargos especiales
+        // Encargos especiales - usar plantilla genérica
         userSession.phase = PHASE.ENCARGO;
-        await say(sock, jid, `📦 Perfecto! Para encargos especiales (litros, eventos, grandes cantidades), cuéntame qué necesitas.
+        const emoji = envConfig.ui.emoji.main || '📦';
+        const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+        const itemPrimarySingular = envConfig.nomenclature.itemPrimarySingular || 'item';
+        const customOrderExamples = envConfig.messages.render(envConfig.messages.templates.customOrderExamples);
+        
+        await say(sock, jid, `${emoji} Perfecto! Para encargos especiales (${productTypePlural}, eventos, grandes cantidades), cuéntame qué necesitas.
 
-Ejemplos:
-• "2 litros de helado de fresa"
-• "Helado para evento de 50 personas"
-• "10 cajas de helado variado"
+${customOrderExamples}
 
 Escribe tu encargo y te ayudaré con gusto 😊`, ctx);
         return;
     }
     
     if (option === '3') {
-        // Información de ubicación y horarios
-        await say(sock, jid, `📍 **Heladería Mundo Helados**
-
-🏠 Dirección: Riohacha, La Guajira
-
-⏰ Horarios:
-• Lunes a Viernes: 9:00 AM - 8:00 PM
-• Sábados: 10:00 AM - 9:00 PM
-• Domingos: 11:00 AM - 7:00 PM
-
-📞 Contáctanos para más información
-
-¿Deseas hacer un pedido? Escribe *menú* para volver a las opciones.`, ctx);
+        // Información de ubicación y horarios - usar configuración genérica
+        const businessName = envConfig.business.name || 'Negocio';
+        const address = envConfig.business.location.address || '';
+        const city = envConfig.business.location.city || '';
+        const hours = envConfig.business.hours.weekday 
+            ? `• Lunes a Viernes: ${envConfig.business.hours.weekday.open} - ${envConfig.business.hours.weekday.close}\n• Sábados: ${envConfig.business.hours.weekend.open} - ${envConfig.business.hours.weekend.close}\n• Domingos: ${envConfig.business.hours.weekend.open} - ${envConfig.business.hours.weekend.close}`
+            : '';
+        const phone = envConfig.business.contact.phone || '';
+        
+        let locationText = `📍 **${businessName}**\n\n`;
+        
+        if (address || city) {
+            locationText += `🏠 Dirección: ${address ? address : ''}${city ? (address ? ', ' : '') + city : ''}\n\n`;
+        }
+        
+        if (hours) {
+            locationText += `⏰ Horarios:\n${hours}\n\n`;
+        }
+        
+        if (phone) {
+            locationText += `📞 Contáctanos: ${phone}\n\n`;
+        }
+        
+        locationText += `¿Deseas hacer un pedido? Escribe *menú* para volver a las opciones.`;
+        
+        await say(sock, jid, locationText, ctx);
         return;
     }
     

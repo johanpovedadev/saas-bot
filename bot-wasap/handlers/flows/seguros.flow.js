@@ -64,21 +64,21 @@ async function showWelcome(sock, jid, ctx) {
 }
 
 async function handleSaludo(sock, jid, t, userSession, ctx) {
-    userSession.errorCount = 0;
-
     if (t === '1' || t.includes('perro')) {
+        userSession.errorCount = 0;
         userSession.phase = PHASE.INS_FLUJO_PERRO;
         userSession.tipoMascota = 'perro';
         return await handleFlujoPerro(sock, jid, t, userSession, ctx);
     }
 
     if (t === '2' || t.includes('gato')) {
+        userSession.errorCount = 0;
         userSession.phase = PHASE.INS_FLUJO_GATO;
         userSession.tipoMascota = 'gato';
         return await handleFlujoGato(sock, jid, t, userSession, ctx);
     }
 
-    userSession.errorCount++;
+    userSession.errorCount = (userSession.errorCount || 0) + 1;
     await say(sock, jid, `❌ Opción no válida
 
 Por favor selecciona una opción del menú.
@@ -643,5 +643,9 @@ module.exports = {
     handle,
     handleUnknown,
     showWelcome,
-    INSURANCE_PHASES
+    INSURANCE_PHASES,
+    // Interfaz estándar para flowRegistry
+    getInitialPhase: () => PHASE.INS_SALUDO,
+    isFlowPhase: (phase) => typeof phase === 'string' && phase.toLowerCase().startsWith('ins_'),
+    getPhases: () => INSURANCE_PHASES
 };

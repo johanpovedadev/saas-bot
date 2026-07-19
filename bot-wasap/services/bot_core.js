@@ -244,6 +244,11 @@ async function say(sock, jid, text, ctx) {
     } catch (error) {
         logger.error(`Error al enviar mensaje a ${jid}: ${error.message}`);
         console.error(`[ERROR] No se pudo enviar mensaje a ${jid}: ${error.message}`);
+        if (error.message && (error.message.includes('detached') || error.message.includes('Execution context was destroyed'))) {
+            logger.error('FATAL: Frame detached - reiniciando proceso');
+            console.error('[FATAL] Frame detached - reiniciando proceso...');
+            process.exit(0);
+        }
     }
 }
 

@@ -24,5 +24,8 @@ config.secrets.js
 *.pem
 *.key
 
+# SQLite local databases
+data/
+
 # Otros
 node_modules/

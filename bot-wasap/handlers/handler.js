@@ -49,10 +49,13 @@ const checkoutHandler = require('./checkoutHandler');
 const sessionService = require('../services/sessionService');
 const { isGreeting } = require('../config/greetings/greetings.colombia');
 const envConfig = require('../config/env.loader');
+const flowRegistry = require('./flowRegistry');
 
-// Detectar si es flujo de seguros mascotas
-const IS_INSURANCE = envConfig.business?.industry === 'insurance' ||
-                     envConfig.bot?.insuranceFlow?.enabled === true;
+function getCurrentFlow() {
+    return flowRegistry.getFlow(envConfig.business?.type) ||
+           flowRegistry.getFlow(process.env.BUSINESS_KEY) ||
+           null;
+}
 
 // ===================================
 // SESSION INITIALIZATION
@@ -203,13 +206,13 @@ async function processIncomingMessage(sock, messageData, ctx) {
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
         if (!userSession.phase || !Object.values(PHASE).includes(userSession.phase)) {
-            const fallbackPhase = IS_INSURANCE ? PHASE.INS_SALUDO : PHASE.SELECCION_OPCION;
+            const currentFlow = getCurrentFlow();
+            const fallbackPhase = currentFlow ? currentFlow.getInitialPhase() : PHASE.SELECCION_OPCION;
             logger.warn(`[${jid}] ⚠️ Fase indefinida o inválida: "${userSession.phase}". Reiniciando a ${fallbackPhase}.`);
             userSession.phase = fallbackPhase;
             userSession.errorCount = 0;
-            if (IS_INSURANCE) {
-                const segurosFlow = require('./flows/seguros.flow');
-                await segurosFlow.showWelcome(sock, jid, ctx);
+            if (currentFlow) {
+                await currentFlow.showWelcome(sock, jid, ctx);
             } else {
                 await menuHandler.sendMainMenu(sock, jid, ctx);
             }
@@ -229,14 +232,20 @@ async function processIncomingMessage(sock, messageData, ctx) {
         logger.debug(`[${jid}] Verificando saludo: "${text}" -> ${greetingDetected}`);
         
         if (greetingDetected) {
-            if (IS_INSURANCE) {
-                const segurosFlow = require('./flows/seguros.flow');
-                userSession.phase = PHASE.INS_SALUDO;
-                await segurosFlow.showWelcome(sock, jid, ctx);
+            const currentFlow = getCurrentFlow();
+            if (currentFlow && currentFlow.isFlowPhase(userSession.phase)) {
+                // Ya estamos en medio de un flow conversacional (finance, seguros, etc.)
+                // No interceptar — dejar que el flow procese el mensaje
+                logger.debug(`[${jid}] Saludo ignorado: ya en fase de flow (${userSession.phase})`);
             } else {
-                await greetingsHandler.handleGreeting(sock, jid, userSession, ctx);
+                if (currentFlow) {
+                    userSession.phase = currentFlow.getInitialPhase();
+                    await currentFlow.showWelcome(sock, jid, ctx);
+                } else {
+                    await greetingsHandler.handleGreeting(sock, jid, userSession, ctx);
+                }
+                return;
             }
-            return;
         }
         
         // 8. Manejar campos pendientes (awaitingField)
@@ -395,47 +404,43 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
             break;
 
         // ===================================
-        // 🐾 FASES: FLUJO SEGURO MASCOTAS
-        // ===================================
-        case PHASE.INS_SALUDO:
-        case PHASE.INS_FLUJO_GATO:
-        case PHASE.INS_FLUJO_PERRO:
-        case PHASE.INS_FLUJO_PERRO_PREMIUM:
-        case PHASE.INS_DATOS_TITULAR:
-        case PHASE.INS_DATOS_MASCOTA:
-        case PHASE.INS_CONFIRMACION:
-        case PHASE.INS_RECHAZO:
-        case PHASE.INS_FINAL: {
-            const segurosFlow = require('./flows/seguros.flow');
-            await segurosFlow.handle(sock, jid, text, userSession, ctx);
-            break;
-        }
-
-        // ===================================
         // FASE: ESPERANDO ATENCIÓN HUMANA
         // Siguiente: Requiere intervención de admin
         // ===================================
         case PHASE.WAITING_HUMAN:
             logger.info(`[${jid}] Usuario esperando atención humana. Mensaje: "${text.substring(0, 50)}..."`);
-            // No hacer nada, el mensaje se logea para el admin
+            // Reenviar mensaje del cliente a los admins sistema
+            try {
+                const notificationService = require('../services/notificationService');
+                await notificationService.notifySystemAlert(sock, ctx, '💬', `MENSAJE DE CLIENTE EN ESPERA`,
+                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`
+                );
+            } catch (_) {}
             break;
 
         // ===================================
-        // FASE DESCONOCIDA O INVÁLIDA
+        // FASE: FLUJO DE NEGOCIO (plugin)
+        // Se delega al flow registrado según business_type
         // ===================================
-        default:
+        default: {
+            const currentFlow = getCurrentFlow();
+            if (currentFlow && currentFlow.isFlowPhase(phase)) {
+                await currentFlow.handle(sock, jid, text, userSession, ctx);
+                break;
+            }
             logger.error(`[${jid}] ❌ Fase desconocida o no manejada: "${phase}"`);
-            if (IS_INSURANCE) {
-                userSession.phase = PHASE.INS_SALUDO;
+            if (currentFlow) {
+                userSession.phase = currentFlow.getInitialPhase();
                 userSession.errorCount = 0;
-                const segurosFlow = require('./flows/seguros.flow');
-                await segurosFlow.showWelcome(sock, jid, ctx);
+                await currentFlow.showWelcome(sock, jid, ctx);
             } else {
                 userSession.phase = PHASE.SELECCION_OPCION;
                 userSession.errorCount = 0;
                 await menuHandler.sendMainMenu(sock, jid, ctx);
             }
-            break;    }
+            break;
+        }
+    }
     
     // Log de transición de fase
     logger.debug(`[${jid}] 📍 Fase después del handler: ${userSession.phase}`);

@@ -40,7 +40,13 @@ const PHASE = {
     INS_DATOS_MASCOTA: 'ins_datos_mascota',     // Recolectar datos de la mascota
     INS_CONFIRMACION: 'ins_confirmacion',       // Confirmar datos
     INS_RECHAZO: 'ins_rechazo',                 // Rechazo por edad >12 años
-    INS_FINAL: 'ins_final'                       // Finalización
+    INS_FINAL: 'ins_final',                       // Finalización
+
+    // ===================================
+    // 🦁 FASES FLUJO FINANCE LION AI (conversacional)
+    // ===================================
+    FIN_ONBOARDING: 'fin_onboarding',
+    FIN_MAIN: 'fin_main'
 };
 
 module.exports = PHASE;

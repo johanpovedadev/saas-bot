@@ -102,6 +102,7 @@ try {
                 itemSecondarySingular: raw.item_secondary_singular || ''
             },
             bot: {
+                flowModule: raw.flow_module || '',
                 welcomeMessage: raw.welcome_message || '',
                 mainMenu: raw.main_menu || null,
                 insuranceFlow: {
