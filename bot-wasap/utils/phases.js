@@ -47,6 +47,7 @@ const PHASE = {
     // ===================================
     FIN_ONBOARDING: 'fin_onboarding',
     FIN_DIAGNOSTIC: 'fin_diagnostic',
+    FIN_GOALS: 'fin_goals',
     FIN_CHECKIN: 'fin_checkin',
     FIN_MAIN: 'fin_main'
 };

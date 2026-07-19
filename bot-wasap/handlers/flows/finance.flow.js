@@ -6,7 +6,7 @@ const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
 
-const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
+const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
 const CONFIRM_VARIANTS = [
     'Anotado 🦁 Vamos sumando.',
@@ -32,7 +32,13 @@ function initFinance(userSession) {
             trialLastShown: 0,
             diagnosticAnswer: 0,
             firstTransactionDone: false,
-            lastCheckinDate: ''
+            lastCheckinDate: '',
+            goalName: '',
+            goalTarget: 0,
+            goalStep: 0,
+            goalTempName: '',
+            notifiedNewFeatures: false,
+            lastReportDate: ''
         };
     }
     const today = new Date().toDateString();
@@ -81,6 +87,11 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Check-in for returning users
     if (userSession.phase === PHASE.FIN_CHECKIN) {
         return await handleCheckin(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Goals setup
+    if (userSession.phase === PHASE.FIN_GOALS) {
+        return await handleGoals(sock, jid, t, userSession, ctx, fin);
     }
 
     // Onboarding
@@ -150,16 +161,69 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     fin.lastCheckinDate = new Date().toDateString();
     userSession.phase = PHASE.FIN_MAIN;
     const txCount = fin.transactions.length;
+    const goalLine = fin.goalName && fin.goalTarget
+        ? `🎯 Avance de meta "${fin.goalName}": $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}\n`
+        : '';
     await say(sock, jid,
         `🦁 ¡Qué bueno verte de nuevo, *${fin.name}*!\n\n` +
         (txCount > 0
             ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
-              `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n` +
+              `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n` +
+              goalLine +
+              `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n` +
               `¿Querés seguir registrando, ver tu resumen o hablar de metas?`
             : `Todavía no has registrado nada. Podés empezar cuando quieras:\n\n` +
               `_"Gasté 15 mil en desayuno"_\n` +
               `_"Recibí 500 mil de freelance"_`),
         ctx);
+}
+
+async function handleGoals(sock, jid, text, userSession, ctx, fin) {
+    const t = text.trim();
+    const step = fin.goalStep || 0;
+
+    if (step === 0) {
+        // User responded with goal name
+        fin.goalTempName = t;
+        fin.goalStep = 1;
+        await say(sock, jid,
+            `🦁 *${t}* — ¡excelente meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
+            `Decime el monto, por ejemplo: "2 millones" o "500 mil"`,
+            ctx);
+    } else if (step === 1) {
+        // User responded with amount
+        const amountMatch = t.match(/([\d.]+)\s*(?:millones|millon|mil|k)?/i);
+        if (amountMatch) {
+            let val = parseFloat(amountMatch[1].replace(/\./g, ''));
+            if (/\bmillon(?:es)?\b/i.test(t)) val *= 1000000;
+            else if (/\b(mil|k)\b/i.test(t)) val *= 1000;
+            if (val > 0) {
+                fin.goalName = fin.goalTempName;
+                fin.goalTarget = val;
+                fin.goalStep = 0;
+                fin.goalTempName = '';
+                userSession.phase = PHASE.FIN_MAIN;
+                financeStore.saveFinance(jid, fin);
+                // #8 — racha for setting goal too
+                const today = new Date().toDateString();
+                if (fin.lastStreakDate !== today) {
+                    const yesterday = new Date(Date.now() - 86400000).toDateString();
+                    fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
+                    fin.lastStreakDate = today;
+                }
+                await say(sock, jid,
+                    `🎯 *Meta guardada!* Vas a ahorrar $${val.toLocaleString('es-CO')} para "${fin.goalName}".\n\n` +
+                    `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
+                    `Podés registrar tu primer movimiento:\n` +
+                    `_"Gasté 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
+                    ctx);
+                return;
+            }
+        }
+        await say(sock, jid,
+            `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"`,
+            ctx);
+    }
 }
 
 async function handleConversation(sock, jid, text, userSession, ctx, fin) {
@@ -212,6 +276,8 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'help':
         case 'upgrade':
         case 'goals':
+            userSession.phase = PHASE.FIN_GOALS;
+            fin.goalStep = 0;
             await say(sock, jid, result.response, ctx);
             break;
 
@@ -329,8 +395,18 @@ async function showWelcome(sock, jid, ctx) {
             userSession.phase = PHASE.FIN_CHECKIN;
         }
         const txCount = fin.transactions.length;
+        const notif = fin.notifiedNewFeatures ? '' :
+            `\n━━━━━━━━━━━━━━━━━━━\n` +
+            `🦁 *¡Nuevo!* Ahora podés:\n` +
+            `• 🎯 *Crear metas de ahorro* — decime "metas"\n` +
+            `• 📊 *Resumen con avance* de tu meta\n` +
+            `• 🔥 *Racha de días* registrando\n` +
+            `• 💬 *Mensajes más claros* y motivación diaria\n\n` +
+            `Empezá hoy tu meta diciendo "metas" 🦁\n` +
+            `━━━━━━━━━━━━━━━━━━━\n\n`;
+        fin.notifiedNewFeatures = true;
         await say(sock, jid,
-            `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.\n\n` +
+            `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.${notif}` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
                   `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n` +
@@ -363,6 +439,62 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
             `¿Cómo te llamo?`,
             ctx);
     }
+}
+
+/**
+ * Genera el informe nocturno para un usuario y lo envía.
+ * Llamar desde un scheduler externo o setInterval entre 7-8 PM.
+ */
+async function generateNightReport(sock, jid, fin, ctx) {
+    if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
+    const today = new Date().toDateString();
+    const todayTx = fin.transactions.filter(t => t.date === today);
+    const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const goalLine = fin.goalName && fin.goalTarget
+        ? `🎯 Para tu meta "${fin.goalName}": $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')} (${Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100))}%)\n`
+        : '';
+    const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
+
+    await say(sock, jid,
+        `🦁 *Informe de la noche, ${fin.name}*\n\n` +
+        `📊 *Hoy con Leo:*\n` +
+        `💸 Gastaste: $${todayExpense.toLocaleString('es-CO')}\n` +
+        `💰 Te entró: $${todayIncome.toLocaleString('es-CO')}\n` +
+        (todayIncome - todayExpense !== 0
+            ? `📈 Balance del día: $${(todayIncome - todayExpense).toLocaleString('es-CO')}\n`
+            : '') +
+        `💵 Saldo total: $${(fin.balance || 0).toLocaleString('es-CO')}\n` +
+        streakLine +
+        goalLine +
+        `\nVas bien, seguí contándome 🦁`,
+        ctx);
+}
+
+const NIGHT_REPORT_INTERVAL = null; // Set externally
+
+function startNightReporter(sock, ctx) {
+    // Check every 15 minutes if it's 7-8 PM
+    const CHECK_INTERVAL = 15 * 60 * 1000; // 15 min
+    setInterval(() => {
+        const hour = new Date().getHours();
+        if (hour >= 19 && hour < 20) {
+            const store = ctx?.sessions;
+            if (!store) return;
+            for (const [jid, session] of Object.entries(store)) {
+                const fin = session?.finance;
+                if (fin?.name && fin.transactions?.length > 0) {
+                    const reportDate = fin.lastReportDate || '';
+                    const today = new Date().toDateString();
+                    if (reportDate !== today) {
+                        generateNightReport(sock, jid, fin, ctx);
+                        fin.lastReportDate = today;
+                        financeStore.saveFinance(jid, fin);
+                    }
+                }
+            }
+        }
+    }, CHECK_INTERVAL);
 }
 
 module.exports = {
@@ -402,6 +534,8 @@ module.exports = {
     handle,
     handleUnknown,
     showWelcome,
+    generateNightReport,
+    startNightReporter,
     getInitialPhase: () => PHASE.FIN_ONBOARDING,
     isFlowPhase: (phase) => typeof phase === 'string' && phase.toLowerCase().startsWith('fin_'),
     getPhases: () => FIN_PHASES

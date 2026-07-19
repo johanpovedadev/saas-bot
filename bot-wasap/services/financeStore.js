@@ -29,10 +29,13 @@ function getDb() {
                 trial_start INTEGER NOT NULL DEFAULT 0,
                 is_premium INTEGER NOT NULL DEFAULT 0,
                 transactions TEXT NOT NULL DEFAULT '[]',
+                extra TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+        // Migrate: add extra column if missing
+        try { db.exec('ALTER TABLE finance_users ADD COLUMN extra TEXT NOT NULL DEFAULT \'{}\''); } catch (e) {}
         logger.info(`financeStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -43,6 +46,7 @@ function getDb() {
 
 function rowToFinance(row) {
     if (!row) return null;
+    const extra = JSON.parse(row.extra || '{}');
     return {
         name: row.name || '',
         balance: row.balance || 0,
@@ -51,7 +55,19 @@ function rowToFinance(row) {
         trialStart: row.trial_start || 0,
         isPremium: !!row.is_premium,
         transactions: JSON.parse(row.transactions || '[]'),
-        pendingConfirm: null
+        pendingConfirm: null,
+        streak: extra.streak || 0,
+        lastStreakDate: extra.lastStreakDate || '',
+        trialLastShown: extra.trialLastShown || 0,
+        diagnosticAnswer: extra.diagnosticAnswer || 0,
+        firstTransactionDone: extra.firstTransactionDone || false,
+        lastCheckinDate: extra.lastCheckinDate || '',
+        goalName: extra.goalName || '',
+        goalTarget: extra.goalTarget || 0,
+        goalStep: extra.goalStep || 0,
+        goalTempName: extra.goalTempName || '',
+        notifiedNewFeatures: extra.notifiedNewFeatures || false,
+        lastReportDate: extra.lastReportDate || ''
     };
 }
 
@@ -64,7 +80,21 @@ function financeToRow(jid, fin) {
         last_reset_date: fin.lastResetDate || '',
         trial_start: fin.trialStart || 0,
         is_premium: fin.isPremium ? 1 : 0,
-        transactions: JSON.stringify(fin.transactions || [])
+        transactions: JSON.stringify(fin.transactions || []),
+        extra: JSON.stringify({
+            streak: fin.streak || 0,
+            lastStreakDate: fin.lastStreakDate || '',
+            trialLastShown: fin.trialLastShown || 0,
+            diagnosticAnswer: fin.diagnosticAnswer || 0,
+            firstTransactionDone: fin.firstTransactionDone || false,
+            lastCheckinDate: fin.lastCheckinDate || '',
+            goalName: fin.goalName || '',
+            goalTarget: fin.goalTarget || 0,
+            goalStep: fin.goalStep || 0,
+            goalTempName: fin.goalTempName || '',
+            notifiedNewFeatures: fin.notifiedNewFeatures || false,
+            lastReportDate: fin.lastReportDate || ''
+        })
     };
 }
 
@@ -86,8 +116,8 @@ function saveFinance(jid, fin) {
         if (!d || !jid || !fin) return false;
         const row = financeToRow(jid, fin);
         d.prepare(`
-            INSERT INTO finance_users (jid, name, balance, today_spending, last_reset_date, trial_start, is_premium, transactions, updated_at)
-            VALUES (@jid, @name, @balance, @today_spending, @last_reset_date, @trial_start, @is_premium, @transactions, datetime('now'))
+            INSERT INTO finance_users (jid, name, balance, today_spending, last_reset_date, trial_start, is_premium, transactions, extra, updated_at)
+            VALUES (@jid, @name, @balance, @today_spending, @last_reset_date, @trial_start, @is_premium, @transactions, @extra, datetime('now'))
             ON CONFLICT(jid) DO UPDATE SET
                 name = excluded.name,
                 balance = excluded.balance,
@@ -96,6 +126,7 @@ function saveFinance(jid, fin) {
                 trial_start = excluded.trial_start,
                 is_premium = excluded.is_premium,
                 transactions = excluded.transactions,
+                extra = excluded.extra,
                 updated_at = excluded.updated_at
         `).run(row);
         return true;

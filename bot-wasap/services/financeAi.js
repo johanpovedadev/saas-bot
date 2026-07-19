@@ -295,19 +295,32 @@ function fallbackInterpret(message, userSession) {
         }
     }
 
+    // Meta detection (separate from query)
+    if (/\bmeta(s| financiera)?\b/i.test(t)) {
+        return {
+            intent: 'goals',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: `🎯 ¡Excelente que pienses en metas, ${name}! Decime: ¿para qué querés ahorrar? (ej: "un viaje", "un carro", "emergencias")`
+        };
+    }
+
     // Query patterns: "cuanto tengo", "saldo", "resumen diario", "como voy", etc.
     if (/cuanto\s+(tengo|gaste|dinero|plata|saldo|hay|gasto)/i.test(t) || /\bsaldo\b/i.test(t) ||
-        /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t) ||
-        /\bmeta(s| financiera)?\b/i.test(t)) {
+        /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t)) {
         const balance = fin.balance || 0;
         const today = fin.todaySpending || 0;
+        const goal = fin.goalName && fin.goalTarget ? fin.goalTarget : null;
+        const goalLine = goal
+            ? `🎯 Meta: ${fin.goalName} — $${(fin.balance || 0).toLocaleString('es-CO')} de $${goal.toLocaleString('es-CO')} (${Math.min(100, Math.round((fin.balance || 0) / goal * 100))}%)\n`
+            : `💡 ¿Ya tenés una meta de ahorro? Decime "metas" y la creamos juntos 🦁\n`;
         return {
             intent: 'query',
             amount: 0,
             category: '',
             description: '',
             needs_confirmation: false,
-            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: $${balance.toLocaleString('es-CO')}\n💸 Gastado hoy: $${today.toLocaleString('es-CO')}\n📈 Transacciones: ${(fin.transactions || []).length}\n\n¿Necesitas algo más?`
+            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: $${balance.toLocaleString('es-CO')}\n💸 Gastado hoy: $${today.toLocaleString('es-CO')}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
         };
     }
 
