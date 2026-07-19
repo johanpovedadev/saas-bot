@@ -147,6 +147,46 @@ function cleanDescription(rawDesc, amount) {
     return d.substring(0, 50);
 }
 
+const CATEGORY_KEYWORDS = {
+    'Transporte': ['didi', 'uber', 'transporte', 'gasolina', 'bus', 'taxi', 'mototaxi', 'colectivo', 'combustible', 'pasaje', 'peaje', 'parqueadero', 'estacionamiento'],
+    'Comida': ['almuerzo', 'pizza', 'cafe', 'capuchino', 'tinto', 'comida', 'desayuno', 'cena', 'mercado', 'restaurante', 'hamburguesa', 'perro', 'salchipapa', 'gaseosa', 'bebida', 'helado', 'mecato', 'lonche', 'pan', 'arepa', 'empanada', 'sandwich'],
+    'Servicios': ['arreglo', 'reparacion', 'celular', 'mantenimiento', 'taller', 'mecanico', 'tecnico', 'instalacion', 'service'],
+    'Salud': ['medico', 'medicina', 'farmacia', 'drogueria', 'hospital', 'clinica', 'cita', 'odontologo', 'examen', 'cirugia'],
+    'Educacion': ['curso', 'clase', 'universidad', 'colegio', 'estudio', 'libro', 'mensualidad', 'matricula'],
+    'Vivienda': ['arriendo', 'renta', 'agua', 'luz', 'energia', 'gas', 'internet', 'servicios'],
+    'Ropa': ['ropa', 'zapatos', 'vestido', 'camisa', 'pantalon', 'tenis', 'accesorio'],
+    'Entretenimiento': ['cine', 'teatro', 'concierto', 'fiesta', 'juego', 'suscripcion', 'netflix', 'spotify', 'streaming'],
+    'Ahorro': ['ahorro', 'ahorros', 'alcancia', 'inversion']
+};
+
+const INCOME_CATEGORY_KEYWORDS = {
+    'Salario': ['sueldo', 'salario', 'nomina', 'pago mensual'],
+    'Freelance': ['freelance', 'trabajo', 'contrato', 'proyecto'],
+    'Ventas': ['venta', 'ventas', 'domicilio', 'servicio prestado', 'comision', 'propina'],
+    'Inversion': ['inversion', 'interes', 'dividendo', 'ganancia'],
+    'Otros': []
+};
+
+function categorizeExpense(desc) {
+    const t = desc.toLowerCase();
+    for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+        for (const kw of keywords) {
+            if (t.includes(kw)) return cat;
+        }
+    }
+    return 'Otros';
+}
+
+function categorizeIncome(desc) {
+    const t = desc.toLowerCase();
+    for (const [cat, keywords] of Object.entries(INCOME_CATEGORY_KEYWORDS)) {
+        for (const kw of keywords) {
+            if (t.includes(kw)) return cat;
+        }
+    }
+    return 'Otros';
+}
+
 function parseAmount(text) {
     // "18 mil" -> 18000, "18k" -> 18000, "18.000" -> 18000
     // "2 millones" -> 2000000, "1.5 millones" -> 1500000
@@ -204,7 +244,7 @@ function fallbackInterpret(message, userSession) {
             return {
                 intent: 'register_expense',
                 amount,
-                category: 'Otros',
+                category: categorizeExpense(desc),
                 description: desc,
                 needs_confirmation: true,
                 response: `📝 *Registrado:* $${amount.toLocaleString('es-CO')} en ${desc}\n\n¿Es correcto? (sí/no)`
@@ -223,7 +263,7 @@ function fallbackInterpret(message, userSession) {
             return {
                 intent: 'register_income',
                 amount,
-                category: 'Salario',
+                category: categorizeIncome(desc),
                 description: desc,
                 needs_confirmation: true,
                 response: `💰 *Registrado:* $${amount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
@@ -245,7 +285,7 @@ function fallbackInterpret(message, userSession) {
             return {
                 intent: isIncome ? 'register_income' : 'register_expense',
                 amount: anyAmount,
-                category: isIncome ? 'Salario' : 'Otros',
+                category: isIncome ? categorizeIncome(desc) : categorizeExpense(desc),
                 description: desc,
                 needs_confirmation: true,
                 response: isIncome
