@@ -6,7 +6,7 @@ const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
 
-const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
+const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
 const CONFIRM_VARIANTS = [
     'Anotado 🦁 Vamos sumando.',
@@ -84,6 +84,11 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleDiagnostic(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Goal onboarding (after diagnostic, before main)
+    if (userSession.phase === PHASE.FIN_GOAL_ONBOARDING) {
+        return await handleGoalOnboarding(sock, jid, t, userSession, ctx, fin);
+    }
+
     // Check-in for returning users
     if (userSession.phase === PHASE.FIN_CHECKIN) {
         return await handleCheckin(sock, jid, t, userSession, ctx, fin);
@@ -140,21 +145,43 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
     if (option >= 1 && option <= 4) {
         fin.diagnosticAnswer = option;
         financeStore.saveFinance(jid, fin);
-        userSession.phase = PHASE.FIN_MAIN;
+        userSession.phase = PHASE.FIN_GOAL_ONBOARDING;
         await say(sock, jid,
             `Uff, "${answers[option]}" — le pasa a 8 de cada 10 colombianos, no estás solo 🦁\n\n` +
             `No es que ganés poco, es que nadie te ha ayudado a verlo claro. Yo sí voy a estar aquí.\n\n` +
-            `Podés empezar con frases como:\n\n` +
-            `_"Gasté 18 mil en almuerzo"_\n` +
-            `_"Recibí 2 millones de sueldo"_\n` +
-            `_"¿Cuánto tengo?"_\n\n` +
-            `¿Qué querés registrar hoy?`,
+            `🦁 Última cosa antes de arrancar: ¿pa' qué te gustaría ahorrar? (un viaje, salir de una deuda, lo que sea — contame corto)`,
             ctx);
     } else {
         await say(sock, jid,
             `Escribí el número de la opción que más te describa (1, 2, 3 o 4) 🦁`,
             ctx);
     }
+}
+
+async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
+    const t = text.trim();
+    fin.goalName = t;
+    userSession.phase = PHASE.FIN_MAIN;
+    // Try to extract amount from response (e.g. "viaje 2 millones")
+    const amount = t.match(/([\d.]+)\s*(?:millones|millon|mil|k)/i);
+    if (amount) {
+        let val = parseFloat(amount[1].replace(/\./g, ''));
+        if (/\bmillon(?:es)?\b/i.test(t)) val *= 1000000;
+        else if (/\b(mil|k)\b/i.test(t)) val *= 1000;
+        fin.goalTarget = val;
+    }
+    financeStore.saveFinance(jid, fin);
+    await say(sock, jid,
+        `🦁 *${fin.goalName}* — ¡me gusta esa meta! ` +
+        (fin.goalTarget > 0
+            ? `Vamos a trabajar para juntar $${fin.goalTarget.toLocaleString('es-CO')}. Paso a paso.\n\n`
+            : `Cuando quieras decime cuánta plata necesitás y te ayudo a hacer el plan.\n\n`) +
+        `Podés empezar con frases como:\n\n` +
+        `_"Gasté 18 mil en almuerzo"_\n` +
+        `_"Recibí 2 millones de sueldo"_\n` +
+        `_"¿Cuánto tengo?"_\n\n` +
+        `¿Qué querés registrar hoy?`,
+        ctx);
 }
 
 async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
@@ -275,6 +302,10 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'chat':
         case 'help':
         case 'upgrade':
+        case 'goal_query':
+            await say(sock, jid, result.response, ctx);
+            break;
+
         case 'goals':
             userSession.phase = PHASE.FIN_GOALS;
             fin.goalStep = 0;
@@ -451,8 +482,13 @@ async function generateNightReport(sock, jid, fin, ctx) {
     const todayTx = fin.transactions.filter(t => t.date === today);
     const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const goalLine = fin.goalName && fin.goalTarget
-        ? `🎯 Para tu meta "${fin.goalName}": $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')} (${Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100))}%)\n`
+    const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
+    const filled = Math.round(pct / 10);
+    const empty = 10 - filled;
+    const goalLine = fin.goalName
+        ? (fin.goalTarget > 0
+            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}\n`
+            : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
 
@@ -500,9 +536,9 @@ function startNightReporter(sock, ctx) {
 module.exports = {
     config: {
         business: {
-            id: 'FINANCE_LION',
-            name: 'LION AI FINANCE',
-            shortName: 'LION Finance',
+            id: 'FINANCE_LEO',
+            name: 'LEO FINANCIERO',
+            shortName: 'Leo',
             type: 'finance',
             industry: 'financial-services',
             timezone: 'America/Bogota',
@@ -511,8 +547,8 @@ module.exports = {
         contact: {
             phone: '+57 300 000 0000',
             whatsapp: '+573000000000',
-            email: 'contacto@lion-ai.com',
-            website: 'https://lion-ai.com'
+            email: 'contacto@leo-financiero.com',
+            website: 'https://leo-financiero.com'
         },
         bot: {
             welcomeMessage: `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas. ¿Cómo te llamo?`,

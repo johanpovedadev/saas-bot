@@ -216,6 +216,14 @@ function parseAmount(text) {
     return 0;
 }
 
+function goalProgressBar(current, target) {
+    if (!target || target <= 0) return '';
+    const pct = Math.min(100, Math.round((current / target) * 100));
+    const filled = Math.round(pct / 10);
+    const empty = 10 - filled;
+    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — llevás $${current.toLocaleString('es-CO')} de $${target.toLocaleString('es-CO')}`;
+}
+
 function fallbackInterpret(message, userSession) {
     const t = stripAccents(message.toLowerCase().trim());
     const raw = message.trim(); // original for descriptions
@@ -295,6 +303,21 @@ function fallbackInterpret(message, userSession) {
         }
     }
 
+    // Goal query: "mi meta", "como voy con mi meta", "cuanto me falta"
+    if (/mi meta|como voy con mi meta|cuanto (me falta|falta|voy)|progreso/i.test(t)) {
+        if (fin.goalName) {
+            if (fin.goalTarget > 0) {
+                const bar = goalProgressBar(fin.balance || 0, fin.goalTarget);
+                return { intent: 'goal_query', amount: 0, category: '', description: '', needs_confirmation: false,
+                    response: `🎯 *Meta: ${fin.goalName}*\n${bar}\n\nVas bien, seguí así 🦁` };
+            }
+            return { intent: 'goal_query', amount: 0, category: '', description: '', needs_confirmation: false,
+                response: `🦁 Aún no le pusiste un número a tu meta de "${fin.goalName}". ¿Cuánto te gustaría juntar? Así te muestro cuánto te falta.` };
+        }
+        return { intent: 'goal_query', amount: 0, category: '', description: '', needs_confirmation: false,
+            response: `🦁 Todavía no tenés una meta. Decime "metas" y la creamos juntos.` };
+    }
+
     // Meta detection (separate from query)
     if (/\bmeta(s| financiera)?\b/i.test(t)) {
         return {
@@ -310,9 +333,10 @@ function fallbackInterpret(message, userSession) {
         /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t)) {
         const balance = fin.balance || 0;
         const today = fin.todaySpending || 0;
-        const goal = fin.goalName && fin.goalTarget ? fin.goalTarget : null;
-        const goalLine = goal
-            ? `🎯 Meta: ${fin.goalName} — $${(fin.balance || 0).toLocaleString('es-CO')} de $${goal.toLocaleString('es-CO')} (${Math.min(100, Math.round((fin.balance || 0) / goal * 100))}%)\n`
+        const goalLine = fin.goalName
+            ? (fin.goalTarget > 0
+                ? `🎯 Meta: ${fin.goalName}\n${goalProgressBar(balance, fin.goalTarget)}\n`
+                : `🎯 Meta: ${fin.goalName} (sin monto aún — decime "mi meta" para ponérselo)\n`)
             : `💡 ¿Ya tenés una meta de ahorro? Decime "metas" y la creamos juntos 🦁\n`;
         return {
             intent: 'query',

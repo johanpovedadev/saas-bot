@@ -43,10 +43,11 @@ const PHASE = {
     INS_FINAL: 'ins_final',                       // Finalización
 
     // ===================================
-    // 🦁 FASES FLUJO FINANCE LION AI (conversacional)
+    // 🦁 FASES FLUJO FINANCE LEO (conversacional)
     // ===================================
     FIN_ONBOARDING: 'fin_onboarding',
     FIN_DIAGNOSTIC: 'fin_diagnostic',
+    FIN_GOAL_ONBOARDING: 'fin_goal_onboarding',
     FIN_GOALS: 'fin_goals',
     FIN_CHECKIN: 'fin_checkin',
     FIN_MAIN: 'fin_main'
