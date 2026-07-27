@@ -259,7 +259,7 @@ Domingo: Cerrado
     admin: {
         // JIDs de administradores
         jids: [
-            // '573001234567@s.whatsapp.net'
+            // '573001234567@c.us'
         ],
 
         // Notificaciones

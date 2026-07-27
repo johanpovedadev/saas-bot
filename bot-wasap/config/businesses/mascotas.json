@@ -1,10 +1,11 @@
 {
+  "flow_module": "seguros.flow",
   "business_name": "TE ASEGURAMOS",
   "business_type": "INSURANCE",
   "sheet_id": "1FEd6iC4x31oaKcuAz7rTnWWWOW76G-saKG5l6wV3Wz0",
   "sheet_tab": "LEADS",
-  "business_admin_jids": ["573138777115@c.us", "3138777115@c.us"],
-  "system_admin_jids": ["573138777115@c.us", "3138777115@c.us"],
+  "business_admin_jids": ["573138777115@c.us", "573123814379@c.us", "573203071012@c.us"],
+  "system_admin_jids": ["573138777115@c.us", "573123814379@c.us", "573203071012@c.us"],
   "contact_phone": "+57 313 877 7115",
   "contact_whatsapp": "+573138777115",
   "contact_email": "seguros@mascotas.co",

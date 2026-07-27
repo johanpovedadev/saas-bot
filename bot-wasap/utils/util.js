@@ -1,5 +1,4 @@
 const axios = require('axios');
-const CONFIG = require('../config.json');
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));

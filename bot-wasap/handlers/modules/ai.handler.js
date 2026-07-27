@@ -19,14 +19,14 @@
 const { logger } = require('../../utils/logger');
 const { say, askGemini } = require('../../services/bot_core');
 const PHASE = require('../../utils/phases');
-const SECRETS = require('../../config.secrets');
+const envConfig = require('../../config/env.loader');
 
 /**
  * Valida si la API key de Gemini es válida
  * @returns {Object} { isValid: boolean, key: string|null }
  */
 function isValidGeminiKey() {
-    const geminiKey = SECRETS.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    const geminiKey = envConfig.bot.geminiApiKey || process.env.GEMINI_API_KEY;
     
     const isValid = geminiKey && 
                     geminiKey.trim() !== '' && 
@@ -113,13 +113,41 @@ async function handleMissingGeminiKey(sock, jid, text, userSession, ctx) {
     // PRIMER MENSAJE (errorCount era 0, ahora es 1)
     if (currentErrorCount === 0) {
         logger.info(`[${jid}] -> Primer mensaje del usuario sin Gemini. Enviando menú de bienvenida.`);
+        // Usar configuración genérica desde .env
+        const envConfig = require('../../config/env.loader');
+        const businessName = envConfig.business.name || 'Negocio';
+        const emoji = envConfig.ui.emoji.main || '😊';
+        const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+        const menuConfig = envConfig.menu;
+        
+        // Construir opciones dinámicamente
+        let menuOptions = [];
+        let optionNumber = 1;
+        
+        if (menuConfig.options.showProducts) {
+            menuOptions.push(`*${optionNumber}.* Ver menú de productos 📋`);
+            optionNumber++;
+        }
+        
+        if (menuConfig.options.showLocation) {
+            menuOptions.push(`*${optionNumber}.* Dirección y horarios 📍`);
+            optionNumber++;
+        }
+        
+        if (menuConfig.options.showCustomOrders) {
+            menuOptions.push(`*${optionNumber}.* Encargos y eventos 🎉`);
+            optionNumber++;
+        }
+        
+        // Ejemplo genérico usando keywords
+        const exampleKeywords = envConfig.keywords.products.slice(0, 2).join(' ');
+        const exampleText = `"${exampleKeywords}"`;
+        
         await say(sock, jid, 
-            '¡Hola! 👋 Bienvenido a *Mundo Helados* 🍦\n\n' +
+            `¡Hola! 👋 Bienvenido a *${businessName}* ${emoji}\n\n` +
             'Estos son nuestros productos:\n\n' +
-            '*1.* Ver menú de productos 📋\n' +
-            '*2.* Dirección y horarios 📍\n' +
-            '*3.* Encargos y eventos 🎉\n\n' +
-            'Escribe el número de la opción que desees o escribe tu pedido directamente (ej: "3 cajas vainilla").', 
+            `${menuOptions.join('\n')}\n\n` +
+            `Escribe el número de la opción que desees o escribe tu pedido directamente (ej: ${exampleText}).`, 
             ctx
         );
         return;

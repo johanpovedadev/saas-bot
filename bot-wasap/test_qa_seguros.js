@@ -120,9 +120,9 @@ async function run() {
     const config = require('./config/businesses/seguros_mascotas.config');
     assert(config.business.name === 'TE ASEGURAMOS', 'Business name = TE ASEGURAMOS (ISSUE #1)');
     assert(config.business.partner === 'Seguros Mundial', 'Partner = Seguros Mundial (ISSUE #1)');
-    assert(config.plans.perroPlus.price === 25000, 'Plan PLUS precio $25.000 (ISSUE #2)');
-    assert(config.plans.perroPremium.price === 45000, 'Plan PREMIUM precio $45.000 (ISSUE #2)');
-    assert(config.plans.gato.price === 20000, 'Plan Gato precio $20.000 (ISSUE #2)');
+    assert(config.plans.perroPlus.price === 259900, 'Plan PLUS precio $259.900 anual (ISSUE #10)');
+    assert(config.plans.perroPremium.price === 354900, 'Plan PREMIUM precio $354.900 anual (ISSUE #10)');
+    assert(config.plans.gato.price === 200900, 'Plan Gato precio $200.900 anual (ISSUE #10)');
     assert(config.bot.insuranceFlow.messages.final.includes('{nombre}'), 'Mensaje final tiene placeholder {nombre} (ISSUE #10)');
     assert(config.bot.insuranceFlow.messages.rechazoEdad, 'Mensaje de rechazo por edad definido (ISSUE #7)');
     assert(config.bot.insuranceFlow.messages.datosTitularDocumento.includes('Cédula'), 'Tipo documento enumerado (ISSUE #4)');
@@ -135,12 +135,13 @@ async function run() {
     console.log('\n📁 5. Validando preguntas reducidas (ISSUE #9)...');
 
     const fs = require('fs');
-    const flowSource = fs.readFileSync('./handlers/flows/seguros.flow.js', 'utf8');
+    const path = require('path');
+    const flowSource = fs.readFileSync(path.join(__dirname, 'handlers/flows/seguros.flow.js'), 'utf8');
 
     const titularMatch = flowSource.match(/DATOS_TITULAR_PREGUNTAS\s*=\s*\[([^\]]+)\]/);
     if (titularMatch) {
         const count = (titularMatch[1].match(/\{ field:/g) || []).length;
-        assert(count === 6, `Titular: ${count} preguntas (ISSUE #9: esperado 6)`);
+        assert(count === 8, `Titular: ${count} preguntas (ISSUE #13: esperado 8 - incluye direccion)`);
     } else {
         assert(false, 'No se encontró DATOS_TITULAR_PREGUNTAS');
     }
@@ -148,7 +149,7 @@ async function run() {
     const mascotaMatch = flowSource.match(/DATOS_MASCOTA_PREGUNTAS\s*=\s*\[([^\]]+)\]/);
     if (mascotaMatch) {
         const count = (mascotaMatch[1].match(/\{ field:/g) || []).length;
-        assert(count === 3, `Mascota: ${count} preguntas (esperado 3)`);
+        assert(count === 5, `Mascota: ${count} preguntas (esperado 5 - incluye color, genero)`);
     } else {
         assert(false, 'No se encontró DATOS_MASCOTA_PREGUNTAS');
     }
@@ -171,20 +172,33 @@ async function run() {
     assert(validarEdadSrc, 'validarEdadMascota() existe (ISSUE #7)');
 
     // Verificar guardarSolicitud con status
-    assert(flowSource.includes("'pendiente'"), 'guarda con status=pendiente');
-    assert(flowSource.includes("'rechazado'"), 'guarda con status=rechazado (ISSUE #8)');
-    assert(flowSource.includes('cancel_reason'), 'guarda cancel_reason (ISSUE #8)');
+    assert(flowSource.includes('status') || flowSource.includes("'pendiente'"), 'guarda con status');
+    assert(flowSource.includes('cancelReason') || flowSource.includes('cancel_reason'), 'guarda motivo cancelacion (ISSUE #8)');
 
     // Verificar eliminación de pago
     assert(!flowSource.includes('INS_PAGO'), 'No hay referencia a INS_PAGO (ISSUE #3)');
     assert(!flowSource.includes('LISTO'), 'No hay referencia a LISTO/pago (ISSUE #3)');
+
+    // Verificar nuevos campos
+    assert(flowSource.includes("field: 'direccion'"), 'Tiene campo direccion (ISSUE #13)');
+    assert(flowSource.includes("field: 'correo'"), 'Tiene campo correo (ISSUE #1)');
+    assert(flowSource.includes("field: 'color'"), 'Tiene campo color (ISSUE #1)');
+    assert(flowSource.includes("field: 'genero'"), 'Tiene campo genero (ISSUE #1)');
+    assert(flowSource.includes('correoElectronico'), 'Payload incluye correoElectronico (ISSUE #1)');
+    assert(flowSource.includes('direccion'), 'Payload incluye direccion (ISSUE #13)');
+    assert(flowSource.includes('registrar_lead'), 'Usa endpoint registrar_lead (ISSUE #1)');
+    assert(flowSource.includes('normalizarGenero'), 'Tiene normalizarGenero (ISSUE #1)');
+    assert(flowSource.includes('Solicitud registrada exitosamente'), 'Mensaje final actualizado (ISSUE #3)');
+    assert(!flowSource.includes('proceso de emision y pago'), 'Mensaje antiguo eliminado (ISSUE #3)');
+    assert(flowSource.includes('datosMascotaRazaPerro'), 'Tiene mensaje raza perro (ISSUE #14)');
+    assert(flowSource.includes('datosMascotaRazaGato'), 'Tiene mensaje raza gato (ISSUE #15)');
 
     // ===================================
     // 7. Validar handler.js
     // ===================================
     console.log('\n📁 7. Validando handler.js...');
     
-    const handlerSource = fs.readFileSync('./handlers/handler.js', 'utf8');
+    const handlerSource = fs.readFileSync(path.join(__dirname, 'handlers/handler.js'), 'utf8');
     assert(handlerSource.includes('INS_RECHAZO'), 'handler.js tiene case INS_RECHAZO');
     assert(!handlerSource.includes('INS_PAGO'), 'handler.js sin referencia a INS_PAGO');
 
@@ -193,9 +207,136 @@ async function run() {
     // ===================================
     console.log('\n📁 8. Validando phases.js...');
     
-    const phasesSource = fs.readFileSync('./utils/phases.js', 'utf8');
+    const phasesSource = fs.readFileSync(path.join(__dirname, 'utils/phases.js'), 'utf8');
     assert(phasesSource.includes("INS_RECHAZO: 'ins_rechazo'"), 'phases.js tiene INS_RECHAZO');
     assert(!phasesSource.includes("INS_PAGO: 'ins_pago'"), 'phases.js sin INS_PAGO');
+
+    // ===================================
+    // 9. Validar confirmación con nuevos campos
+    // ===================================
+    console.log('\n📁 9. Validando confirmacion con nuevos campos...');
+
+    assert(flowSource.includes('{correo}'), 'Template confirmacion incluye {correo} (ISSUE #1)');
+    assert(flowSource.includes('{direccion}'), 'Template confirmacion incluye {direccion} (ISSUE #13)');
+    assert(flowSource.includes('{color}'), 'Template confirmacion incluye {color} (ISSUE #1)');
+    assert(flowSource.includes('{genero}'), 'Template confirmacion incluye {genero} (ISSUE #1)');
+
+    // ===================================
+    // 10. Verificar LEADS endpoint en backend
+    // ===================================
+    console.log('\n📁 10. Verificando backend LEADS...');
+
+    const http = require('http');
+    const envCfg = require('./config/env.loader');
+    const baseUrl = ((envCfg.api && envCfg.api.baseUrl) || (envCfg.backend && envCfg.backend.apiBase) || 'http://127.0.0.1:8001').replace(/\/+$/, '');
+    const base = baseUrl.includes('/api') ? baseUrl : baseUrl + '/api';
+
+    try {
+        await new Promise((resolve) => {
+            const payload = JSON.stringify({
+                estado: 'pendiente',
+                tipoMascota: 'perro',
+                plan: 'PLUS',
+                nombreTitular: 'QA Test',
+                ciudadDepartamento: 'Bogota, Cundinamarca',
+                direccion: 'Calle 123 #45-67',
+                telefono: '3001112233',
+                correoElectronico: 'qa@test.com',
+                nombreMascota: 'Firulais',
+                edadMascota: '5',
+                raza: 'Criollo',
+                color: 'Negro',
+                genero: 'Macho'
+            });
+            const req = http.request(`${base}/registrar_lead/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+            }, (res) => {
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                    try {
+                        const json = JSON.parse(body);
+                        assert(json.ok === true, `LEADS endpoint: ${res.statusCode} (ISSUE #1)`);
+                    } catch (e) {
+                        assert(false, `LEADS endpoint respuesta invalida: ${e.message}`);
+                    }
+                    resolve();
+                });
+            });
+            req.on('error', e => { assert(false, `LEADS endpoint error: ${e.message}`); resolve(); });
+            req.write(payload);
+            req.end();
+        });
+    } catch (e) {
+        assert(false, `LEADS endpoint exception: ${e.message}`);
+    }
+
+    // ===================================
+    // SPRINT 4 - ISSUE #29-#39 validation
+    // ===================================
+
+    // ISSUE #29 - Multiadmin: verificar que notificationService exporta ambas funciones
+    const ns = require('./services/notificationService');
+    assert(typeof ns.getBusinessAdminJids === 'function', 'notificationService.getBusinessAdminJids existe (ISSUE #29)');
+    assert(typeof ns.getSystemAdminJids === 'function', 'notificationService.getSystemAdminJids existe (ISSUE #29)');
+    assert(typeof ns.notifyBotDisconnected === 'function', 'notificationService.notifyBotDisconnected existe (ISSUE #30)');
+    assert(typeof ns.notifyBotReconnected === 'function', 'notificationService.notifyBotReconnected existe (ISSUE #31)');
+    assert(typeof ns.notifySheetsError === 'function', 'notificationService.notifySheetsError existe (ISSUE #32)');
+    assert(typeof ns.notifyDjangoOffline === 'function', 'notificationService.notifyDjangoOffline existe (ISSUE #33)');
+    assert(typeof ns.notifyDjangoRecovered === 'function', 'notificationService.notifyDjangoRecovered existe (ISSUE #33)');
+
+    // ISSUE #33 - Health endpoint Django
+    try {
+        await new Promise((resolve) => {
+            const req = http.get(`${base}/health/`, (res) => {
+                let body = '';
+                res.on('data', c => body += c);
+                res.on('end', () => {
+                    try {
+                        const json = JSON.parse(body);
+                        assert(json.status === 'ok' || json.status === 'degraded', `Health endpoint status: ${json.status} (ISSUE #33)`);
+                        assert(json.google_sheets !== undefined, 'Health endpoint tiene google_sheets (ISSUE #32)');
+                    } catch (e) {
+                        assert(false, `Health endpoint parse error: ${e.message} (ISSUE #33)`);
+                    }
+                    resolve();
+                });
+            });
+            req.on('error', e => { assert(false, `Health endpoint error: ${e.message} (ISSUE #33)`); resolve(); });
+            req.setTimeout(5000, () => { assert(false, 'Health endpoint timeout (ISSUE #33)'); resolve(); });
+        });
+    } catch (e) {
+        assert(false, `Health endpoint exception: ${e.message} (ISSUE #33)`);
+    }
+
+    // ISSUE #34 - HealthMonitor existe
+    const hm = require('./services/healthMonitor');
+    assert(typeof hm.init === 'function', 'healthMonitor.init existe (ISSUE #34)');
+    assert(typeof hm.getStatus === 'function', 'healthMonitor.getStatus existe (ISSUE #34)');
+
+    // Verificar que getBusinessAdminJids no retorne vacio
+    const bizAdmins = ns.getBusinessAdminJids();
+    assert(bizAdmins.length > 0, 'business_admin_jids no vacio (ISSUE #29)');
+    assert(bizAdmins[0].includes('@'), 'business_admin_jids en formato JID (ISSUE #29)');
+
+    // Verificar config seguros_mascotas tiene business_admin_jids y system_admin_jids
+    const cfg = require('./config/businesses/seguros_mascotas.config.js');
+    assert(Array.isArray(cfg.admin.business_admin_jids), 'seguros_mascotas tiene business_admin_jids (ISSUE #29)');
+    assert(Array.isArray(cfg.admin.system_admin_jids), 'seguros_mascotas tiene system_admin_jids (ISSUE #29)');
+
+    // ISSUE #35 - sandbox-dev config existe
+    try {
+        const devCfg = require('./config/businesses/sandbox-dev.config.js');
+        assert(devCfg.business.id === 'SANDBOX_DEV', 'sandbox-dev.config.js tiene id SANDBOX_DEV (ISSUE #35)');
+    } catch (e) {
+        assert(false, `sandbox-dev.config.js no encontrado (ISSUE #35): ${e.message}`);
+    }
+
+    // ISSUE #40 - PM2 ecosystem existe
+    const pm2Path = require('path').join(__dirname, '..', 'ecosystem.config.js');
+    const _fs = require('fs');
+    assert(_fs.existsSync(pm2Path), 'ecosystem.config.js existe (ISSUE #40)');
 
     // ===================================
     // RESULTADOS

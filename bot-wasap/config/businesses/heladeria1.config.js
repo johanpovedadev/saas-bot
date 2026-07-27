@@ -1,10 +1,10 @@
 /**
- * @fileoverview Configuración de Mundo Helados Riohacha
+ * @fileoverview Configuración de Empanadas Riohacha
  * 
- * Configuración específica para la heladería Mundo Helados
+ * Configuración específica para la tienda Empanadas Riohacha
  * ubicada en Riohacha, Colombia.
  * 
- * @module config/businesses/heladeria1
+ * @module config/businesses/empanadas1
  * @version 1.0.0
  */
 
@@ -15,9 +15,9 @@ module.exports = {
     // INFORMACIÓN BÁSICA DEL NEGOCIO
     // ===================================
     business: {
-        id: 'MUNDO_HELADOS_RIOHACHA',
-        name: 'Mundo Helados Riohacha',
-        shortName: 'Mundo Helados',
+        id: 'EMPANADAS_RIOHACHA',
+        name: 'Empanadas Riohacha',
+        shortName: 'Empanadas',
         type: 'retail',
         industry: 'food-service',
         city: 'Riohacha',
@@ -34,7 +34,7 @@ module.exports = {
     contact: {
         phone: '+57 300 000 0000',  // TODO: Actualizar con número real
         whatsapp: '+573000000000',  // TODO: Actualizar con número real
-        email: 'contacto@mundohelados.com',
+        email: 'contacto@empanadasriohacha.com',
         website: null,
         
         address: {
@@ -42,17 +42,17 @@ module.exports = {
             neighborhood: 'Centro',
             city: 'Riohacha',
             department: 'La Guajira',
-            postalCode: '440001',
+            postalCode: '110111',
             coordinates: {
-                lat: 11.5444,
-                lng: -72.9072
+                lat: 4.711,
+                lng: -74.0721
             },
             googleMapsUrl: null  // TODO: Agregar URL
         },
         
         socialMedia: {
             facebook: null,
-            instagram: '@mundohelados',  // TODO: Verificar handle
+            instagram: '@empanadasriohacha',  // TODO: Verificar handle
             twitter: null,
             tiktok: null
         }
@@ -81,25 +81,26 @@ module.exports = {
     // CONFIGURACIÓN DEL BOT
     // ===================================
     bot: {
-        welcomeMessage: `Holiii ☺️
-¿Cómo estás? Somos Mundo Helados en Riohacha 🍦`,
+        welcomeMessage: `¡Hola! 👋
+Bienvenido a Empanadas Riohacha 🥟
+¿Listo para pedir las mejores empanadas de la ciudad?`,
 
         mainMenu: {
             options: [
-                { id: '1', label: 'Ver nuestro menú y hacer un pedido', emoji: '🛍️' },
+                { id: '1', label: 'Ver productos y precios de empanadas', emoji: '🥟' },
                 { id: '2', label: 'Dirección y horarios', emoji: '📍' },
-                { id: '3', label: 'Pedidos por encargo (litros, eventos y grandes cantidades)', emoji: '📦' }
+                { id: '3', label: 'Pedidos para eventos o grandes cantidades', emoji: '📦' }
             ],
             
-            message: `*1)* 🛍️ Ver nuestro menú y hacer un pedido
+            message: `*1)* 🥟 Ver productos y precios de empanadas
 *2)* 📍 Dirección y horarios
-*3)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
+*3)* 📦 Pedidos para eventos o grandes cantidades
 
 ✨ Escribe solo el número de la opción (1, 2 o 3).
 Si te equivocas, no pasa nada 💛`
         },
 
-        infoMessage: `📍 *Mundo Helados - Riohacha*
+        infoMessage: `📍 *Empanadas Riohacha*
 
 *Dirección:*
 [DIRECCIÓN] - Riohacha, La Guajira
@@ -111,13 +112,13 @@ Domingo: 10:00 AM - 8:00 PM
 
 *Contacto:*
 📱 WhatsApp: [NÚMERO]
-📧 Email: contacto@mundohelados.com
+📧 Email: contacto@empanadasriohacha.com
 
 *Síguenos:*
-📸 Instagram: @mundohelados`,
+📸 Instagram: @empanadasriohacha`,
 
         phases: {
-            enableBrowseImages: true,
+            enableBrowseImages: false, // Desactivar imágenes en el menú
             enableProductSelection: true,
             enableCustomOrders: true,
             enableReservations: true,
@@ -129,9 +130,9 @@ Domingo: 10:00 AM - 8:00 PM
             model: 'gemini-pro',
             temperature: 0.7,
             maxTokens: 500,
-            systemPrompt: `Eres un asistente virtual amigable de Mundo Helados en Riohacha.
-Tu objetivo es ayudar a los clientes a hacer pedidos de helados de manera rápida y eficiente.
-Usa un tono cálido, amigable y profesional, típico de la Costa Caribe colombiana.
+            systemPrompt: `Eres un asistente virtual amigable de Empanadas Riohacha.
+Tu objetivo es ayudar a los clientes a hacer pedidos de empanadas de manera rápida y eficiente.
+Usa un tono cálido, amigable y profesional, típico de la región Caribe colombiana.
 Si no entiendes algo, pide aclaración de forma amable.`
         },
 
@@ -145,9 +146,9 @@ Si no entiendes algo, pide aclaración de forma amable.`
         greetings: {
             type: 'colombia',
             customGreetings: [
-                'epa mundo helados',
-                'hola mundo helados',
-                'buenas mundo helados'
+                'epa empanadas riohacha',
+                'hola empanadas riohacha',
+                'buenas empanadas riohacha'
             ]
         }
     },
@@ -158,67 +159,54 @@ Si no entiendes algo, pide aclaración de forma amable.`
     catalog: {
         categories: [
             {
-                id: 'helados',
-                name: 'Helados',
-                emoji: '🍦',
-                description: 'Deliciosos helados artesanales',
+                id: 'empanadas',
+                name: 'Empanadas',
+                emoji: '🥟',
+                description: 'Empanadas artesanales de diferentes sabores',
                 active: true,
                 order: 1
             },
             {
-                id: 'cajas',
-                name: 'Cajas de Helado',
-                emoji: '📦',
-                description: 'Cajas de helado para llevar',
+                id: 'bebidas',
+                name: 'Bebidas',
+                emoji: '🥤',
+                description: 'Bebidas frías y calientes',
                 active: true,
                 order: 2
             },
             {
-                id: 'litros',
-                name: 'Litros',
-                emoji: '🥛',
-                description: 'Helado por litros',
+                id: 'salsas',
+                name: 'Salsas',
+                emoji: '🧂',
+                description: 'Salsas para acompañar tus empanadas',
                 active: true,
                 order: 3
-            },
-            {
-                id: 'especiales',
-                name: 'Especiales',
-                emoji: '⭐',
-                description: 'Productos especiales y promociones',
-                active: true,
-                order: 4
             }
         ],
 
         products: {
-            requireImage: true,
+            requireImage: false,
             allowCustomization: true,
-            maxCustomOptions: 5,
+            maxCustomOptions: 3,
             
             customFields: {
-                sabores: {
+                relleno: {
                     enabled: true,
-                    label: 'Sabores',
+                    label: 'Tipo de relleno',
                     required: true,
-                    multiple: true,
-                    max: 3,
+                    multiple: false,
                     options: [
-                        'Vainilla', 'Chocolate', 'Fresa', 'Arequipe', 'Coco',
-                        'Ron Pasas', 'Galleta Oreo', 'Mantecado', 'Chicle',
-                        'Mora', 'Guanábana', 'Maracuyá', 'Mango'
+                        'Carne', 'Pollo', 'Queso', 'Mixta', 'Vegetariana'
                     ]
                 },
-                toppings: {
+                salsa: {
                     enabled: true,
-                    label: 'Toppings',
+                    label: 'Salsa',
                     required: false,
                     multiple: true,
-                    max: 3,
+                    max: 2,
                     options: [
-                        'Chispas de Chocolate', 'Confites M&M', 'Galleta Oreo',
-                        'Fresas', 'Arequipe', 'Chocolate Líquido', 'Maní',
-                        'Cerezas', 'Brownie', 'Sin Toppings'
+                        'Aji', 'Rosada', 'Mayo', 'Mostaza', 'Sin Salsa'
                     ]
                 }
             }
@@ -279,7 +267,7 @@ Si no entiendes algo, pide aclaración de forma amable.`
     admin: {
         jids: [
             // Agregar JIDs de administradores aquí
-            // Ejemplo: '573001234567@s.whatsapp.net'
+            // Ejemplo: '573001234567@c.us'
         ],
 
         notifications: {
@@ -303,13 +291,11 @@ Si no entiendes algo, pide aclaración de forma amable.`
                 'unmute'
             ]
         }
-    },
-
-    // ===================================
+    },    // ===================================
     // INTEGRACIÓN CON BACKEND
     // ===================================
     backend: {
-        apiBase: process.env.API_BASE || 'http://127.0.0.1:8001/api',
+        apiBase: process.env.API_BASE || 'http://127.0.0.1:8000/api',
         timeout: 8000,
         
         endpoints: {
@@ -317,9 +303,7 @@ Si no entiendes algo, pide aclaración de forma amable.`
             productImage: '/producto_imagen/',
             search: '/buscar_producto/',
             orders: '/registrar_entrega/',
-            reservations: '/registrar_entrega/',
-            sabores: '/sabores/',
-            toppings: '/toppings/'
+            reservations: '/registrar_entrega/'
         },
 
         sheets: {

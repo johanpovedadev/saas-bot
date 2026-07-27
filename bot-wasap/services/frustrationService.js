@@ -95,6 +95,38 @@ function detectFrustration(userSession, text) {
 }
 
 /**
+ * Detecta frustración y maneja automáticamente si es necesario
+ * Esta es una versión "todo-en-uno" para uso desde el handler principal
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {string} text - Texto del mensaje
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ * @returns {boolean} - True si se detectó frustración y se manejó
+ */
+async function detectAndHandleFrustration(sock, jid, text, userSession, ctx) {
+    try {
+        const isFrustrated = detectFrustration(userSession, text);
+        
+        if (isFrustrated) {
+            await handleFrustration(
+                sock, 
+                jid, 
+                userSession, 
+                ctx, 
+                `errorCount=${userSession.errorCount || 0}`
+            );
+            return true;
+        }
+        
+        return false;
+    } catch (e) {
+        logger.error({ err: e }, '[Frustration] Error en detectAndHandleFrustration');
+        return false;
+    }
+}
+
+/**
  * Maneja la frustración del cliente: notifica admins y deriva a humano
  * @param {Object} sock - Socket de WhatsApp
  * @param {string} jid - JID del usuario
@@ -185,6 +217,7 @@ function reactivateBot(userSession) {
 
 module.exports = {
     detectFrustration,
+    detectAndHandleFrustration,  // ✅ Nueva función todo-en-uno
     handleFrustration,
     incrementErrorCount,
     resetErrorCount,

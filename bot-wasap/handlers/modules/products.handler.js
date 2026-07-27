@@ -21,21 +21,15 @@ const axios = require('axios');
 const { logger } = require('../../utils/logger');
 const PHASE = require('../../utils/phases');
 const { say } = require('../../services/bot_core');
-const { handleProductSelection } = require('../../services/bot_core');
 const { fuzzySearchProducts } = require('../../utils/fuzzySearch');
-const CONFIG = require('../../config.json');
-const SECRETS = require('../../config.secrets');
+const { parseFlexibleInput, generateEmpathicResponse } = require('../../utils/flexibleInput');
+const empathy = require('../../utils/empathyMessages');
 const envConfig = require('../../config/env.loader');
+const frustrationService = require('../../services/frustrationService');
 
 // API Configuration
-const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-let ENDPOINTS = null;
-try {
-    ENDPOINTS = process.env.ENDPOINTS_JSON ? JSON.parse(process.env.ENDPOINTS_JSON) : (SECRETS.ENDPOINTS || CONFIG.ENDPOINTS);
-} catch (e) {
-    ENDPOINTS = SECRETS.ENDPOINTS || CONFIG.ENDPOINTS || null;
-}
-ENDPOINTS = ENDPOINTS || { BUSCAR_PRODUCTO: '/buscar_producto_por_nombre/' };
+const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+let ENDPOINTS = envConfig.backend.endpoints || { BUSCAR_PRODUCTO: '/buscar_producto_por_nombre/' };
 
 /**
  * Normaliza texto para búsqueda (sin acentos, lowercase)
@@ -49,6 +43,7 @@ function normalizeText(text) {
 
 /**
  * Maneja la búsqueda de productos cuando el usuario está navegando
+ * SISTEMA HÍBRIDO: Acepta números, nombres, texto parcial + fuzzy matching
  * @param {Object} sock - Socket de WhatsApp
  * @param {string} jid - JID del usuario
  * @param {string} text - Texto de búsqueda
@@ -74,19 +69,137 @@ async function handleBrowseImages(sock, jid, text, userSession, ctx) {
         // PASO 3: Normalizar datos de productos
         productos = normalizeProductsData(productos);
 
-        // PASO 4: Procesar resultados
-        if (productos.length === 1) {
-            await handleSingleProductFound(sock, jid, productos[0], userSession, ctx);
-        } else if (productos.length > 1) {
-            await handleMultipleProductsFound(sock, jid, productos, userSession, ctx, text);
-        } else {
-            await handleNoProductsFound(sock, jid, normalizedQuery, userSession, ctx, text);
-        }
+        // PASO 4: Usar sistema de entrada flexible con mensajes empáticos
+        const parseResult = parseFlexibleInput(text, productos, {
+            type: 'product',
+            threshold: 0.4,
+            nameField: envConfig.backend.fields.productName
+        });
+
+        logger.debug(`[${jid}] -> Parse result:`, {
+            success: parseResult.success,
+            matchType: parseResult.matchType,
+            confidence: parseResult.confidence
+        });
+
+        // PASO 5: Generar respuesta empática según el resultado
+        await handleProductParseResult(sock, jid, parseResult, userSession, ctx, text);
 
     } catch (error) {
         logger.error(`[${jid}] Error en búsqueda de productos:`, error.response?.data || error.message);
         userSession.errorCount++;
-        await say(sock, jid, '⚠️ Error de conexión al buscar productos. Por favor, intenta de nuevo.', ctx);
+        
+        // Mensaje empático de error
+        const errorMsg = userSession.errorCount >= 3
+            ? empathy.getFrustrationRecoveryMessage(userSession.errorCount)
+            : '⚠️ Hubo un problema de conexión. ¿Intentamos de nuevo? 😊\n\nEscribe el nombre del producto que buscas.';
+        
+        await say(sock, jid, errorMsg, ctx);
+    }
+}
+
+/**
+ * Maneja el resultado del parsing flexible de productos
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {Object} parseResult - Resultado de parseFlexibleInput
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ * @param {string} originalText - Texto original del usuario
+ * @returns {Promise<void>}
+ */
+async function handleProductParseResult(sock, jid, parseResult, userSession, ctx, originalText) {
+    const { success, match, matchType, confidence, suggestions, needsConfirmation } = parseResult;
+
+    // CASO 1: Match exitoso directo (número, código, exact, fuzzy alto)
+    if (success === true && !needsConfirmation) {
+        logger.info(`[${jid}] -> Match directo: ${matchType}, confianza: ${confidence}`);
+        await handleSingleProductFound(sock, jid, match, userSession, ctx);
+        return;
+    }
+
+    // CASO 2: Match con confirmación necesaria (fuzzy medio)
+    if (success === 'partial' || needsConfirmation) {
+        logger.info(`[${jid}] -> Match parcial: ${matchType}, confianza: ${confidence}`);
+        
+        // Guardar en sesión para confirmar
+        userSession.pendingConfirmation = {
+            type: 'product',
+            item: match,
+            originalInput: originalText
+        };
+        userSession.phase = PHASE.AWAITING_CONFIRMATION;
+        
+        const message = empathy.getTypoSuggestionMessage(originalText, match, confidence);
+        await say(sock, jid, message, ctx);
+        return;
+    }
+
+    // CASO 3: Múltiples sugerencias
+    if (!success && suggestions && suggestions.length > 0) {
+        logger.info(`[${jid}] -> Múltiples sugerencias: ${suggestions.length}`);
+        await handleMultipleProductsFoundEmpathic(sock, jid, suggestions, userSession, ctx, originalText);
+        return;
+    }
+
+    // CASO 4: No se encontró nada
+    logger.info(`[${jid}] -> No se encontró producto`);
+    await handleNoProductsFoundEmpathic(sock, jid, userSession, ctx, originalText);
+}
+
+/**
+ * Maneja múltiples productos encontrados con mensajes empáticos
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {Array} productos - Productos sugeridos
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ * @param {string} originalQuery - Query original del usuario
+ * @returns {Promise<void>}
+ */
+async function handleMultipleProductsFoundEmpathic(sock, jid, productos, userSession, ctx, originalQuery) {
+    const dbFields = envConfig.backend.fields;
+    const items = productos.map(p => p.item || p);
+    
+    userSession.phase = PHASE.SELECCION_PRODUCTO;
+    userSession.lastMatches = items;
+    userSession.errorCount = 0;
+
+    const message = empathy.getMultipleMatchesMessage(originalQuery, items);
+    await say(sock, jid, message, ctx);
+}
+
+/**
+ * Maneja cuando no se encuentran productos con mensajes empáticos
+ * @param {Object} sock - Socket de WhatsApp
+ * @param {string} jid - JID del usuario
+ * @param {Object} userSession - Sesión del usuario
+ * @param {Object} ctx - Contexto global
+ * @param {string} originalQuery - Query original del usuario
+ * @returns {Promise<void>}
+ */
+async function handleNoProductsFoundEmpathic(sock, jid, userSession, ctx, originalQuery) {
+    userSession.errorCount++;
+    
+    // ✅ Detectar frustración después de 2 errores consecutivos
+    if (userSession.errorCount >= 2) {
+        await frustrationService.handleFrustration(
+            sock, 
+            jid, 
+            userSession, 
+            ctx, 
+            `${userSession.errorCount} productos no encontrados consecutivos`
+        );
+        return; // Admin se hará cargo
+    }
+    
+    // Mensaje empático según el número de errores
+    if (userSession.errorCount >= 3) {
+        const message = empathy.getFrustrationRecoveryMessage(userSession.errorCount);
+        await say(sock, jid, message, ctx);
+    } else {
+        const message = empathy.getProductNotFoundMessage(originalQuery, []);
+        await say(sock, jid, message, ctx);
     }
 }
 
@@ -140,8 +253,15 @@ async function searchInAPI(query, ctx, jid) {
     logger.info(`[${jid}] -> Buscando en API: "${query}"`);
 
     const dbFields = envConfig.backend.fields;
+    // CRÍTICO: Incluir BIZ_ID en todas las llamadas a la API
+    const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+    const params = { q: query };
+    if (bizId) {
+        params.biz_id = bizId;
+    }
+    
     const response = await axios.get(`${API_BASE}${ENDPOINTS.BUSCAR_PRODUCTO}`, {
-        params: { q: query },
+        params: params,
         timeout: 8000
     });
 
@@ -172,13 +292,9 @@ function normalizeProductsData(productos) {
             p[priceField] = parseFloat(precioString.replace('.', ''));
         }
         
-        // Normalizar números de items primarios y secundarios
-        const primaryCountField = dbFields.itemPrimaryCount;
+        // Normalizar números de items secundarios
         const secondaryCountField = dbFields.itemSecondaryCount;
         
-        if (p[primaryCountField]) {
-            p[primaryCountField] = parseInt(p[primaryCountField], 10);
-        }
         if (p[secondaryCountField]) {
             p[secondaryCountField] = parseInt(p[secondaryCountField], 10);
         }
@@ -202,22 +318,58 @@ async function handleSingleProductFound(sock, jid, producto, userSession, ctx) {
     
     logger.info(`[${jid}] -> Producto único encontrado: ${producto[dbFields.productName]}`);
 
-    await handleProductSelection(sock, jid, producto, ctx);
-    
-    userSession.phase = PHASE.SELECT_DETAILS;
+    // Mostrar imagen si la flag está activa en config
+    const showImage = (envConfig.catalog && envConfig.catalog.products && envConfig.catalog.products.requireImage === true);
+    if (showImage && producto.Imagen_URL) {
+        await say(sock, jid, { image: { url: producto.Imagen_URL }, caption: producto.NombreProducto }, ctx);
+    }
+
+    // Guardar producto en sesión
     userSession.currentProduct = producto;
     userSession.errorCount = 0;
 
-    // Determinar el campo que se debe esperar
-    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
-    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
+    // ============================================================
+    // 🎯 TICKET 3: LÓGICA GENÉRICA DE "SALTOS"
+    // ============================================================
+    const opciones1 = parseInt(producto[dbFields.opcionesExtra1] || 0, 10);
+    const opciones2 = parseInt(producto[dbFields.opcionesExtra2] || 0, 10);
+    const totalOpciones = opciones1 + opciones2;
+    
+    logger.info(`[${jid}] -> 🎯 TICKET 3 - Opciones detectadas (single):`, {
+        campo1: dbFields.opcionesExtra1,
+        valor1: opciones1,
+        campo2: dbFields.opcionesExtra2,
+        valor2: opciones2,
+        total: totalOpciones
+    });
 
-    if (numPrimaryItems > 0) {
-        userSession.awaitingField = nomenclature.itemPrimary;
-    } else if (numSecondaryItems > 0) {
-        userSession.awaitingField = nomenclature.itemSecondary;
+    if (totalOpciones > 0) {
+        // Tiene opciones → SELECT_DETAILS
+        userSession.phase = PHASE.SELECT_DETAILS;
+        userSession.awaitingField = 'details';
+        userSession.productoPasos = {
+            opciones1: opciones1,
+            opciones2: opciones2,
+            currentStep: 1
+        };
+        
+        const selectionHandler = require('./selection.handler');
+        await selectionHandler.handleSelectDetails(sock, jid, '', userSession, ctx);
     } else {
+        // NO tiene opciones → SELECT_QUANTITY (salto)
+        userSession.phase = PHASE.SELECT_QUANTITY;
         userSession.awaitingField = 'quantity';
+        
+        const productName = producto[dbFields.productName] || 'producto';
+        await say(sock, jid, 
+            `✅ *${productName}* seleccionado.\n\n` +
+            `¿Cuántas unidades deseas?\n\n` +
+            `_Ejemplos:_\n` +
+            `• *1* (una unidad)\n` +
+            `• *2* (dos unidades)\n` +
+            `• *2 sin observación* (dos con nota)`, 
+            ctx
+        );
     }
 }
 
@@ -308,51 +460,142 @@ async function handleNoProductsFound(sock, jid, query, userSession, ctx, origina
 }
 
 /**
+ * Utilidad para obtener inventario cacheado (debe estar implementada en el contexto o servicio)
+ * @param {Object} ctx - Contexto global
+ * @returns {Array} Inventario cacheado
+ */
+function getCachedInventory(ctx) {
+    return (ctx && ctx.cachedInventory && Array.isArray(ctx.cachedInventory)) ? ctx.cachedInventory : [];
+}
+
+/**
  * Maneja la selección de un producto de una lista
+ * SISTEMA HÍBRIDO: Acepta números O nombres
  * @param {Object} sock - Socket de WhatsApp
  * @param {string} jid - JID del usuario
- * @param {string} input - Input del usuario (número)
+ * @param {string} input - Input del usuario (número o nombre)
  * @param {Object} userSession - Sesión del usuario
  * @param {Object} ctx - Contexto global
  * @returns {Promise<void>}
  */
-async function handleSeleccionProducto(sock, jid, input, userSession, ctx) {
-    logger.info(`[${jid}] -> Selección de producto: "${input}"`);
-
-    const dbFields = envConfig.backend.fields;
-    const nomenclature = envConfig.nomenclature;
-    const selection = parseInt(input, 10);
-    const matches = userSession.lastMatches || [];
-
-    // Validar entrada
-    if (isNaN(selection) || selection < 1 || selection > matches.length) {
-        userSession.errorCount++;
+async function handleProductSelection(sock, jid, input, userSession, ctx) {
+    // ============================================================
+    // SELECCIÓN INTELIGENTE DE PRODUCTO
+    // ============================================================
+    // Si hay lastMatches, buscar primero ahí (lista mostrada al usuario)
+    // Si no, usar cache global de productos
+    
+    let inventory = [];
+    
+    if (userSession.lastMatches && Array.isArray(userSession.lastMatches) && userSession.lastMatches.length > 0) {
+        // Usuario está seleccionando de una lista específica
+        inventory = userSession.lastMatches;
+        logger.info(`[${jid}] -> Seleccionando de lista de ${inventory.length} productos mostrados`);
+    } else {
+        // Usuario está seleccionando del catálogo completo
+        inventory = (ctx && ctx.productsCache && Array.isArray(ctx.productsCache)) ? ctx.productsCache : [];
+        logger.info(`[${jid}] -> Seleccionando del catálogo completo (${inventory.length} productos)`);
+    }
+    
+    let producto = null;
+    const num = parseInt(input.trim(), 10);
+    
+    if (!isNaN(num) && num > 0 && num <= inventory.length) {
+        // Selección por número
+        producto = inventory[num - 1];
+        logger.info(`[${jid}] -> Producto seleccionado por número ${num}: ${producto.NombreProducto}`);
+    } else {
+        // Selección por nombre
+        const inputNormalized = normalizeText(input);
+        producto = inventory.find(p => {
+            const nombreNormalized = normalizeText(p.NombreProducto || '');
+            return nombreNormalized === inputNormalized;
+        });
+        
+        if (producto) {
+            logger.info(`[${jid}] -> Producto seleccionado por nombre: ${producto.NombreProducto}`);
+        }
+    }
+    
+    if (!producto) {
+        logger.warn(`[${jid}] -> No se encontró producto con input: "${input}"`);
         await say(sock, jid, 
-            `❌ Por favor, elige un número válido entre *1* y *${matches.length}*.\n\n` +
-            `O escribe el nombre del producto que buscas.`, 
+            `❌ No encontré ese producto en la lista.\n\n` +
+            `Por favor escribe el *número* (ejemplo: 1) o el *nombre exacto* del producto que deseas. 😊`, 
             ctx
         );
         return;
     }
-
-    const producto = matches[selection - 1];
-    
-    await handleProductSelection(sock, jid, producto, ctx);
-    
-    userSession.phase = PHASE.SELECT_DETAILS;
+      // Guardar producto seleccionado y limpiar lastMatches
     userSession.currentProduct = producto;
+    userSession.lastMatches = null; // Limpiar lista después de selección
     userSession.errorCount = 0;
 
-    // Determinar el campo que se debe esperar
-    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
-    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
-
-    if (numPrimaryItems > 0) {
-        userSession.awaitingField = nomenclature.itemPrimary;
-    } else if (numSecondaryItems > 0) {
-        userSession.awaitingField = nomenclature.itemSecondary;
+    // ============================================================
+    // 🎯 TICKET 3: LÓGICA GENÉRICA DE "SALTOS" 
+    // ============================================================
+    // Detecta automáticamente si un producto requiere pasos intermedios
+    // basándose en los campos opciones_extra_1 y opciones_extra_2
+    // 
+    // EJEMPLOS:
+    // - Empanada (Numero_de_Sabores=0) → Salta a cantidad
+    // - Helado (Numero_de_Toppings=5) → Va a detalles
+    // - Pescado (NumeroEntrada=0, Sopa=0) → Salta a cantidad
+    // ============================================================
+    
+    const dbFields = envConfig.backend.fields;
+    
+    // Leer opciones extra genéricas (con defensive coding)
+    const opciones1 = parseInt(producto[dbFields.opcionesExtra1] || 0, 10);
+    const opciones2 = parseInt(producto[dbFields.opcionesExtra2] || 0, 10);
+    const totalOpciones = opciones1 + opciones2;
+    
+    logger.info(`[${jid}] -> 🎯 TICKET 3 - Opciones detectadas:`, {
+        campo1: dbFields.opcionesExtra1,
+        valor1: opciones1,
+        campo2: dbFields.opcionesExtra2,
+        valor2: opciones2,
+        total: totalOpciones,
+        producto: producto[dbFields.productName]
+    });
+    
+    if (totalOpciones > 0) {
+        // ✅ TIENE OPCIONES → Ir a fase SELECT_DETAILS
+        logger.info(`[${jid}] -> ✅ Producto CON opciones (${totalOpciones}) → SELECT_DETAILS`);
+        
+        userSession.phase = PHASE.SELECT_DETAILS;
+        userSession.awaitingField = 'details';
+        
+        // Guardar info de pasos en la sesión para selection.handler
+        userSession.productoPasos = {
+            opciones1: opciones1,
+            opciones2: opciones2,
+            currentStep: 1
+        };
+        
+        // Delegar a selection.handler para manejar los detalles
+        const selectionHandler = require('./selection.handler');
+        await selectionHandler.handleSelectDetails(sock, jid, '', userSession, ctx);
+        return;
+        
     } else {
+        // ❌ NO TIENE OPCIONES → Saltar directo a CANTIDAD
+        logger.info(`[${jid}] -> ⏭️ Producto SIN opciones (${totalOpciones}) → SELECT_QUANTITY (SALTO)`);
+        
+        userSession.phase = PHASE.SELECT_QUANTITY;
         userSession.awaitingField = 'quantity';
+        
+        const productName = producto[dbFields.productName] || 'producto';
+        await say(sock, jid, 
+            `✅ *${productName}* seleccionado.\n\n` +
+            `¿Cuántas unidades deseas?\n\n` +
+            `_Ejemplos:_\n` +
+            `• *1* (una unidad)\n` +
+            `• *2* (dos unidades)\n` +
+            `• *2 sin papaya* (dos con observación)`, 
+            ctx
+        );
+        return;
     }
 }
 
@@ -371,12 +614,37 @@ function getProductSearchState(userSession) {
     };
 }
 
+// Selección robusta de producto por índice o nombre
+function selectProductFromInventory(input, inventory) {
+    const num = parseInt(input.trim(), 10);
+    if (!isNaN(num) && num > 0 && num <= inventory.length) {
+        return inventory[num - 1];
+    }
+    return inventory.find(p => (p.NombreProducto || '').toLowerCase() === input.trim().toLowerCase());
+}
+
+// Flujo inteligente según Numero_de_Sabores
+function handleProductSelectionFlow(producto, userSession, PHASE) {
+    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
+    if (numSabores > 0) {
+        userSession.awaitingField = 'sabores';
+        userSession.phase = PHASE.SELECT_DETAILS;
+    } else {
+        userSession.awaitingField = 'quantity';
+        userSession.phase = PHASE.SELECT_QUANTITY;
+    }
+    userSession.currentProduct = producto;
+    userSession.errorCount = 0;
+}
+
 // ==========================================
 // EXPORTS
 // ==========================================
 module.exports = {
     handleBrowseImages,
-    handleSeleccionProducto,
+    handleProductSelection,
+    handleSeleccionProducto: handleProductSelection, // Alias para compatibilidad
+    handleSingleProductFound, // Export agregado para handler.js
     searchInCache,
     searchInAPI,
     normalizeProductsData,

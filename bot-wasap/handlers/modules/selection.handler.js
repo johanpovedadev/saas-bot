@@ -24,33 +24,47 @@ const { say } = require('../../services/bot_core');
 const cartService = require('../../services/cartService');
 const { fuzzySearchSabores, fuzzySearchToppings } = require('../../utils/fuzzySearch');
 const { validateInput } = require('../checkoutHandler');
+const { parseFlexibleInput, generateEmpathicResponse, validateQuantity } = require('../../utils/flexibleInput');
+const empathy = require('../../utils/empathyMessages');
 const envConfig = require('../../config/env.loader');
+
+/**
+ * Genera el mensaje que pide la cantidad con ejemplos de observaciones
+ * @param {string} progressText - Texto de progreso opcional (ej: "📍 Paso 2 de 2:")
+ * @returns {string} - Mensaje formateado
+ */
+function getQuantityPromptMessage(progressText = '') {
+    return `${progressText}*¿Cuántas unidades deseas?*\n\n` +
+           `_Ejemplos:_\n` +
+           `• *1* (una unidad)\n` +
+           `• *2* (dos unidades)\n` +
+           `• *2 sin papaya* (dos con observación)`;
+}
 
 /**
  * Calcula el indicador de progreso basado en los pasos del producto
  * @param {Object} producto - Producto seleccionado
  * @param {string} currentStep - Paso actual: 'sabores', 'toppings', 'quantity'
+ * @param {Object} [ctx] - Contexto global opcional
  * @returns {string} - Indicador de progreso (ej: "📍 Paso 2 de 3:")
  */
-function getProgressIndicator(producto, currentStep) {
-    const dbFields = envConfig.backend.fields;
-    const nomenclature = envConfig.nomenclature;
+function getProgressIndicator(producto, currentStep, ctx) {
+    const dbFields = envConfig.backend?.fields || {};
+    const nomenclature = envConfig.nomenclature || {};
     
-    const numPrimaryItems = parseInt(producto[dbFields.itemPrimaryCount] || 0, 10);
-    const numSecondaryItems = parseInt(producto[dbFields.itemSecondaryCount] || 0, 10);
-    
+    const itemPrimaryCountKey = dbFields.itemPrimaryCount;
+    const itemSecondaryCountKey = dbFields.itemSecondaryCount;
+    const numPrimaryItems = parseInt(producto[itemPrimaryCountKey] || 0, 10);
+    const numSecondaryItems = parseInt(producto[itemSecondaryCountKey] || 0, 10);
     const steps = [];
     if (numPrimaryItems > 0) steps.push(nomenclature.itemPrimary);
     if (numSecondaryItems > 0) steps.push(nomenclature.itemSecondary);
     steps.push('quantity');
-    
     const totalSteps = steps.length;
     const currentStepIndex = steps.indexOf(currentStep) + 1;
-    
     if (currentStepIndex > 0 && totalSteps > 1) {
         return `📍 *Paso ${currentStepIndex} de ${totalSteps}:*`;
     }
-    
     return '';
 }
 
@@ -74,19 +88,35 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
 
     const looksLikeDetail = /^\s*(s\d+|t\d+|sin)\b/i.test(rawInput.trim());
     const looksLikeNumber = /^\s*\d+\s*$/.test(rawInput);
+    
+    // ✅ CONFIRMACIÓN IMPLÍCITA: Detectar si el input comienza con un número (cantidad + observaciones)
+    // Ejemplos: "2", "2 sin papaya", "3 extra dulce"
+    const quantityMatch = rawInput.trim().match(/^(\d+)(\s+(.+))?$/);
+    const startsWithQuantity = quantityMatch !== null;
 
     // Validar que hay un producto seleccionado
-    const currentProduct = userSession.currentProduct;
-    if (!currentProduct) {
+    const currentProduct = userSession.currentProduct;    if (!currentProduct) {
         userSession.errorCount++;
         await say(sock, jid, '❌ No hay un producto seleccionado. Por favor, escribe el nombre del producto que deseas.', ctx);
         userSession.phase = PHASE.BROWSE_IMAGES;
         return;
-    }    const dbFields = envConfig.backend.fields;
-    const nomenclature = envConfig.nomenclature;
+    }
+    
+    // Obtener configuración de campos desde envConfig
+    const dbFields = envConfig.backend?.fields || {};
+    const nomenclature = envConfig.nomenclature || {};
     
     const numPrimaryItems = parseInt(currentProduct[dbFields.itemPrimaryCount] || 0, 10);
     const numSecondaryItems = parseInt(currentProduct[dbFields.itemSecondaryCount] || 0, 10);
+
+    // ✅ PRIORIDAD 1: Si el input comienza con un NÚMERO, procesarlo como CANTIDAD
+    // Esto evita que "2 sin papaya" sea tratado como toppings
+    if (startsWithQuantity && userSession.awaitingField === 'quantity') {
+        logger.info(`[${jid}] -> Confirmación implícita: cantidad detectada en input: "${rawInput}"`);
+        userSession.awaitingField = 'quantity';
+        await handleSelectQuantity(sock, jid, rawInput, userSession, ctx);
+        return;
+    }
 
     // FLUJO DE ITEMS PRIMARIOS
     const primaryItemsSelected = userSession[`${nomenclature.itemPrimary}Selected`] || [];
@@ -95,7 +125,8 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
         
         await handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKeywordsRegex, userSession, ctx, currentProduct, numPrimaryItems, numSecondaryItems);
         return;
-    }    // FLUJO DE ITEMS SECUNDARIOS
+    }
+    // FLUJO DE ITEMS SECUNDARIOS
     if (numSecondaryItems > 0 && userSession.awaitingField === nomenclature.itemSecondary) {
         await handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, noKeywordsRegex, looksLikeNumber, userSession, ctx, currentProduct, numSecondaryItems);
         return;
@@ -116,7 +147,7 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
  * @private
  */
 async function handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKeywordsRegex, userSession, ctx, currentProduct, numPrimaryItems, numSecondaryItems) {
-    const dbFields = envConfig.backend.fields;
+    const dbFields = envConfig.backend?.fields || {};
     const nomenclature = envConfig.nomenclature;
     const primaryItemsKey = `${nomenclature.itemPrimary}Selected`;
     
@@ -131,12 +162,12 @@ async function handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKe
         
         if (numSecondaryItems > 0) {
             userSession.awaitingField = nomenclature.itemSecondary;
-            const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary);
+            const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary, ctx);
             const progressText = progressIndicator ? `${progressIndicator} ` : '';
             await say(sock, jid, `✅ Sin ${nomenclature.itemPrimaryPlural} seleccionados.\n\n${progressText}Ahora puedes elegir ${nomenclature.itemSecondaryPlural} opcionales (ej: T1, T2) o indicar la cantidad para continuar.`, ctx);
         } else {
             userSession.awaitingField = 'quantity';
-            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity', ctx);
             const progressText = progressIndicator ? `${progressIndicator} ` : '';
             await say(sock, jid, `✅ Sin ${nomenclature.itemPrimaryPlural} seleccionados.\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
         }
@@ -172,12 +203,12 @@ async function handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKe
             // Ya completados
             if (numSecondaryItems > 0) {
                 userSession.awaitingField = nomenclature.itemSecondary;
-                const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary);
+                const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary, ctx);
                 const progressText = progressIndicator ? `${progressIndicator} ` : '';
                 await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n${progressText}Ahora puedes añadir ${nomenclature.itemSecondaryPlural} opcionales (ej: T1) o indicar la cantidad.`, ctx);
             } else {
                 userSession.awaitingField = 'quantity';
-                const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
+                const progressIndicator = getProgressIndicator(currentProduct, 'quantity', ctx);
                 const progressText = progressIndicator ? `${progressIndicator} ` : '';
                 await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
             }
@@ -185,23 +216,41 @@ async function handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKe
         }
         await say(sock, jid, `No pude reconocer ${nomenclature.itemPrimaryPlural} nuevos. Escribe códigos como S1, S2 o el nombre del ${nomenclature.itemPrimarySingular}.`, ctx);
         return;
-    }
-
+    }    
     if (userSession[primaryItemsKey].length < numPrimaryItems) {
         // Aún faltan items
-        await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabelSingular} "${added[0]}" añadido. Selecciona otro ${nomenclature.itemPrimarySingular} (${userSession[primaryItemsKey].length}/${numPrimaryItems}).`, ctx);
+        await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabelSingular} "${added[0]}" añadido. Selecciona otro ${nomenclature.itemPrimarySingular} (${userSession[primaryItemsKey].length}/${numPrimaryItems}).\n\n_Ejemplo: s2 s5_`, ctx);
     } else {
         // Completados
         if (numSecondaryItems > 0) {
             userSession.awaitingField = nomenclature.itemSecondary;
-            const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary);
-            const progressText = progressIndicator ? `${progressIndicator} ` : '';
-            await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n${progressText}*Opcionales:*\n• ${nomenclature.itemSecondaryLabel}: T1, T2\n• Observaciones: "sin papaya"\n\nO escribe la *cantidad* directamente.`, ctx);
+            const progressIndicator = getProgressIndicator(currentProduct, nomenclature.itemSecondary, ctx);
+            const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+            await say(sock, jid, 
+                `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n` +
+                `${progressText}*Opcionales:*\n` +
+                `• ${nomenclature.itemSecondaryLabel}: T1, T2\n` +
+                `• Observaciones: "sin papaya"\n\n` +
+                `_Ejemplos:_\n` +
+                `• "t1 t2" (toppings)\n` +
+                `• "sin papaya" (solo observación)\n` +
+                `• "t1 sin papaya" (ambos)\n` +
+                `• "sin" (nada)`, 
+                ctx
+            );
         } else {
             userSession.awaitingField = 'quantity';
-            const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-            const progressText = progressIndicator ? `${progressIndicator} ` : '';
-            await say(sock, jid, `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n${progressText}*Opcional:* Observaciones (ej: "sin papaya")\n\nO escribe la *cantidad*.`, ctx);
+            const progressIndicator = getProgressIndicator(currentProduct, 'quantity', ctx);
+            const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+            await say(sock, jid, 
+                `✅ ${nomenclature.itemPrimaryLabel}: ${userSession[primaryItemsKey].join(', ')}.\n\n` +
+                `${progressText}*¿Cuántas unidades deseas?*\n\n` +
+                `_Ejemplos:_\n` +
+                `• "1" (una unidad)\n` +
+                `• "2" (dos unidades)\n` +
+                `• "2 sin papaya" (dos con observación)`, 
+                ctx
+            );
         }
     }
 }
@@ -212,6 +261,7 @@ async function handlePrimaryItemsFlow(sock, jid, rawInput, normalizedInput, noKe
  */
 async function handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, noKeywordsRegex, looksLikeNumber, userSession, ctx, currentProduct, numSecondaryItems) {
     const nomenclature = envConfig.nomenclature;
+    const dbFields = envConfig.backend?.fields || {};
     const secondaryItemsKey = `${nomenclature.itemSecondary}Selected`;
     
     // Inicializar array si no existe
@@ -219,7 +269,19 @@ async function handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, no
         userSession[secondaryItemsKey] = [];
     }
     
-    // Si el usuario envía un número, tratarlo como cantidad
+    // ✅ CONFIRMACIÓN IMPLÍCITA: Detectar si comienza con número (cantidad + observaciones)
+    const quantityMatch = rawInput.trim().match(/^(\d+)(\s+(.+))?$/);
+    const startsWithQuantity = quantityMatch !== null;
+    
+    // Si el usuario envía un número al inicio, tratarlo como cantidad (confirmación implícita)
+    if (startsWithQuantity) {
+        logger.info(`[${jid}] -> Confirmación implícita en toppings: "${rawInput}" -> procesando como cantidad`);
+        userSession.awaitingField = 'quantity';
+        await handleSelectQuantity(sock, jid, rawInput, userSession, ctx);
+        return;
+    }
+    
+    // Si el usuario envía SOLO un número, tratarlo como cantidad
     if (looksLikeNumber) {
         userSession.awaitingField = 'quantity';
         await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
@@ -249,9 +311,17 @@ async function handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, no
         userSession[secondaryItemsKey] = [];
         userSession.observaciones = userSession.observaciones || '';
         userSession.awaitingField = 'quantity';
-        const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-        const progressText = progressIndicator ? `${progressIndicator} ` : '';
-        await say(sock, jid, `✅ Sin ${nomenclature.itemSecondaryPlural}.\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
+        const progressIndicator = getProgressIndicator(currentProduct, 'quantity', ctx);
+        const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
+        await say(sock, jid, 
+            `✅ Sin ${nomenclature.itemSecondaryPlural}.\n\n` +
+            `${progressText}*¿Cuántas unidades deseas?*\n\n` +
+            `_Ejemplos:_\n` +
+            `• "1" (una unidad)\n` +
+            `• "2" (dos unidades)\n` +
+            `• "2 sin papaya" (dos con observación)`, 
+            ctx
+        );
         return;
     }
     
@@ -280,17 +350,25 @@ async function handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, no
         : '';
     
     userSession.awaitingField = 'quantity';
-    const progressIndicator = getProgressIndicator(currentProduct, 'quantity');
-    const progressText = progressIndicator ? `${progressIndicator} ` : '';
+    const progressIndicator = getProgressIndicator(currentProduct, 'quantity', ctx);
+    const progressText = progressIndicator ? `${progressIndicator}\n\n` : '';
     
-    await say(sock, jid, `✅ ${itemsText}${obsText}\n\n${progressText}¿Cuántas unidades deseas?`, ctx);
+    await say(sock, jid, 
+        `✅ ${itemsText}${obsText}\n\n` +
+        `${progressText}*¿Cuántas unidades deseas?*\n\n` +
+        `_Ejemplos:_\n` +
+        `• "1" (una unidad)\n` +
+        `• "2" (dos unidades)\n` +
+        `• "2 sin papaya" (dos con observación)`, 
+        ctx
+    );
 }
 
 /**
  * Maneja la selección de cantidad
  * @param {Object} sock - Socket de WhatsApp
  * @param {string} jid - JID del usuario
- * @param {string} input - Input del usuario (cantidad)
+ * @param {string} input - Input del usuario (cantidad + observaciones opcionales)
  * @param {Object} userSession - Sesión del usuario
  * @param {Object} ctx - Contexto global
  * @returns {Promise<void>}
@@ -298,11 +376,17 @@ async function handleSecondaryItemsFlow(sock, jid, rawInput, normalizedInput, no
 async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Selección de cantidad: "${input}"`);
 
-    const quantity = parseInt(input, 10);
+    // Parsear cantidad y observaciones del input (ej: "2 sin papaya")
+    const inputParts = input.trim().split(/\s+/);
+    const quantityStr = inputParts[0];
+    const quantity = parseInt(quantityStr, 10);
+    
+    // Extraer observaciones adicionales si existen
+    const additionalObservations = inputParts.slice(1).join(' ');
     
     if (isNaN(quantity) || quantity < 1 || quantity > 100) {
         userSession.errorCount++;
-        await say(sock, jid, '❌ Por favor, ingresa una cantidad válida (entre 1 y 100).', ctx);
+        await say(sock, jid, '❌ Por favor, ingresa una cantidad válida (entre 1 y 100).\n\n_Ejemplo: "2" o "2 sin papaya"_', ctx);
         return;
     }
 
@@ -312,14 +396,23 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
         await say(sock, jid, '❌ No hay un producto seleccionado. Por favor, escribe el nombre del producto que deseas.', ctx);
         userSession.phase = PHASE.BROWSE_IMAGES;
         return;
-    }    const nomenclature = envConfig.nomenclature;
-    const dbFields = envConfig.backend.fields;
+    }
+    
+    // Combinar observaciones existentes con las nuevas
+    if (additionalObservations) {
+        userSession.observaciones = userSession.observaciones 
+            ? `${userSession.observaciones}, ${additionalObservations}`
+            : additionalObservations;
+    }
+    const nomenclature = envConfig.nomenclature;
+    const dbFields = envConfig.backend?.fields || {};
     const primaryItemsKey = `${nomenclature.itemPrimary}Selected`;
     const secondaryItemsKey = `${nomenclature.itemSecondary}Selected`;
     
     // Obtener items seleccionados
     const selectedPrimaryItems = userSession[primaryItemsKey] || [];
-    const selectedSecondaryItems = userSession[secondaryItemsKey] || [];    // Obtener listas de items desde el producto o contexto
+    const selectedSecondaryItems = userSession[secondaryItemsKey] || [];    
+    // Obtener listas de items desde el producto o contexto
     const primaryItemsList = currentProduct[dbFields.itemPrimaryList] || ctx.itemsData?.[nomenclature.itemPrimaryPlural] || [];
     const secondaryItemsList = currentProduct[dbFields.itemSecondaryList] || ctx.itemsData?.[nomenclature.itemSecondaryPlural] || [];
 
@@ -340,20 +433,121 @@ async function handleSelectQuantity(sock, jid, input, userSession, ctx) {
         dbFields,
         ctx,
         jid
-    );
-
-    // Si hay múltiples unidades con items, preguntar si son iguales
+    );    
+    // Si hay múltiples unidades, agregar la primera y pedir sabores del siguiente
     if (quantity > 1 && (mappedPrimaryItems.length > 0 || mappedSecondaryItems.length > 0)) {
-        await handleSameUnitsConfirm(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx);
+        await handleMultipleUnitsFlow(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx);
         return;
     }
 
-    // Agregar al carrito
+    // Agregar al carrito (cantidad = 1 o sin items personalizables)
     await addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx);
 }
 
 /**
- * Pregunta al usuario si todas las unidades tienen las mismas características
+ * Maneja el flujo cuando el usuario pide múltiples unidades
+ * Agrega la primera unidad al carrito y pide sabores/toppings para las siguientes
+ * @private
+ */
+async function handleMultipleUnitsFlow(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx) {
+    const nomenclature = envConfig.nomenclature;
+    const dbFields = envConfig.backend?.fields || {};
+    const observacionesFinal = userSession.observaciones || '';
+    
+    // ✅ TICKET 2: Defensive coding para múltiples unidades
+    const nombre = currentProduct[dbFields.productName] 
+        || currentProduct.NombreProducto 
+        || currentProduct.nombre 
+        || 'Producto sin nombre';
+    
+    const precioRaw = currentProduct[dbFields.productPrice] 
+        || currentProduct.Precio_Venta 
+        || currentProduct.precio 
+        || 0;
+    
+    const precio = parseFloat(String(precioRaw).replace(/[^0-9.]/g, '')) || 0;
+    
+    const codigo = currentProduct[dbFields.productCode] 
+        || currentProduct.CodigoProducto 
+        || currentProduct.codigo 
+        || `TEMP-${Date.now()}`;
+    
+    // 1. Agregar la PRIMERA unidad al carrito
+    const firstCartItem = {
+        codigo,
+        nombre,
+        precio,
+        observaciones: observacionesFinal
+    };
+    
+    firstCartItem[nomenclature.itemPrimary] = mappedPrimaryItems;
+    firstCartItem[nomenclature.itemSecondary] = mappedSecondaryItems;
+    
+    cartService.addToCart(ctx, jid, firstCartItem, 1);
+    
+    const obsText = observacionesFinal ? ` (${observacionesFinal})` : '';
+    await say(sock, jid, `✅ 1/${quantity} - ${firstCartItem.nombre}${obsText} añadido al carrito.`, ctx);
+    
+    // 2. Guardar información de productos pendientes
+    userSession.pendingUnits = {
+        product: currentProduct,
+        totalQuantity: quantity,
+        completedUnits: 1,
+        remainingUnits: quantity - 1
+    };
+    
+    // 3. Resetear selecciones para el siguiente producto
+    const primaryKey = `${nomenclature.itemPrimary}Selected`;
+    const secondaryKey = `${nomenclature.itemSecondary}Selected`;
+    userSession[primaryKey] = [];
+    userSession[secondaryKey] = [];
+    userSession.observaciones = '';
+    
+    // 4. Pedir sabores/toppings para la SEGUNDA unidad
+    const numPrimaryItems = parseInt(currentProduct[dbFields.itemPrimaryCount] || 0, 10);
+    const numSecondaryItems = parseInt(currentProduct[dbFields.itemSecondaryCount] || 0, 10);
+    
+    if (numPrimaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemPrimary;
+        const primaryItemsList = currentProduct[dbFields.itemPrimaryList] || ctx.itemsData?.[nomenclature.itemPrimaryPlural] || [];
+        
+        const saboresList = primaryItemsList.map((s, i) => `*S${i + 1}.* ${s[dbFields.productName] || s}`).join('\n');
+        
+        await say(sock, jid, 
+            `🔄 *Producto 2 de ${quantity}* - ${currentProduct[dbFields.productName]}\n\n` +
+            `📍 *Paso 1:* Selecciona *${numPrimaryItems} ${nomenclature.itemPrimary}${numPrimaryItems > 1 ? 'es' : ''}*:\n\n` +
+            `${saboresList}\n\n` +
+            `_Ejemplo: s1 s2 s3_`, 
+            ctx
+        );
+    } else if (numSecondaryItems > 0) {
+        userSession.awaitingField = nomenclature.itemSecondary;
+        const secondaryItemsList = currentProduct[dbFields.itemSecondaryList] || ctx.itemsData?.[nomenclature.itemSecondaryPlural] || [];
+        
+        const toppingsList = secondaryItemsList.map((t, i) => `*T${i + 1}.* ${t[dbFields.productName] || t}`).join('\n');
+        
+        await say(sock, jid, 
+            `🔄 *Producto 2 de ${quantity}* - ${currentProduct[dbFields.productName]}\n\n` +
+            `📍 *Paso 1:* Añade ${nomenclature.itemSecondaryPlural} (opcionales):\n\n` +
+            `${toppingsList}\n\n` +
+            `_Ejemplo: t1 t2 o "sin"_`, 
+            ctx
+        );
+    } else {
+        // Producto sin opciones personalizables
+        userSession.awaitingField = 'quantity_remaining';
+        await say(sock, jid, 
+            `🔄 *Producto 2 de ${quantity}* - ${currentProduct[dbFields.productName]}\n\n` +
+            `¿Alguna observación especial? O escribe "sin" para continuar.\n\n` +
+            `_Ejemplo: "sin papaya" o "sin"_`, 
+            ctx
+        );
+    }
+}
+
+/**
+ * Función legacy - mantener por compatibilidad pero no se usa más
+ * @deprecated Usar handleMultipleUnitsFlow en su lugar
  * @private
  */
 async function handleSameUnitsConfirm(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx) {
@@ -382,14 +576,40 @@ async function handleSameUnitsConfirm(sock, jid, quantity, mappedPrimaryItems, m
  */
 async function addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, mappedSecondaryItems, currentProduct, userSession, ctx) {
     const nomenclature = envConfig.nomenclature;
-    const dbFields = envConfig.backend.fields;
+    const dbFields = envConfig.backend?.fields || {};
     const observacionesFinal = userSession.observaciones || '';
+    
+    // ✅ TICKET 2: Logging detallado para debugging
+    logger.debug(`[CART] 📦 Agregando al carrito | Usuario: ${jid}`);
+    logger.debug(`[CART] currentProduct keys: ${Object.keys(currentProduct || {}).join(', ')}`);
+    logger.debug(`[CART] dbFields configurados: ${JSON.stringify(dbFields)}`);
+    
+    // ✅ TICKET 2: Defensive coding - múltiples fallbacks para evitar undefined
+    const nombre = currentProduct[dbFields.productName] 
+        || currentProduct.NombreProducto 
+        || currentProduct.nombre 
+        || 'Producto sin nombre';
+    
+    const precioRaw = currentProduct[dbFields.productPrice] 
+        || currentProduct.Precio_Venta 
+        || currentProduct.precio 
+        || 0;
+    
+    // Limpiar precio: remover puntos, comas, signos de moneda
+    const precio = parseFloat(String(precioRaw).replace(/[^0-9.]/g, '')) || 0;
+    
+    const codigo = currentProduct[dbFields.productCode] 
+        || currentProduct.CodigoProducto 
+        || currentProduct.codigo 
+        || `TEMP-${Date.now()}`;
+    
+    logger.debug(`[CART] ✅ Valores extraídos: nombre="${nombre}", precio=${precio}, codigo="${codigo}"`);
     
     // Preparar objeto para el carrito con nomenclatura genérica
     const cartItem = {
-        codigo: currentProduct[dbFields.productCode],
-        nombre: currentProduct[dbFields.productName],
-        precio: currentProduct[dbFields.productPrice] || 0,
+        codigo,
+        nombre,
+        precio,
         observaciones: observacionesFinal
     };
     
@@ -399,8 +619,74 @@ async function addToCartAndContinue(sock, jid, quantity, mappedPrimaryItems, map
     
     cartService.addToCart(ctx, jid, cartItem, quantity);
     
-    const obsText = observacionesFinal ? ` (${observacionesFinal})` : '';
-    await say(sock, jid, `✅ ${quantity}x ${cartItem.nombre}${obsText} añadido(s) al carrito.`, ctx);
+    // Verificar si hay productos pendientes de una selección múltiple
+    if (userSession.pendingUnits && userSession.pendingUnits.remainingUnits > 0) {
+        const pending = userSession.pendingUnits;
+        pending.completedUnits += 1;
+        pending.remainingUnits -= 1;
+        
+        const obsText = observacionesFinal ? ` (${observacionesFinal})` : '';
+        await say(sock, jid, `✅ ${pending.completedUnits}/${pending.totalQuantity} - ${cartItem.nombre}${obsText} añadido al carrito.`, ctx);
+        
+        // Resetear selecciones para el siguiente producto
+        const primaryKey = `${nomenclature.itemPrimary}Selected`;
+        const secondaryKey = `${nomenclature.itemSecondary}Selected`;
+        userSession[primaryKey] = [];
+        userSession[secondaryKey] = [];
+        userSession.observaciones = '';
+        
+        // Si aún quedan productos pendientes, pedir sabores del siguiente
+        if (pending.remainingUnits > 0) {
+            const nextUnitNumber = pending.completedUnits + 1;
+            const numPrimaryItems = parseInt(pending.product[dbFields.itemPrimaryCount] || 0, 10);
+            const numSecondaryItems = parseInt(pending.product[dbFields.itemSecondaryCount] || 0, 10);
+            
+            if (numPrimaryItems > 0) {
+                userSession.awaitingField = nomenclature.itemPrimary;
+                const primaryItemsList = pending.product[dbFields.itemPrimaryList] || ctx.itemsData?.[nomenclature.itemPrimaryPlural] || [];
+                
+                const saboresList = primaryItemsList.map((s, i) => `*S${i + 1}.* ${s[dbFields.productName] || s}`).join('\n');
+                
+                await say(sock, jid, 
+                    `🔄 *Producto ${nextUnitNumber} de ${pending.totalQuantity}* - ${pending.product[dbFields.productName]}\n\n` +
+                    `📍 *Paso 1:* Selecciona *${numPrimaryItems} ${nomenclature.itemPrimary}${numPrimaryItems > 1 ? 'es' : ''}*:\n\n` +
+                    `${saboresList}\n\n` +
+                    `_Ejemplo: s1 s2 s3_`, 
+                    ctx
+                );
+            } else if (numSecondaryItems > 0) {
+                userSession.awaitingField = nomenclature.itemSecondary;
+                const secondaryItemsList = pending.product[dbFields.itemSecondaryList] || ctx.itemsData?.[nomenclature.itemSecondaryPlural] || [];
+                
+                const toppingsList = secondaryItemsList.map((t, i) => `*T${i + 1}.* ${t[dbFields.productName] || t}`).join('\n');
+                
+                await say(sock, jid, 
+                    `🔄 *Producto ${nextUnitNumber} de ${pending.totalQuantity}* - ${pending.product[dbFields.productName]}\n\n` +
+                    `📍 Añade ${nomenclature.itemSecondaryPlural} (opcionales):\n\n` +
+                    `${toppingsList}\n\n` +
+                    `_Ejemplo: t1 t2 o "sin"_`, 
+                    ctx
+                );
+            } else {
+                userSession.awaitingField = 'observations_only';
+                await say(sock, jid, 
+                    `🔄 *Producto ${nextUnitNumber} de ${pending.totalQuantity}* - ${pending.product[dbFields.productName]}\n\n` +
+                    `¿Alguna observación especial? O escribe "sin" para continuar.\n\n` +
+                    `_Ejemplo: "sin papaya" o "sin"_`, 
+                    ctx
+                );
+            }
+            return; // No resetear estado ni mostrar opciones de continuar
+        } else {
+            // Último producto completado
+            await say(sock, jid, `🎉 ¡Todos los productos de tu pedido están listos!`, ctx);
+            // Limpiar información de productos pendientes
+            userSession.pendingUnits = null;
+        }
+    } else {
+        const obsText = observacionesFinal ? ` (${observacionesFinal})` : '';
+        await say(sock, jid, `✅ ${quantity}x ${cartItem.nombre}${obsText} añadido(s) al carrito.`, ctx);
+    }
 
     // Resetear estado
     userSession.phase = PHASE.BROWSE_IMAGES;
@@ -515,5 +801,6 @@ module.exports = {
     handlePrimaryItemsFlow,
     handleSecondaryItemsFlow,
     handleSameUnitsConfirm,
+    handleMultipleUnitsFlow,
     getProgressIndicator
 };

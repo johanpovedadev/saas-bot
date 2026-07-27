@@ -29,7 +29,7 @@ function buildSystemPrompt(ctx) {
 Contexto del usuario:
 - Nombre: ${c.name || 'aún no registrado'}
 - Saldo actual: $${c.balance.toLocaleString('es-CO')}
-- Gasto hoy: $${c.todaySpending.toLocaleString('es-CO')}
+- Compras hoy: $${c.todaySpending.toLocaleString('es-CO')}
 - Total transacciones: ${c.totalTransactions}
 - Días de prueba gratis: ${c.trialDaysLeft}
 - Premium: ${c.isPremium ? 'SI' : 'NO'}
@@ -39,7 +39,7 @@ Contexto del usuario:
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "register_expense" | "register_income" | "query" | "onboarding_name" | "chat" | "help" | "upgrade",
+  "intent": "register_expense" | "register_income" | "query" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
   "amount": <número en COP, 0 si no aplica>,
   "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
   "subcategory": "<subcategoría>",
@@ -50,19 +50,21 @@ Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con est
 }
 
 Conceptos clave:
-- register_expense: cuando el usuario reporta un gasto ("gasté 18k en almuerzo", "pagué 50mil de mercado")
+- register_expense: cuando el usuario reporta una compra ("compré 18k en almuerzo", "pagué 50mil de mercado")
 - register_income: cuando reporta ingreso ("recibí sueldo", "me pagaron 2 millones")
-- query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto gasté hoy?")
+- query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto compré hoy?")
 - onboarding_name: PRIMERA INTERACCIÓN - responde al nombre
 - chat: conversación casual, saludos, agradecimientos
 - help: cuando pide ayuda o no sabes qué quiere
 - upgrade: cuando pregunta por premium o suscripción
+- referral_info: cuando pregunta por su código de invitación, cómo invitar amigos ("referido", "invitar", "código de invitación", "compartir", "amigue")
+- referral_use: cuando escribe un código de invitación como "LEO77115"
 
 Reglas de personalidad:
 1. NUNCA uses miedo o culpa. Usa esperanza, control, pequeñas victorias.
 2. Sé cálido y cercano, como un amigo que entiende de finanzas.
 3. Usa un tono motivador pero realista. No prometas riqueza.
-4. Cuando registres un gasto, sé neutral y constructivo.
+4. Cuando registres una compra, sé neutral y constructivo.
 5. Cuando registres un ingreso, celebra con el usuario.
 6. Para queries, da información clara y útil.
 7. Si no entiendes, pide aclaración amablemente.
@@ -71,7 +73,7 @@ Reglas de negocio:
 - Los montos vienen en COP. El usuario puede decir "18k", "18 mil" = 18000
 - El usuario tiene ${c.trialDaysLeft} días de prueba gratis de ${30} días.
 - Premium cuesta $30.000 COP/mes. No lo promociones agresivamente.
-- needs_confirmation debe ser TRUE para registros de gastos/ingresos.`;
+- needs_confirmation debe ser TRUE para registros de compras/ingresos.`;
 }
 
 async function interpret(message, userSession) {
@@ -83,7 +85,7 @@ async function interpret(message, userSession) {
 
     const genAI = new GoogleGenerativeAI(key);
     const model = genAI.getGenerativeModel({
-        model: 'models/gemini-2.5-flash',
+        model: 'models/gemini-2.0-flash',
         generationConfig: { responseMimeType: 'application/json' }
     });
 
@@ -93,7 +95,7 @@ async function interpret(message, userSession) {
         try {
             const result = await Promise.race([
                 model.generateContent(prompt),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 12000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 20000))
             ]);
             const response = await result.response;
             let text = response.text().trim();
@@ -113,6 +115,74 @@ async function interpret(message, userSession) {
     return fallbackInterpret(message, userSession);
 }
 
+async function interpretAudio(audioBase64, userSession) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key || key.includes('TU_') || key.length < 20) {
+        logger.warn('financeAi: Gemini key no disponible para audio');
+        return null;
+    }
+
+    const genAI = new GoogleGenerativeAI(key);
+    const model = genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+
+    const prompt = `Eres un asistente de transcripción. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz. No agregues nada, no interpretes, solo transcribe. Si el usuario menciona un gasto, cantidad o monto, inclúyelo tal cual lo dijo. Ejemplos de salidas correctas:\n- "Compré almuerzo por quince mil pesos"\n- "Ayer gasté treinta mil en el mercado"\n- "Hoy pagué el servicio de luz"\n- "Hola Leo, ¿cómo estás?"`;
+
+    try {
+        const audioPart = {
+            inlineData: {
+                mimeType: 'audio/ogg; codecs=opus',
+                data: audioBase64
+            }
+        };
+        const result = await Promise.race([
+            model.generateContent([prompt, audioPart]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+        ]);
+        const response = await result.response;
+        const text = response.text().trim();
+        if (!text) return null;
+        logger.info(`financeAi interpretAudio transcripción: "${text.substring(0, 80)}"`);
+        return text;
+    } catch (e) {
+        logger.error(`financeAi interpretAudio: ${e.message}`);
+        return null;
+    }
+}
+
+async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key || key.includes('TU_') || key.length < 20) {
+        logger.warn('financeAi: Gemini key no disponible para imagen');
+        return null;
+    }
+
+    const genAI = new GoogleGenerativeAI(key);
+    const model = genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+
+    const prompt = `Eres un asistente que lee facturas, recibos y tiquetes. Lee esta imagen y extrae el monto total y la descripción del negocio o producto. Responde en UNA SOLA línea con este formato exacto:\nCompré [descripción del negocio/producto] por [monto] pesos\nEjemplo: "Compré Almacén Éxito por 45000 pesos"\nSi no puedes leer la factura, responde con lo que veas en la imagen.`;
+
+    try {
+        const imagePart = {
+            inlineData: {
+                mimeType: mimeType,
+                data: imageBase64
+            }
+        };
+        const result = await Promise.race([
+            model.generateContent([prompt, imagePart]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+        ]);
+        const response = await result.response;
+        const text = response.text().trim();
+        if (!text) return null;
+        logger.info(`financeAi interpretImage lectura: "${text.substring(0, 80)}"`);
+        return text;
+    } catch (e) {
+        logger.error(`financeAi interpretImage: ${e.message}`);
+        return null;
+    }
+}
+
 function stripAccents(s) {
     return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -129,7 +199,7 @@ function cleanDescription(rawDesc, amount) {
     // Remove standalone "mil", "millon", "millones" (left after removing digits)
     d = d.replace(/\b(millones|millon|mil|k)\b/gi, '');
     // Remove common filler/verb words
-    d = d.replace(/\b(gaste|pague|pagar|compre|compro|costo|valio|recibi|gane|ingreso|ingrese|pago|pagaron|de|en|por|un|una|el|la|los|las|del|que|con|para|mi|se)\b/gi, ' ');
+    d = d.replace(/\b(compre|compro|compra|gaste|pague|pagar|costo|valio|recibi|gane|ingreso|ingrese|pago|pagaron|de|en|por|un|una|el|la|los|las|del|que|con|para|mi|se)\b/gi, ' ');
     // Remove any remaining digits
     d = d.replace(/\d[\d.]*/g, '');
     // Remove extra whitespace
@@ -242,7 +312,7 @@ function fallbackInterpret(message, userSession) {
     }
 
     // Expense patterns: "gaste 18 mil en almuerzo", "pague 50k de mercado", etc.
-    const gastoPat = /(?:gaste|pague|compre|costo|valio|compre|compro|gasto)\s+(?:un[oa]|el|la|los|las)?\s*(.+)/i;
+    const gastoPat = /(?:compre|compro|compra|gaste|pague|costo|valio)\s+(?:un[oa]|el|la|los|las)?\s*(.+)/i;
     const gastoMatch = t.match(gastoPat);
     if (gastoMatch) {
         const rawDesc = gastoMatch[1].trim();
@@ -279,6 +349,27 @@ function fallbackInterpret(message, userSession) {
         }
     }
 
+    // Referral code pattern: LEO + 4-6 digits
+    if (/^leo\d{4,6}$/i.test(t)) {
+        const code = raw.match(/LEO\d{4,6}/i)?.[0] || '';
+        return {
+            intent: 'referral_use',
+            amount: 0, category: '', description: code,
+            needs_confirmation: true,
+            response: `🦁 ¿Te invitó alguien con el código *${code.toUpperCase()}*?\n\nResponde *sí* para aceptar o *no* para cancelar.`
+        };
+    }
+
+    // Referral info: user asking about their own code
+    if (/\b(referido|invitar|invitaci[oó]n|c[oó]digo\s+de\s+invitaci[oó]n|recomendar|compartir\s+c[oó]digo|c[oó]mo\s+invito|amigue|invita)\b/i.test(t)) {
+        return {
+            intent: 'referral_info',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: 'referral_info'
+        };
+    }
+
     // Generic bidirectional: any number + remaining text -> expense
     // Covers: "20000 arreglo celular", "arreglo celular 20000", "8000 de pizza"
     const anyAmount = parseAmount(raw);
@@ -287,7 +378,7 @@ function fallbackInterpret(message, userSession) {
         const isIncome = /recibi|gane|ingreso|pago|pagaron|sueldo|salario|nomina|nomina/i.test(t);
         const rawDesc = isIncome
             ? raw.replace(/recibi|gane|ingreso|pago|pagaron|me\s+pagaron/gi, '').trim()
-            : raw.replace(/gaste|pague|compre|costo|valio|gasto/i, '').trim();
+            : raw.replace(/compre|compro|compra|gaste|pague|costo|valio/gi, '').trim();
         const desc = cleanDescription(rawDesc, anyAmount);
         if (desc.length > 0) {
             return {
@@ -329,7 +420,7 @@ function fallbackInterpret(message, userSession) {
     }
 
     // Query patterns: "cuanto tengo", "saldo", "resumen diario", "como voy", etc.
-    if (/cuanto\s+(tengo|gaste|dinero|plata|saldo|hay|gasto)/i.test(t) || /\bsaldo\b/i.test(t) ||
+    if (/cuanto\s+(tengo|compre|compres|dinero|plata|saldo|hay)/i.test(t) || /\bsaldo\b/i.test(t) ||
         /^(resumen|resumen diario|como voy|cuanto llevo|estado|status|reporte)/i.test(t)) {
         const balance = fin.balance || 0;
         const today = fin.todaySpending || 0;
@@ -344,7 +435,7 @@ function fallbackInterpret(message, userSession) {
             category: '',
             description: '',
             needs_confirmation: false,
-            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: $${balance.toLocaleString('es-CO')}\n💸 Gastado hoy: $${today.toLocaleString('es-CO')}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
+            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: $${balance.toLocaleString('es-CO')}\n💸 Comprado hoy: $${today.toLocaleString('es-CO')}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
         };
     }
 
@@ -355,7 +446,7 @@ function fallbackInterpret(message, userSession) {
             amount: 0, category: '', description: '',
             needs_confirmation: false,
             response: `😊 *${name}*, puedes decirme cosas como:\n\n` +
-                `💸 *"Gasté 18 mil en almuerzo"*\n` +
+                `💸 *"Compré 18 mil en almuerzo"*\n` +
                 `💰 *"Recibí 2 millones de sueldo"*\n` +
                 `📊 *"¿Cuánto tengo?"*\n` +
                 `📷 *[foto de factura]*\n\n¿Qué quieres hacer?`
@@ -368,8 +459,8 @@ function fallbackInterpret(message, userSession) {
         category: '',
         description: '',
         needs_confirmation: false,
-        response: `😊 Hola ${name}. Puedes decirme cosas como:\n\n• "Gasté 18 mil en almuerzo"\n• "Recibí 2 millones de sueldo"\n• "¿Cuánto tengo?"\n\n¿Qué quieres hacer?`
+        response: `😊 Hola ${name}. Puedes decirme cosas como:\n\n• "Compré 18 mil en almuerzo"\n• "Recibí 2 millones de sueldo"\n• "¿Cuánto tengo?"\n\n¿Qué quieres hacer?`
     };
 }
 
-module.exports = { interpret };
+module.exports = { interpret, interpretAudio, interpretImage };

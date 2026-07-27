@@ -9,7 +9,6 @@
 'use strict';
 
 const PHASE = require('../../utils/phases');
-const CONFIG = require('../../config.json');
 const { logger } = require('../../utils/logger');
 const { say } = require('../../services/bot_core');
 const envConfig = require('../../config/env.loader');
@@ -315,5 +314,6 @@ module.exports = {
     getTimeBasedGreeting,
     generateTransactionId,
     cleanText,
-    truncateText
+    truncateText,
+    say  // ✅ Re-exportar say desde bot_core
 };

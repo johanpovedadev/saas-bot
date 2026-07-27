@@ -10,7 +10,7 @@
 
 const { say } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
-const CONFIG = require('../../config.json');
+const envConfig = require('../../config/env.loader');
 const frustrationService = require('../../services/frustrationService');
 
 /**
@@ -21,8 +21,14 @@ const frustrationService = require('../../services/frustrationService');
 function getAdminJids(ctx = {}) {
     const admins = [];
     
-    if (CONFIG.ADMIN_JID) admins.push(CONFIG.ADMIN_JID);
-    if (CONFIG.SOCIA_JID) admins.push(CONFIG.SOCIA_JID);
+    // 1. Desde config file (business config) - prioridad para multi-tenant
+    if (envConfig.admin?.jids?.length) admins.push(...envConfig.admin.jids);
+    
+    // 2. Desde .env (compatibilidad hacia atrás)
+    if (process.env.ADMIN_JID) admins.push(process.env.ADMIN_JID);
+    if (process.env.SOCIA_JID) admins.push(process.env.SOCIA_JID);
+    
+    // 3. Desde ctx.config (legacy)
     if (ctx.config?.adminPhones) admins.push(...ctx.config.adminPhones);
     
     return [...new Set(admins)];
@@ -36,7 +42,7 @@ function getAdminJids(ctx = {}) {
  */
 function isAdmin(jid, ctx = {}) {
     const adminJids = getAdminJids(ctx);
-    return adminJids.includes(jid) || jid === CONFIG.ADMIN_JID || jid === CONFIG.SOCIA_JID;
+    return adminJids.includes(jid);
 }
 
 /**
@@ -48,7 +54,7 @@ function isAdmin(jid, ctx = {}) {
 function resolveTargetJid(token, userSession) {
     if (token && /\d{7,15}/.test(token)) {
         const digits = token.replace(/[^\d]/g, '');
-        return `${digits}@s.whatsapp.net`;
+        return `${digits}@c.us`;
     }
     return userSession.lastCustomerJid || null;
 }
@@ -116,7 +122,7 @@ async function handleUnmuteCommand(sock, jid, text, ctx) {
         return true;
     }
     
-    const targetJid = `${target}@s.whatsapp.net`;
+    const targetJid = `${target}@c.us`;
     const success = unmuteChat(targetJid, ctx);
     
     if (success) {

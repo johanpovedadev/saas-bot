@@ -46,7 +46,7 @@ function extractQuantityAndUnit(normalized) {
 
 function detectNoToppings(normalized) {
     // Detect phrases that explicitly deny secondary items (toppings/extras), including common misspellings
-    const nomenclature = envConfig.getNomenclature();
+    const nomenclature = envConfig.nomenclature;
     const secondaryItemVariants = envConfig.getArray('KEYWORDS_ITEM_SECONDARY_VARIANTS') || 
         [nomenclature.itemSecondary, nomenclature.itemSecondaryPlural];
     
@@ -82,7 +82,7 @@ function extractProductCandidate(normalized) {
 function extractAdditionsAndExclusions(normalized) {
     const additions = [];
     const exclusions = [];
-    const nomenclature = envConfig.getNomenclature();
+    const nomenclature = envConfig.nomenclature;
 
     // Match phrases like 'con extra miel y nueces' or 'con miel, nueces'
     const conMatches = normalized.match(/\bcon\b\s+([a-z0-9\s,]+?)(?:$|[.,;])/gi);
@@ -127,7 +127,7 @@ function parseOrderText(text) {
     if (!text || typeof text !== 'string') return null;
     const raw = text.trim();
     const normalized = simpleNormalize(raw);
-    const nomenclature = envConfig.getNomenclature();
+    const nomenclature = envConfig.nomenclature;
 
     const { quantity, unit } = extractQuantityAndUnit(normalized);
     const noToppings = detectNoToppings(normalized);
@@ -165,11 +165,9 @@ function parseOrderText(text) {
         exclusions: exclusions.length > 0 ? exclusions : null,
         [nomenclature.itemSecondaryPlural]: (noToppings || (exclusions && exclusions.some(e=>e===nomenclature.itemSecondaryPlural)) ? [] : null),
         notes: notes || ''
-    };
-
-    // Generic default primary item logic (if product mentions generic terms but no specific item)
+    };    // Generic default primary item logic (if product mentions generic terms but no specific item)
     try {
-        const productKeywords = envConfig.getKeywords().products || [];
+        const productKeywords = (envConfig.keywords && envConfig.keywords.products) || []; // CORREGIDO
         const defaultPrimaryItems = envConfig.getArray('KEYWORDS_ITEM_PRIMARY_DEFAULTS') || [];
         
         if (parsed.product_name && productKeywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(parsed.product_name))) {

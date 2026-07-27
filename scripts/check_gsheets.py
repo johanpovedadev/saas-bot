@@ -1,5 +1,6 @@
 import json
 import sys
+import os
 import gspread
 from google.oauth2 import service_account
 
@@ -9,7 +10,7 @@ try:
     client = gspread.authorize(creds)
     print('CLIENT OK')
     # IDs used in project
-    PRODUCTS_SHEET_ID = '10twtfwsAbyxZ4D_0ChD34oFkwa_EWKAWPGVfk1FdEHM'
+    PRODUCTS_SHEET_ID = os.environ.get('HELADOS_SHEET_ID', '10twtfwsAbyxZ4D_0ChD34oFkwa_EWKAWPGVfk1FdEHM')
     DELIVERIES_SHEET_ID = '1479sKgwA2ES503noFusdM-rOYv412-ogcqEouI6zQgI'
     try:
         sh = client.open_by_key(PRODUCTS_SHEET_ID)

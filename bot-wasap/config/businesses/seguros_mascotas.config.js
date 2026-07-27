@@ -54,19 +54,19 @@ module.exports = {
     plans: {
         perroPlus: {
             name: 'Plan PLUS',
-            price: 25000,
+            price: 259900,
             label: 'Plan PLUS Perro',
             code: 'PLUS'
         },
         perroPremium: {
             name: 'Plan PREMIUM',
-            price: 45000,
+            price: 354900,
             label: 'Plan PREMIUM Perro',
             code: 'PREMIUM'
         },
         gato: {
             name: 'Plan Gato',
-            price: 20000,
+            price: 200900,
             label: 'Plan Gato',
             code: 'GATO'
         }
@@ -128,9 +128,9 @@ Protege a tu mascota con los mejores planes.
 
         frustration: {
             enabled: true,
-            maxErrors: 3,
+            maxErrors: 2,
             notifyAdmin: true,
-            muteAfterErrors: false
+            muteAfterErrors: true
         },
 
         greetings: {
@@ -159,45 +159,46 @@ Protege a tu mascota con los mejores planes.
             },
 
             messages: {
-                gato: `🐱 *Plan Gato*
+                gato: `🐱 *Plan Gatos*
 
-Protección completa para tu felino 🐱
+💰 *Valor anual: $200.900*
 
-✨ Atención veterinaria
-✨ Cobertura por accidentes
-✨ Asistencia exequial
+📅 Vigencia: 1 año
 
-💰 *Valor: $20.000/mes*
+✅ Protección especializada para gatos
+✅ Cobertura veterinaria
+✅ Cobertura por accidentes
+✅ Asistencia exequial
 
-¿Deseas continuar?
-
-1️⃣ Sí, continuar`,
+1️⃣ Elegir este plan
+2️⃣ Volver al menu`,
 
                 perroPlus: `🐶 *Plan PLUS*
 
-Protección esencial para tu compañero de vida 🐾
+💰 *Valor anual: $259.900*
 
-✨ Cubrimiento veterinario básico
-✨ Cobertura por accidentes
-✨ Asistencia exequial
+📅 Vigencia: 1 año
 
-💰 *Valor: $25.000/mes*
+✅ Cubrimiento veterinario básico
+✅ Cobertura por accidentes
+✅ Asistencia exequial
 
 1️⃣ Elegir este plan
 2️⃣ Ver plan PREMIUM`,
 
                 perroPremium: `🐶 *Plan PREMIUM*
 
-Máxima protección para quien más quieres ❤️
+💰 *Valor anual: $354.900*
 
-✨ Cubrimiento veterinario completo
-✨ Cobertura por accidentes
-✨ Asistencia exequial
-✨ Descuentos en medicamentos
+📅 Vigencia: 1 año
 
-💰 *Valor: $45.000/mes*
+✅ Cobertura ampliada
+✅ Mayor protección veterinaria
+✅ Cobertura por accidentes
+✅ Asistencia exequial
 
-1️⃣ Elegir este plan`,
+1️⃣ Elegir este plan
+2️⃣ Volver a planes`,
 
                 datosTitularNombre: `Perfecto 🙌
 
@@ -221,7 +222,11 @@ Ejemplo: 15/03/1990`,
 
                 datosTitularCiudad: `📍 ¿Ciudad y departamento?
 
-Ejemplo: Bogotá, Cundinamarca`,
+Ejemplo: Bogota, Cundinamarca`,
+
+                datosTitularDireccion: `🏠 Dirección de residencia
+
+Ejemplo: Calle 123 #45-67, Barrio Centro`,
 
                 datosTitularContacto: `📞 ¿Cuál es tu número de celular?
 
@@ -233,25 +238,46 @@ Ejemplo: 3138777115`,
 
 📝 Solo números (ej: 3, 5, 8)`,
 
-                datosMascotaRaza: `🦴 ¿Qué raza es?
+                datosMascotaRazaPerro: `🦴 ¿Que raza es tu perro?
 
-Ejemplo: Golden Retriever, Criollo, Pastor Alemán`,
+Ejemplos:
+• Labrador
+• Golden Retriever
+• Pastor Aleman
+• Bulldog
+• Criollo
+
+✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.`,
+
+                datosMascotaRazaGato: `🐱 ¿Que raza es tu gato?
+
+Ejemplos:
+• Criollo
+• Siamés
+• Persa
+• Angora
+
+✍️ Puedes escribir cualquier otra raza si no aparece en los ejemplos.`,
 
                 confirmacion: `💛 Ya casi terminamos
 
-Confirma tu información:
+Confirma tu informacion:
 
 👤 *Titular:*
 Nombre: {nombre}
 Documento: {documento}
 Fecha Nac.: {fechaNac}
 Ciudad/Dep: {ciudad}
+Direccion: {direccion}
 Celular: {contacto}
+Email: {correo}
 
 🐾 *Mascota:*
 Nombre: {mascota}
-Edad: {edad} años
+Edad: {edad} anos
 Raza: {raza}
+Color: {color}
+Genero: {genero}
 
 📦 *Plan:* {plan}
 
@@ -323,10 +349,13 @@ Por favor selecciona una opción del menú.`
     },
 
     admin: {
-        jids: [
-            '573138777115@c.us',
-            '573028465015@c.us'
+        business_admin_jids: [
+            '573138777115@c.us'
         ],
+        system_admin_jids: [
+            '573138777115@c.us'
+        ],
+        jids: [], // DEPRECATED - usar business_admin_jids y system_admin_jids
         notifications: {
             newOrder: true,
             orderCancelled: true,

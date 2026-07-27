@@ -20,18 +20,11 @@ const axios = require('axios');
 const { logger } = require('../../utils/logger');
 const PHASE = require('../../utils/phases');
 const { say } = require('../../services/bot_core');
-const CONFIG = require('../../config.json');
-const SECRETS = require('../../config.secrets');
+const envConfig = require('../../config/env.loader');
 
 // API Configuration
-const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-let ENDPOINTS = null;
-try {
-    ENDPOINTS = process.env.ENDPOINTS_JSON ? JSON.parse(process.env.ENDPOINTS_JSON) : (SECRETS.ENDPOINTS || CONFIG.ENDPOINTS);
-} catch (e) {
-    ENDPOINTS = SECRETS.ENDPOINTS || CONFIG.ENDPOINTS || null;
-}
-ENDPOINTS = ENDPOINTS || { REGISTRAR_CONFIRMACION: '/registrar_entrega/' };
+const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+let ENDPOINTS = envConfig.backend.endpoints || { REGISTRAR_CONFIRMACION: '/registrar_entrega/' };
 
 /**
  * Normaliza texto para procesamiento

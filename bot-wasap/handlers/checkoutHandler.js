@@ -9,12 +9,11 @@ const { say, sendImage, resetChat } = require('../services/bot_core');
 const { money } = require('../utils/util');
 const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
-const CONFIG = require('../config.json');
-const SECRETS = require('../config.secrets');
+const envConfig = require('../config/env.loader');
 const notificationService = require('../services/notificationService');
 // NOTA: Google Sheets se maneja desde el backend de Python (inventario/google_sheets.py)
 // const googleSheetsService = require('../services/googleSheetsService');
-const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
+const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
 
 // Resolve admin JIDs - delegado a notificationService
 function getAdminJids() {
@@ -24,13 +23,22 @@ function getAdminJids() {
 function generateCartSummary(userSession) {
     if (!userSession || !userSession.order || !userSession.order.items) {
         return { text: 'Tu carrito está vacío.', total: 0 };
-    }    let total = 0;
-    const summaryLines = userSession.order.items.map(item => {
+    }
+    
+    let total = 0;
+    const summaryLines = userSession.order.items.map((item, index) => {
+        // ✅ TICKET 2: Defensive coding - asegurar que nombre nunca sea undefined
+        const nombre = item.nombre 
+            || item.NombreProducto 
+            || item.productName 
+            || `Producto #${index + 1}`;
+        
         const precioNum = Number(item.precio || 0) || 0;
         const cantidad = Number(item.cantidad) || 1;
         const itemTotal = precioNum * cantidad;
         total += itemTotal;
-        let itemText = `*${cantidad}x* ${item.nombre} - *${money(itemTotal)}*`;
+        
+        let itemText = `*${cantidad}x* ${nombre} - *${money(itemTotal)}*`;
 
         // Fallback: use item.sabores (array de objetos) o item.sabor (string) para mostrar sabores
         let saboresArr = [];
@@ -105,7 +113,9 @@ async function handleCartSummary(sock, jid, userSession, ctx) {
         await say(sock, jid, `🛒 Tu carrito está vacío. Escribe *menú* para empezar a comprar.`, ctx);
         userSession.phase = PHASE.SELECCION_OPCION;
         return;
-    }    const summary = generateCartSummary(userSession);
+    }
+
+    const summary = generateCartSummary(userSession);
 
     const fullMessage = `📝 *Resumen de tu pedido:*
 
@@ -128,6 +138,43 @@ ${summary.text}
 
     await say(sock, jid, fullMessage, ctx);
     userSession.phase = PHASE.CONFIRM_ORDER;
+}
+
+// Nueva función para manejar la respuesta del usuario en CONFIRM_ORDER
+async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
+    logger.info(`[${jid}] -> handleConfirmOrderChoice: Usuario respondió "${input}"`);
+    
+    const cleanInput = input.toLowerCase().trim();
+    
+    // Opción 1: Confirmar pedido → ir a checkout
+    if (cleanInput === '1' || cleanInput === 'confirmar') {
+        logger.info(`[${jid}] -> Usuario eligió CONFIRMAR pedido. Iniciando checkout...`);
+        await handleEnterAddress(sock, jid, '', userSession, ctx, true);
+        return;
+    }
+    
+    // Opción 2: Seguir comprando
+    if (cleanInput === '2' || cleanInput === 'seguir') {
+        logger.info(`[${jid}] -> Usuario eligió SEGUIR COMPRANDO.`);
+        userSession.phase = PHASE.SELECCION_OPCION;
+        await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
+        return;
+    }
+    
+    // Opción 3: Cancelar pedido
+    if (cleanInput === '3' || cleanInput === 'cancelar') {
+        logger.info(`[${jid}] -> Usuario eligió CANCELAR pedido.`);
+        if (userSession.order) {
+            userSession.order.items = [];
+        }
+        userSession.phase = PHASE.MENU_PRINCIPAL;
+        await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
+        return;
+    }
+    
+    // Opción inválida
+    logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
+    await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para cancelar', ctx);
 }
 
 async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitialCall = false) {
@@ -336,17 +383,50 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         const codes = userSession.order.items.map(i => i.codigo || '').join('; ');
         const fallbackProductsText = productsText && productsText.trim() ? productsText : (userSession.order.detalles_items ? userSession.order.detalles_items.map(d => d.nombre).join('; ') : '');
         const fallbackCodes = codes && codes.trim() ? codes : (userSession.order.detalles_items ? userSession.order.detalles_items.map(d => d.codigo || '').join('; ') : '');
-        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        const payload = {
+        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        // ✅ Construir campo producto con detalles (sabores, toppings) al estilo heladería
+        const productosDetallados = userSession.order.items.map(item => {
+            let detalle = `${item.nombre || item.producto}`;
+            
+            // Agregar detalles de sabores y toppings si existen
+            const saboresTexto = (item.sabores && item.sabores.length) ? 
+                item.sabores.map(s => (s && (s.NombreProducto || s.nombre)) ? (s.NombreProducto || s.nombre) : s).filter(Boolean).join(', ') : '';
+            
+            const toppingsTexto = (item.toppings && item.toppings.length) ?
+                item.toppings.map(t => (t && (t.NombreProducto || t.nombre)) ? (t.NombreProducto || t.nombre) : (typeof t === 'string' ? t : '')).filter(Boolean).join(', ') : '';
+            
+            // Formato: "Fresas Magicas (C-FRESA-M) (Sabores: fresa; Toppings: Fresas Frescas, perlas) x1"
+            if (saboresTexto || toppingsTexto) {
+                detalle += ' (';
+                if (item.codigo) detalle += item.codigo + ') (';
+                if (saboresTexto) detalle += `Sabores: ${saboresTexto}`;
+                if (saboresTexto && toppingsTexto) detalle += '; ';
+                if (toppingsTexto) detalle += `Toppings: ${toppingsTexto}`;
+                detalle += ')';
+            }
+            
+            // Agregar cantidad
+            detalle += ` x${item.cantidad || 1}`;
+            
+            // Agregar observaciones del item si existen
+            if (item.observaciones) {
+                detalle += ` (${item.observaciones})`;
+            }
+            
+            return detalle;
+        }).join('; ');
+
+        const payload = {
             fecha: new Date().toISOString(),
             nombre: userSession.order.name || '',
-            producto: fallbackProductsText,  // CORREGIDO: singular para Google Sheets
-            codigo: fallbackCodes,            // CORREGIDO: singular para Google Sheets
+            producto: productosDetallados || fallbackProductsText,  // ✅ Con detalles de sabores/toppings
+            codigo: fallbackCodes,
             telefono: userSession.order.telefono || '',
             direccion: userSession.order.address || '',
-            monto: orderTotal,                // CORREGIDO: 'monto' en lugar de 'total'
+            monto: orderTotal,
             pago: userSession.order.paymentMethod || '',
             estado: userSession.order.status || 'Por despachar',
-            origen: 'WhatsApp Bot',
+            observaciones: 'Origen: WhatsApp',  // ✅ CORREGIDO: 'observaciones' en vez de 'origen'
+            referido_por: '',  // ✅ AGREGADO: Campo esperado por Google Sheets
             cliente_jid: jid,
             detalles_items: userSession.order.items.map(i => ({
                 codigo: i.codigo || null,
@@ -364,8 +444,8 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             }))
         };
 
-        const endpoint = (CONFIG.ENDPOINTS && (CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION || CONFIG.ENDPOINTS.REGISTRAR_ENTREGA))
-            ? (CONFIG.ENDPOINTS.REGISTRAR_CONFIRMACION || CONFIG.ENDPOINTS.REGISTRAR_ENTREGA)
+        const endpoint = (envConfig.backend.endpoints && (envConfig.backend.endpoints.registrarConfirmacion || envConfig.backend.endpoints.registrarEntrega))
+            ? (envConfig.backend.endpoints.registrarConfirmacion || envConfig.backend.endpoints.registrarEntrega)
             : '/registrar_entrega/';
         const url = `${API_BASE}${endpoint}`;        try {
             logger.info(`[${jid}] Enviando payload a ${url}: ${JSON.stringify(payload)}`);
@@ -401,34 +481,30 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             } catch (sheetsError) {
                 logger.error(`[${jid}] Error al guardar en Sheets: ${sheetsError.message}`);
                 // No lanzar error, continuar con el flujo
-            }
-
-            const admins = getAdminJids() || [];
-            if (!admins || admins.length === 0) logger.warn('handleFinalizeOrder: no admin JIDs configured; skipping admin notification.');
-            const adminMessage = `📦 NUEVO PEDIDO (WhatsApp)\n\n*Cliente:* ${payload.nombre || jid}\n*Productos:*\n${productsText.replace(/;\s*/g, '\n')}\n\n*Codigos:* ${codes}\n*Telefono:* ${payload.telefono}\n*Direccion:* ${payload.direccion}\n*Total:* ${money(orderTotal)}\n*Pago:* ${payload.pago}\n*Estado:* ${payload.estado}`;
-
-            for (const admin of admins) {
-                try {
-                    await say(sock, admin, adminMessage, ctx);
-                } catch (err) {
-                    logger.error(`Error notificando al admin ${admin}: ${err.message}`);
-                }
-            }
+            }            // ✅ Notificar admins sobre pedido completado usando notificationService
+            await notificationService.notifyAdminsNewOrder(sock, jid, payload, orderTotal, ctx);
+            logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
             await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
 
             resetChat(jid, ctx);
-            userSession.phase = PHASE.SELECCION_OPCION;
-
-        } catch (error) {
+            userSession.phase = PHASE.SELECCION_OPCION;} catch (error) {
             logger.error(`[${jid}] -> Error al enviar pedido al backend: ${error.message}`);
 
+            let fallbackPath = 'none';
             try {
                 if (ctx) {
                     ctx.reservas = ctx.reservas || [];
                     ctx.reservas.push({ timestamp: Date.now(), payload });
                 }
-                const fallbackPath = path.join(__dirname, '..', 'tmp', `failed_order_${Date.now()}.json`);
+                
+                // Crear directorio tmp/ si no existe
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                if (!fs.existsSync(tmpDir)) {
+                    fs.mkdirSync(tmpDir, { recursive: true });
+                }
+                
+                fallbackPath = path.join(tmpDir, `failed_order_${Date.now()}.json`);
                 fs.writeFileSync(fallbackPath, JSON.stringify({ payload, error: error.message }, null, 2));
                 logger.info(`[${jid}] -> Pedido guardado en fallback: ${fallbackPath}`);
             } catch (fsErr) {
@@ -437,7 +513,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
 
             const admins = getAdminJids() || [];
             if (!admins || admins.length === 0) logger.warn('handleFinalizeOrder (error): no admin JIDs configured; cannot notify admins about failed order.');
-            const errorMsg = `⚠️ ERROR AL REGISTRAR PEDIDO (WhatsApp):\nCliente: ${payload.nombre || jid}\nTelefono: ${payload.telefono}\nDireccion: ${payload.direccion}\nError: ${error.message}\nFallback: ${fallbackPath || 'none'}`;
+            const errorMsg = `⚠️ ERROR AL REGISTRAR PEDIDO (WhatsApp):\nCliente: ${payload.nombre || jid}\nTelefono: ${payload.telefono}\nDireccion: ${payload.direccion}\nError: ${error.message}\nFallback: ${fallbackPath}`;
             for (const admin of admins) {
                 try { await say(sock, admin, errorMsg, ctx); } catch (e) { logger.error(`Error notificando admin por fallo: ${e.message}`); }
             }
@@ -469,7 +545,11 @@ async function handleConfirmOrder(sock, jid, input, userSession, ctx) {
     // Opción 2: Seguir comprando
     else if (confirmation === '2' || /^(seguir|seguir\s*comprando|mas|más)$/i.test(confirmation)) {
         userSession.phase = PHASE.BROWSE_IMAGES;
-        await say(sock, jid, '🍨 ¡Perfecto! Escribe el nombre del producto que deseas añadir (ej: "Copa", "Volcán", "Paleta").', ctx);
+        // Usar configuración genérica desde .env
+        const envConfig = require('../config/env.loader');
+        const emoji = envConfig.ui.emoji.main || '😊';
+        const exampleKeywords = envConfig.keywords.products.slice(0, 3).map(k => `"${k.charAt(0).toUpperCase() + k.slice(1)}"`).join(', ');
+        await say(sock, jid, `${emoji} ¡Perfecto! Escribe el nombre del producto que deseas añadir (ej: ${exampleKeywords}).`, ctx);
     } 
     // Opción 3: Cancelar pedido
     else if (confirmation === '3' || /^(cancelar|vaciar|borrar)$/i.test(confirmation)) {
@@ -536,28 +616,29 @@ async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
     const PHASE = require('../utils/phases');
     
     switch (userSession.phase) {
-        case PHASE.RESUMEN_CARRITO:
-            await handleCartSummary(sock, jid, text, userSession, ctx);
+        // Fases de checkout con nombres CORRECTOS de phases.js
+        case PHASE.CONFIRM_ORDER:
+            await handleConfirmOrderChoice(sock, jid, text, userSession, ctx);
             break;
             
-        case PHASE.INGRESAR_NOMBRE:
-            await handleEnterName(sock, jid, text, userSession, ctx);
-            break;
-            
-        case PHASE.INGRESAR_DIRECCION:
+        case PHASE.CHECK_DIR:
             await handleEnterAddress(sock, jid, text, userSession, ctx);
             break;
             
-        case PHASE.INGRESAR_TELEFONO:
+        case PHASE.CHECK_NAME:
+            await handleEnterName(sock, jid, text, userSession, ctx);
+            break;
+            
+        case PHASE.CHECK_TELEFONO:
             await handleEnterTelefono(sock, jid, text, userSession, ctx);
             break;
             
-        case PHASE.INGRESAR_METODO_PAGO:
+        case PHASE.CHECK_PAGO:
             await handleEnterPaymentMethod(sock, jid, text, userSession, ctx);
             break;
             
-        case PHASE.CONFIRMAR_ORDEN:
-            await handleConfirmOrder(sock, jid, text, userSession, ctx);
+        case PHASE.FINALIZE_ORDER:
+            await handleFinalizeOrder(sock, jid, text, userSession, ctx);
             break;
             
         default:
@@ -575,6 +656,7 @@ module.exports = {
     handleEnterPaymentMethod,
     handleFinalizeOrder,
     handleConfirmOrder,
+    handleConfirmOrderChoice,
     validateInput,
     sendOrderNotification,
     handleCheckoutPhase

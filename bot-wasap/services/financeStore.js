@@ -53,7 +53,7 @@ function rowToFinance(row) {
         todaySpending: row.today_spending || 0,
         lastResetDate: row.last_reset_date || '',
         trialStart: row.trial_start || 0,
-        isPremium: !!row.is_premium,
+        isPremium: !!row.is_premium || (Date.now() < (extra.premiumUntil || 0)),
         transactions: JSON.parse(row.transactions || '[]'),
         pendingConfirm: null,
         streak: extra.streak || 0,
@@ -68,7 +68,10 @@ function rowToFinance(row) {
         goalTempName: extra.goalTempName || '',
         notifiedNewFeatures: extra.notifiedNewFeatures || false,
         lastReportDate: extra.lastReportDate || '',
-        milestonesSent: extra.milestonesSent || []
+        milestonesSent: extra.milestonesSent || [],
+        referralCode: extra.referralCode || '',
+        invitedBy: extra.invitedBy || '',
+        premiumUntil: extra.premiumUntil || 0
     };
 }
 
@@ -95,7 +98,10 @@ function financeToRow(jid, fin) {
             goalTempName: fin.goalTempName || '',
             notifiedNewFeatures: fin.notifiedNewFeatures || false,
             lastReportDate: fin.lastReportDate || '',
-            milestonesSent: fin.milestonesSent || []
+            milestonesSent: fin.milestonesSent || [],
+            referralCode: fin.referralCode || '',
+            invitedBy: fin.invitedBy || '',
+            premiumUntil: fin.premiumUntil || 0
         })
     };
 }

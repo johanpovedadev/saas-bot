@@ -11,14 +11,14 @@
  * @module handlers/modules/menu.handler
  * @requires utils/logger
  * @requires utils/phases
- * @requires config.json
  * @requires services/bot_core
  */
 
 const { logger } = require('../../utils/logger');
 const PHASE = require('../../utils/phases');
-const CONFIG = require('../../config.json');
 const { say, resetChat } = require('../../services/bot_core');
+const envConfig = require('../../config/env.loader');
+const frustrationService = require('../../services/frustrationService');
 
 /**
  * Envía el menú principal al usuario
@@ -30,26 +30,53 @@ const { say, resetChat } = require('../../services/bot_core');
 async function sendMainMenu(sock, jid, ctx) {
     logger.info(`[${jid}] -> Mostrando menú principal`);
     
-    const menuText = `🍨 *¡Bienvenido a ${CONFIG.BUSINESS_NAME || 'Mundo Helados'}!* 🍨
+    // Usar configuración genérica desde .env
+    const businessName = envConfig.business.name || process.env.BUSINESS_NAME || 'Negocio';
+    const emoji = envConfig.ui.emoji.main || '🍨';
+    const menuConfig = envConfig.menu;
+    
+    // Construir menú dinámicamente según opciones activadas
+    let menuOptions = [];
+    let optionNumber = 1;
+      // Opción 1: Ver Menú de Productos
+    if (menuConfig.options.showProducts) {
+        const label = envConfig.messages.render(menuConfig.labels.option1);
+        const desc = envConfig.messages.render(menuConfig.labels.option1Description);
+        menuOptions.push(`${optionNumber}️⃣ ${emoji} *${label}*\n   ${desc}`);
+        optionNumber++;
+    }
+    
+    // Opción 2: Pedidos por Encargo (SINCRONIZADO CON GREETING)
+    if (menuConfig.options.showCustomOrders) {
+        const label = envConfig.messages.render(menuConfig.labels.option3);
+        const desc = envConfig.messages.render(menuConfig.labels.option3Description);
+        menuOptions.push(`${optionNumber}️⃣ 🎉 *${label}*\n   ${desc}`);
+        optionNumber++;
+    }
+    
+    // Opción 3: Dirección y Horarios (SINCRONIZADO CON GREETING)
+    if (menuConfig.options.showLocation) {
+        const label = envConfig.messages.render(menuConfig.labels.option2);
+        const desc = envConfig.messages.render(menuConfig.labels.option2Description);
+        menuOptions.push(`${optionNumber}️⃣ 📍 *${label}*\n   ${desc}`);
+        optionNumber++;
+    }
+    
+    // Construir mensaje del menú
+    const welcomeMsg = envConfig.messages.render(envConfig.messages.templates.mainMenu);
+    const footer = envConfig.messages.render(menuConfig.footer);
+    const helpText = envConfig.messages.render(menuConfig.helpText);
+    
+    const menuText = `${welcomeMsg}
 
 ¿Qué deseas hacer hoy?
 
-1️⃣ 🍦 *Ver Menú de Productos*
-   Explora nuestros deliciosos helados
-
-2️⃣ 📍 *Dirección y Horarios*
-   Encuentra nuestra ubicación
-
-3️⃣ 🎉 *Encargar para Evento*
-   Pedidos especiales en litros
+${menuOptions.join('\n\n')}
 
 ---
-💬 También puedes escribir:
-• El nombre de un producto (ej: "Copa", "Volcán")
-• "hablar" para atención humana
-• "carrito" para ver tu pedido actual
+${footer}
 
-¿Cómo te puedo ayudar? 😊`;
+${helpText}`;
 
     await say(sock, jid, menuText, ctx);
 }
@@ -64,21 +91,46 @@ async function sendMainMenu(sock, jid, ctx) {
  * @returns {Promise<void>}
  */
 async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
-    logger.info(`[${jid}] -> Selección de opción del menú: ${option}`);
-
-    switch (option) {
-        case '1':
+    logger.info(`[${jid}] -> Selección de opción del menú: ${option}`);    // Mapear opción seleccionada a función según configuración del menú
+    const menuConfig = envConfig.menu;
+    let optionIndex = 0;
+    const activeOptions = [];
+    
+    // ✅ ORDEN SINCRONIZADO CON GREETING.HANDLER.JS
+    if (menuConfig.options.showProducts) activeOptions.push('products');
+    if (menuConfig.options.showCustomOrders) activeOptions.push('customOrders');  // ✅ Movido a posición 2
+    if (menuConfig.options.showLocation) activeOptions.push('location');  // ✅ Movido a posición 3
+    
+    const selectedIndex = parseInt(option) - 1;
+    const selectedOption = activeOptions[selectedIndex];
+    
+    switch (selectedOption) {
+        case 'products':
             await handleVerMenuOption(sock, jid, userSession, ctx);
             break;
-        case '2':
+        case 'location':
             await handleDireccionOption(sock, jid, userSession, ctx);
             break;
-        case '3':
+        case 'customOrders':
             await handleEncargoOption(sock, jid, userSession, ctx);
-            break;
-        default:
+            break;        default:
             logger.warn(`[${jid}] -> Opción de menú desconocida: ${option}`);
-            await say(sock, jid, '❌ Opción no válida. Por favor, elige 1, 2 o 3.', ctx);
+            
+            // Incrementar contador de errores
+            userSession.errorCount = (userSession.errorCount || 0) + 1;
+            logger.info(`[${jid}] errorCount: ${userSession.errorCount}`);
+            
+            // Activar sistema de frustración si hay 2+ errores consecutivos
+            if (userSession.errorCount >= 2) {
+                await frustrationService.handleFrustration(
+                    sock, jid, userSession, ctx,
+                    `${userSession.errorCount} opciones de menú inválidas consecutivas`
+                );
+                return; // Salir del flujo, admin se hace cargo
+            }
+            
+            const maxOption = activeOptions.length;
+            await say(sock, jid, `❌ Opción no válida. Por favor, elige un número del 1 al ${maxOption}.`, ctx);
             await sendMainMenu(sock, jid, ctx);
             break;
     }
@@ -98,17 +150,32 @@ async function handleVerMenuOption(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.BROWSE_IMAGES;
     userSession.errorCount = 0;
 
-    const browseText = `🍨 *¡Perfecto! Veamos nuestros productos* 🍨
-
-Puedes:
-• Escribir el nombre del producto (ej: "Copa", "Volcán", "Paleta")
-• Escribir "carrito" para ver tu pedido actual
-• Escribir "pagar" cuando termines de elegir
-• Escribir "menú" para volver al inicio
-
-¿Qué producto te gustaría? 😋`;
-
-    await say(sock, jid, browseText, ctx);
+    // Enviar mensaje inicial usando plantilla genérica
+    const menuDayMessage = envConfig.messages.templates.menuDay || '📋 ¡Aquí está nuestro delicioso menú del día!';
+    await say(sock, jid, envConfig.messages.render(menuDayMessage), ctx);    // NO enviar imágenes del menú, solo mostrar productos y precios
+    // Usar el cache de productos cargado al inicio (ctx.productsCache o ctx.cachedInventory)
+    const productos = ctx.productsCache || ctx.cachedInventory || [];
+    
+    if (productos && productos.length > 0) {
+        let msg = '*Menú de Productos y Precios:*\n';
+        productos.forEach((p, idx) => {
+            const nombre = p.NombreProducto || p.nombre || p.name || p.productName || 'Producto';
+            const precio = p.Precio_Venta || p.precio || p.price || p.productPrice || 0;
+            msg += `${idx + 1}. 🍽️ *${nombre}* - $${precio}\n`;
+        });
+        msg += '\n_Escribe el número del producto para seleccionarlo rápidamente._';
+        await say(sock, jid, msg, ctx);
+        userSession.lastMatches = productos;
+        userSession.phase = PHASE.SELECCION_PRODUCTO;
+        // Solo mostrar instrucciones de búsqueda si hay muchos productos
+        if (productos.length > 20) {
+            const browseText = envConfig.messages.render(envConfig.messages.templates.browseInstructions);
+            await say(sock, jid, browseText, ctx);
+        }
+    } else {
+        logger.warn(`[${jid}] Cache de productos vacío. Intentando recargar...`);
+        await say(sock, jid, 'No hay productos disponibles en este momento. Por favor intenta nuevamente en unos segundos.', ctx);
+    }
 }
 
 /**
@@ -122,28 +189,34 @@ Puedes:
 async function handleDireccionOption(sock, jid, userSession, ctx) {
     logger.info(`[${jid}] -> Ver dirección y horarios`);
 
-    const address = CONFIG.BUSINESS_ADDRESS || 'Calle 123 #45-67, Bogotá';
-    const hours = CONFIG.BUSINESS_HOURS || 'Lunes a Domingo: 10:00 AM - 9:00 PM';
-    const phone = CONFIG.BUSINESS_PHONE || '+57 300 123 4567';
-    const googleMapsLink = CONFIG.GOOGLE_MAPS_LINK || '';
+    // Usar configuración genérica desde .env
+    const address = envConfig.business.location.address || process.env.BUSINESS_ADDRESS || '';
+    const hours = envConfig.business.hours.weekday 
+        ? `Lunes a Viernes: ${envConfig.business.hours.weekday.open} - ${envConfig.business.hours.weekday.close}\nSábado y Domingo: ${envConfig.business.hours.weekend.open} - ${envConfig.business.hours.weekend.close}`
+        : (process.env.BUSINESS_HOURS || '');
+    const phone = envConfig.business.contact.phone || process.env.BUSINESS_PHONE || '';
+    const googleMapsLink = envConfig.business.contact.googleMapsLink || process.env.GOOGLE_MAPS_LINK || '';
+    const emoji = envConfig.ui.emoji.main || '📍';
 
-    let locationText = `📍 *Nuestra Ubicación* 📍
+    let locationText = `${emoji} *Nuestra Ubicación* ${emoji}\n`;
 
-🏠 *Dirección:*
-${address}
+    if (address) {
+        locationText += `\n🏠 *Dirección:*\n${address}`;
+    }
 
-🕐 *Horarios:*
-${hours}
+    if (hours) {
+        locationText += `\n\n🕐 *Horarios:*\n${hours}`;
+    }
 
-📞 *Teléfono:*
-${phone}`;
+    if (phone) {
+        locationText += `\n\n📞 *Teléfono:*\n${phone}`;
+    }
 
     if (googleMapsLink) {
         locationText += `\n\n🗺️ *Mapa:*\n${googleMapsLink}`;
     }
 
-    locationText += `\n\n---
-¿Deseas hacer un pedido? Escribe *menú* 😊`;
+    locationText += `\n\n---\n¿Deseas hacer un pedido? Escribe *menú* 😊`;
 
     await say(sock, jid, locationText, ctx);
     
@@ -165,25 +238,22 @@ async function handleEncargoOption(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.ENCARGO;
     userSession.errorCount = 0;
 
-    const encargoText = `🎉 *¡Genial! Pedidos Especiales* 🎉
+    // Usar plantillas genéricas desde .env
+    const emoji = envConfig.ui.emoji.main || '🎉';
+    const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
+    const itemPrimarySingular = envConfig.nomenclature.itemPrimarySingular || 'item';
+    
+    // Construir mensaje usando plantillas
+    const customOrderStart = envConfig.messages.render(envConfig.messages.templates.customOrderStart);
+    const customOrderExamples = envConfig.messages.render(envConfig.messages.templates.customOrderExamples);
+    
+    const encargoText = `${emoji} *¡Genial! Pedidos Especiales* ${emoji}
 
-Para eventos, cumpleaños o reuniones, puedes pedir en litros.
+${customOrderStart}
 
-📝 *Escribe tu pedido así:*
-"3 litros de vainilla y 2 litros de chocolate"
+${customOrderExamples}
 
-O simplemente describe lo que necesitas:
-"Quiero helado para una fiesta de 20 personas"
-
-💡 *Ejemplos de sabores:*
-• Vainilla
-• Chocolate
-• Fresa
-• Arequipe
-• Ron con pasas
-• Y muchos más...
-
-¿Qué deseas ordenar? 🍨`;
+¿Qué deseas ordenar? ${emoji}`;
 
     await say(sock, jid, encargoText, ctx);
 }

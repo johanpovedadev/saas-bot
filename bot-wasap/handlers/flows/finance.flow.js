@@ -6,6 +6,7 @@ const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
 const { generateCard, getNewMilestones } = require('../../services/financeCard');
+const financeReferral = require('../../services/financeReferral');
 
 const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
@@ -40,7 +41,9 @@ function initFinance(userSession) {
             goalTempName: '',
             notifiedNewFeatures: false,
             lastReportDate: '',
-            milestonesSent: []
+            milestonesSent: [],
+            pendingReferral: null,
+            premiumUntil: 0
         };
     }
     const today = new Date().toDateString();
@@ -79,6 +82,11 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Pending confirmation
     if (fin.pendingConfirm) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Pending referral confirmation
+    if (fin.pendingReferral) {
+        return await handleReferralConfirmation(sock, jid, t, userSession, ctx, fin);
     }
 
     // Diagnostic phase
@@ -125,10 +133,13 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
             ctx);
         return;
     }
+    if (!fin.referralCode) {
+        fin.referralCode = financeReferral.getOrCreateCode(jid);
+    }
     userSession.phase = PHASE.FIN_MAIN;
     await say(sock, jid,
         `🦁 ¡Hola de nuevo *${fin.name}*! ¿Qué necesitás hoy?\n\n` +
-        `• Registrar un gasto o ingreso\n` +
+        `• Registrar una compra o ingreso\n` +
         `• Ver tu resumen\n` +
         `• Hablar de metas`,
         ctx);
@@ -163,6 +174,10 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
 async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     const t = text.trim();
     fin.goalName = t;
+    // Generate referral code on reaching FIN_MAIN
+    if (!fin.referralCode) {
+        fin.referralCode = financeReferral.getOrCreateCode(jid);
+    }
     userSession.phase = PHASE.FIN_MAIN;
     // Try to extract amount from response (e.g. "viaje 2 millones")
     const amount = t.match(/([\d.]+)\s*(?:millones|millon|mil|k)/i);
@@ -179,7 +194,7 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
             ? `Vamos a trabajar para juntar $${fin.goalTarget.toLocaleString('es-CO')}. Paso a paso.\n\n`
             : `Cuando quieras decime cuánta plata necesitás y te ayudo a hacer el plan.\n\n`) +
         `Podés empezar con frases como:\n\n` +
-        `_"Gasté 18 mil en almuerzo"_\n` +
+        `_"Compré 18 mil en almuerzo"_\n` +
         `_"Recibí 2 millones de sueldo"_\n` +
         `_"¿Cuánto tengo?"_\n\n` +
         `¿Qué querés registrar hoy?`,
@@ -202,7 +217,7 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
               `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n` +
               `¿Querés seguir registrando, ver tu resumen o hablar de metas?`
             : `Todavía no has registrado nada. Podés empezar cuando quieras:\n\n` +
-              `_"Gasté 15 mil en desayuno"_\n` +
+              `_"Compré 15 mil en desayuno"_\n` +
               `_"Recibí 500 mil de freelance"_`),
         ctx);
 }
@@ -215,6 +230,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
         // User responded with goal name
         fin.goalTempName = t;
         fin.goalStep = 1;
+        financeStore.saveFinance(jid, fin);
         await say(sock, jid,
             `🦁 *${t}* — ¡excelente meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
             `Decime el monto, por ejemplo: "2 millones" o "500 mil"`,
@@ -258,7 +274,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                     `🎯 *Meta guardada!* Vas a ahorrar $${val.toLocaleString('es-CO')} para "${fin.goalName}".\n\n` +
                     `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
                     `Podés registrar tu primer movimiento:\n` +
-                    `_"Gasté 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
+                    `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
                     ctx);
                 return;
             }
@@ -274,7 +290,7 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
 
     if (!result) {
         await say(sock, jid,
-            `😅 No entendí bien. ¿Puedes decirlo de otra forma?\n\nPor ejemplo: _"Gasté 18 mil en almuerzo"_ o _"¿Cuánto tengo?"_`,
+            `😅 No entendí bien. ¿Puedes decirlo de otra forma?\n\nPor ejemplo: _"Compré 18 mil en almuerzo"_ o _"¿Cuánto tengo?"_`,
             ctx);
         return;
     }
@@ -286,14 +302,14 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
                     type: 'expense',
                     amount: result.amount,
                     category: result.category || 'Otros',
-                    description: result.description || 'Gasto',
+                    description: result.description || 'Compra',
                     date: result.date || 'hoy'
                 };
                 await say(sock, jid, result.response, ctx);
             } else if (result.amount > 0) {
-                await saveAndConfirm(sock, jid, 'expense', result.amount, result.category || 'Otros', result.description || 'Gasto', fin, ctx);
+                await saveAndConfirm(sock, jid, 'expense', result.amount, result.category || 'Otros', result.description || 'Compra', fin, ctx);
             } else {
-                await say(sock, jid, result.response || `😅 ¿Cuánto gastaste? No entendí el monto.`, ctx);
+                await say(sock, jid, result.response || `😅 ¿Cuánto compraste? No entendí el monto.`, ctx);
             }
             break;
 
@@ -328,9 +344,21 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
             await say(sock, jid, result.response, ctx);
             break;
 
+        case 'referral_info':
+            await handleReferralInfo(sock, jid, fin, ctx);
+            break;
+
+        case 'referral_use':
+            if (!fin.referralCode) {
+                fin.referralCode = financeReferral.getOrCreateCode(jid);
+            }
+            fin.pendingReferral = { code: result.description?.toUpperCase() || '' };
+            await say(sock, jid, result.response, ctx);
+            break;
+
         default:
             await say(sock, jid, result.response || `😅 No entendí. Recuerda que puedes decirme cosas como:\n\n` +
-                `• "Gasté 18 mil en almuerzo"\n` +
+                `• "Compré 18 mil en almuerzo"\n` +
                 `• "Recibí 2 millones de sueldo"\n` +
                 `• "¿Cuánto tengo?"`, ctx);
     }
@@ -356,9 +384,9 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         await say(sock, jid, `✅ ${cancelMsg}`, ctx);
     } else {
         const rePrompt = [
-            `¿Es correcto?\n\n💸 Gasto: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
+            `¿Es correcto?\n\n💸 Compra: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
             `Confirmación:\n\n💰 $${confirm.amount.toLocaleString('es-CO')} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? (sí/no)`,
-            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Gasto' : '💰 Ingreso'}: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
+            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso'}: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
         ][Math.floor(Math.random() * 3)];
         await say(sock, jid, rePrompt, ctx);
     }
@@ -397,7 +425,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
     const balanceLine = !hasIncome && fin.balance < 0
-        ? `💸 Gastado hoy: $${fin.todaySpending.toLocaleString('es-CO')}`
+        ? `💸 Comprado hoy: $${fin.todaySpending.toLocaleString('es-CO')}`
         : `💵 Saldo: $${fin.balance.toLocaleString('es-CO')}`;
 
     const todayMsg = fin.todaySpending > 0
@@ -413,7 +441,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
             : '';
 
     await say(sock, jid,
-        `✅ *${type === 'expense' ? 'Gasto' : 'Ingreso'} registrado!*\n` +
+        `✅ *${type === 'expense' ? 'Compra' : 'Ingreso'} registrado!*\n` +
         confirmMsg + '\n\n' +
         `${type === 'expense' ? '💸' : '💰'} $${amount.toLocaleString('es-CO')} — ${description}\n` +
         `🏷️ ${category}\n\n` +
@@ -427,6 +455,36 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ctx);
 
     fin.trialLastShown = Date.now();
+
+    // Referral reward: first real transaction triggers +15 days Premium for both
+    if (!prevFin.firstTransactionDone && fin.invitedBy) {
+        const reward = financeReferral.checkAndReward(jid);
+        if (reward.rewarded) {
+            const now = Date.now();
+            fin.premiumUntil = Math.max(fin.premiumUntil || 0, now) + 15 * 86400000;
+            fin.isPremium = true;
+            // Reward inviter too
+            const inviterFin = ctx?.sessions?.[reward.inviterJid]?.finance;
+            if (inviterFin) {
+                inviterFin.premiumUntil = Math.max(inviterFin.premiumUntil || 0, now) + 15 * 86400000;
+                inviterFin.isPremium = true;
+                financeStore.saveFinance(reward.inviterJid, inviterFin);
+            }
+            await say(sock, jid,
+                `🎉 *¡GRAN NOTICIA!* 🎉\n\n` +
+                `Completaste tu primer movimiento y activaste la recompensa por invitación.\n\n` +
+                `Tanto vos como *quien te invitó* ganan +15 DÍAS PREMIUM cada une. 🦁🔥`,
+                ctx);
+            // Notify inviter if online
+            if (ctx?.sessions?.[reward.inviterJid]) {
+                await say(sock, reward.inviterJid,
+                    `🎉 *¡Alguien usó tu código!* 🎉\n\n` +
+                    `Una persona que invitaste acaba de registrar su primer movimiento.\n` +
+                    `¡Ganaste +15 DÍAS PREMIUM! 🦁🔥`,
+                    ctx);
+            }
+        }
+    }
     fin.firstTransactionDone = true;
 
     // Generate milestone cards
@@ -450,7 +508,13 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
 
 async function showWelcome(sock, jid, ctx) {
     const userSession = ctx?.sessions?.[jid];
-    const fin = userSession?.finance;
+    if (!userSession) return;
+    // Load persisted finance data if not in memory (e.g. after restart)
+    if (!userSession.finance || !userSession.finance.name) {
+        const persisted = financeStore.loadFinance(jid);
+        if (persisted) userSession.finance = persisted;
+    }
+    const fin = userSession.finance;
     if (fin?.name) {
         // Check-in every 48h
         const lastCheck = fin.lastCheckinDate;
@@ -480,7 +544,7 @@ async function showWelcome(sock, jid, ctx) {
                   `• Hablar de metas\n` +
                   (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`)
                 : `Todavía no registraste nada. Podés arrancar cuando quieras:\n\n` +
-                  `_"Gasté 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`),
+                  `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`),
             ctx);
         return;
     }
@@ -491,6 +555,11 @@ async function showWelcome(sock, jid, ctx) {
 }
 
 async function handleUnknown(sock, jid, text, userSession, ctx) {
+    // Load persisted finance data if not in memory (e.g. after restart)
+    if (!userSession.finance || !userSession.finance.name) {
+        const persisted = financeStore.loadFinance(jid);
+        if (persisted) userSession.finance = persisted;
+    }
     const fin = initFinance(userSession);
     if (fin.name) {
         userSession.phase = PHASE.FIN_MAIN;
@@ -528,7 +597,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
     await say(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         `📊 *Hoy con Leo:*\n` +
-        `💸 Gastaste: $${todayExpense.toLocaleString('es-CO')}\n` +
+        `💸 Compraste: $${todayExpense.toLocaleString('es-CO')}\n` +
         `💰 Te entró: $${todayIncome.toLocaleString('es-CO')}\n` +
         (todayIncome - todayExpense !== 0
             ? `📈 Balance del día: $${(todayIncome - todayExpense).toLocaleString('es-CO')}\n`
@@ -538,6 +607,48 @@ async function generateNightReport(sock, jid, fin, ctx) {
         goalLine +
         `\nVas bien, seguí contándome 🦁`,
         ctx);
+}
+
+async function handleReferralInfo(sock, jid, fin, ctx) {
+    const code = fin.referralCode || financeReferral.getOrCreateCode(jid);
+    if (!fin.referralCode) fin.referralCode = code;
+    const inviteeCount = financeReferral.getInviteeCount(jid);
+    const rewardedCount = financeReferral.getRewardedCount(jid);
+    await say(sock, jid,
+        `🦁 *Tu código de invitación:* ${code}\n\n` +
+        `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 DÍAS PREMIUM*! 🎉\n\n` +
+        `📊 Personas invitadas: ${inviteeCount}\n` +
+        `🏆 Días premium ganados: ${rewardedCount * 15}\n\n` +
+        `Para invitar, decile a un amigue que escriba tu código en Leo 🦁`,
+        ctx);
+}
+
+async function handleReferralConfirmation(sock, jid, text, userSession, ctx, fin) {
+    const t = text.toLowerCase().trim()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const ref = fin.pendingReferral;
+    if (!ref) return;
+
+    if (/^(1|si|sip|sep|ok|okay|dale|confirmo|correcto|yes|claro|listo|simon)/i.test(t)) {
+        const result = financeReferral.applyCode(jid, ref.code);
+        if (result.success) {
+            fin.invitedBy = ref.code;
+            financeStore.saveFinance(jid, fin);
+            await say(sock, jid,
+                `🦁 ¡Excelente! Ahora cuando registres tu primer movimiento, tanto vos como quien te invitó ganan +15 DÍAS PREMIUM. 🎉`,
+                ctx);
+        } else {
+            await say(sock, jid, `🦁 ${result.message}`, ctx);
+        }
+        fin.pendingReferral = null;
+    } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
+        fin.pendingReferral = null;
+        await say(sock, jid, `✅ Sin problema. ¿Necesitás algo más? 🦁`, ctx);
+    } else {
+        await say(sock, jid,
+            `🦁 ¿Te invitó alguien con el código *${ref.code}*?\n\nResponde *sí* para aceptar o *no* para cancelar.`,
+            ctx);
+    }
 }
 
 const NIGHT_REPORT_INTERVAL = null; // Set externally
@@ -590,7 +701,7 @@ module.exports = {
             ai: { enabled: true, model: 'gemini-2.5-flash' },
             greetings: { type: 'colombia' }
         },
-        admin: { jids: [], notifications: { newOrder: true, customerIssue: true } },
+        admin: { jids: ['573138777115@c.us'], notifications: { newOrder: true, customerIssue: true } },
         backend: {
             apiBase: 'http://127.0.0.1:8001/api',
             endpoints: { orders: '/registrar_lead/' },

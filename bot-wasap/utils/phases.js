@@ -2,6 +2,7 @@
 
 const PHASE = {
     // Fases iniciales y de navegación
+    AWAITING_NAME: 'awaiting_name',
     MENU_PRINCIPAL: 'menu_principal',
     SELECCION_OPCION: 'seleccion_opcion',
     BROWSE_IMAGES: 'browse_images',

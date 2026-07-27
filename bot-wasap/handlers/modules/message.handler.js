@@ -55,13 +55,19 @@ function extractMessageData(msg) {
             }
         }
 
+        // Detect media type — whatsapp-web.js uses msg.type string
+        let mediaType = null;
+        if (msg.type === 'audio' || msg.type === 'ptt') mediaType = 'audio';
+        else if (msg.type === 'image') mediaType = 'image';
+        else if (msg.type === 'video') mediaType = 'video';
+
         // whatsapp-web.js expone fromMe directamente en el mensaje
         const fromMe = msg.fromMe === true || key.fromMe === true;
 
-        return { from, text, key, fromMe };
+        return { from, text, key, fromMe, mediaType, _rawMsg: msg };
     } catch (error) {
         logger.error('Error extracting message data:', error.message);
-        return { from: null, text: null, key: {}, fromMe: false };
+        return { from: null, text: null, key: {}, fromMe: false, mediaType: null, _rawMsg: null };
     }
 }
 
@@ -231,7 +237,16 @@ function createWhatsAppLink(jid) {
  * @returns {boolean}
  */
 function isValidMessage(messageData) {
-    if (!messageData || !messageData.from || !messageData.text) {
+    if (!messageData || !messageData.from) {
+        return false;
+    }
+    
+    // Allow media messages (audio/image) even without text
+    if (messageData.mediaType === 'audio' || messageData.mediaType === 'image') {
+        return shouldProcessMessage(messageData.from, 'media', messageData.key || {}, messageData.fromMe);
+    }
+    
+    if (!messageData.text) {
         return false;
     }
     

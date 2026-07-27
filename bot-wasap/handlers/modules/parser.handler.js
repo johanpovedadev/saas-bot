@@ -23,18 +23,11 @@ const PHASE = require('../../utils/phases');
 const { say } = require('../../services/bot_core');
 const { parseOrderText } = require('../../services/parseOrderText');
 const cartService = require('../../services/cartService');
-const CONFIG = require('../../config.json');
-const SECRETS = require('../../config.secrets');
+const envConfig = require('../../config/env.loader');
 
 // API Configuration
-const API_BASE = (process.env.API_BASE || SECRETS.API_BASE || CONFIG.API_BASE || 'http://127.0.0.1:8001/api').replace(/\/$/, '');
-let ENDPOINTS = null;
-try {
-    ENDPOINTS = process.env.ENDPOINTS_JSON ? JSON.parse(process.env.ENDPOINTS_JSON) : (SECRETS.ENDPOINTS || CONFIG.ENDPOINTS);
-} catch (e) {
-    ENDPOINTS = SECRETS.ENDPOINTS || CONFIG.ENDPOINTS || null;
-}
-ENDPOINTS = ENDPOINTS || { BUSCAR_PRODUCTO: '/buscar_producto_por_nombre/' };
+const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+let ENDPOINTS = envConfig.backend.endpoints || { BUSCAR_PRODUCTO: '/buscar_producto_por_nombre/' };
 
 /**
  * Elige el mejor producto de los resultados de búsqueda
@@ -280,6 +273,29 @@ function getParserState(userSession) {
     };
 }
 
+// Selección robusta de producto por índice o nombre
+function selectProductFromInventory(input, inventory) {
+    const num = parseInt(input.trim(), 10);
+    if (!isNaN(num) && num > 0 && num <= inventory.length) {
+        return inventory[num - 1];
+    }
+    return inventory.find(p => (p.NombreProducto || '').toLowerCase() === input.trim().toLowerCase());
+}
+
+// Flujo inteligente según Numero_de_Sabores
+function handleProductSelectionFlow(producto, userSession, PHASE) {
+    const numSabores = parseInt(producto.Numero_de_Sabores || 0, 10);
+    if (numSabores > 0) {
+        userSession.awaitingField = 'sabores';
+        userSession.phase = PHASE.SELECT_DETAILS;
+    } else {
+        userSession.awaitingField = 'quantity';
+        userSession.phase = PHASE.SELECT_QUANTITY;
+    }
+    userSession.currentProduct = producto;
+    userSession.errorCount = 0;
+}
+
 // ==========================================
 // EXPORTS
 // ==========================================
@@ -290,5 +306,7 @@ module.exports = {
     addParsedOrder,
     looksLikeOrder,
     getParserState,
-    chooseProductFromSearch
+    chooseProductFromSearch,
+    selectProductFromInventory,
+    handleProductSelectionFlow
 };

@@ -181,8 +181,6 @@ const COLOMBIAN_GREETINGS = [
     // ===== EXPRESIONES DE INICIO DE CONVERSACIÓN =====
     'alo',
     'aló',
-    'si',
-    'sí',
     'diga',
     'dígame',
     'a la orden',

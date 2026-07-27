@@ -38,6 +38,12 @@ async function gracefulShutdown(signal) {
             logger.warn(`Error cerrando browser: ${e.message}`);
         }
     }
+    try {
+        require('./services/userStore').closeDb();
+    } catch (_) {}
+    try {
+        require('./services/financeReferral').closeDb();
+    } catch (_) {}
     console.log('✅ Shutdown completo.');
     process.exit(0);
 }
@@ -65,9 +71,6 @@ function installConsoleFilter() {
         /app state sync/i,
         /Decrypted message with closed session/i,
         /tried remove, but no previous op/i,
-        /chat-utils\.js/i,
-        /auth-utils\.js/i,
-        /socket\.js/i,
         /<Buffer\s*[0-9a-fA-F,\s]*>/i,
         /\bawaitinginitialsync\b/i
     ];
@@ -121,26 +124,25 @@ function installConsoleFilter() {
     };
 }
 
-installConsoleFilter();
-
 const qrcode = require('qrcode');
 
 const envConfig = require('./config/env.loader');
+
+installConsoleFilter();
 
 // Manejadores globales para errores no controlados.
 // Esto evita que el proceso se apague de forma inesperada.
 process.on('uncaughtException', (err) => {
     try {
-        // Ensure we print the full stack to the real stderr (bypass noisy filter)
         console.error('⚠️ Excepción no capturada:', err && err.stack ? err.stack : err);
     } catch (e) {
         console.error('⚠️ Excepción no capturada (falló el formateo):', String(err));
     }
     try {
         logger.error({ err: err && err.stack ? err.stack : String(err) }, '⚠️ Se ha producido una excepción no capturada');
-        logger.error({ err: err && err.stack ? err.stack : String(err) }, '⚠️ Se ha producido una excepción no capturada');
     } catch (e) { /* best effort */ }
-
+    // Exit cleanly so PM2 restarts the process instead of leaving it in zombie state
+    setTimeout(() => process.exit(1), 500);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -229,6 +231,19 @@ function findOrphanChromes(sessionDir) {
         }
     }
     return orphans;
+}
+
+function killAllChromesForDir(sessionDir) {
+    const chomes = getChromeProcessesForDir(sessionDir);
+    if (!chomes.length) return;
+    console.log(`   Cerrando ${chomes.length} proceso(s) de Chrome para esta sesion...`);
+    for (const c of chomes) {
+        try {
+            const cp = require('child_process');
+            cp.execFileSync('taskkill', ['/PID', String(c.ProcessId), '/F', '/T'], { timeout: 3000, stdio: 'pipe' });
+            console.log(`   -> Chrome PID ${c.ProcessId} terminado`);
+        } catch (_) {}
+    }
 }
 
 async function performPreStartVerification(sessionDir, authDir) {
@@ -411,6 +426,9 @@ const startBot = async () => {
     // Ensure auth dir exists
     if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
+    // Kill ALL Chrome processes for this session before starting (prevents orphan accumulation on restart)
+    killAllChromesForDir(sessionDir);
+
     // ISSUE 66: Pre-start verification — detect orphan Chrome, stale locks, session status
     const verif = await performPreStartVerification(sessionDir, AUTH_DIR);
     for (const iss of verif.issues) {
@@ -447,7 +465,8 @@ const startBot = async () => {
                 '--disable-gpu', '--disable-dev-shm-usage',
                 '--disable-web-security',
                 '--no-first-run', '--no-zygote',
-                '--disable-features=IsolateOrigins,site-per-process'
+                '--disable-features=IsolateOrigins,site-per-process',
+                `--app-name=bot-${BUSINESS_KEY}`
             ]
         }
     });
@@ -500,6 +519,18 @@ const startBot = async () => {
         // ISSUE #33+#34 - Iniciar heartbeat SOLO despues de conectar WhatsApp
         const healthMonitor = require('./services/healthMonitor');
         healthMonitor.init(sock, ctx);
+
+        // Start night reporter for finance flows (7-8 PM daily)
+        try {
+            const flowReg = require('./handlers/flowRegistry');
+            const flowMod = flowReg.getFlow(envConfig.business?.type) || flowReg.getFlow(BUSINESS_KEY);
+            if (flowMod && typeof flowMod.startNightReporter === 'function') {
+                flowMod.startNightReporter(sock, ctx);
+                console.log('✅ Night reporter iniciado');
+            }
+        } catch (e) {
+            console.warn('Night reporter no disponible:', e.message);
+        }
 
         // Detectar desconexion del browser (caida internet, crash)
         if (sock.pupBrowser) {
@@ -555,7 +586,7 @@ const startBot = async () => {
             } catch (_) {}
             process.exit(0);
         }
-    }, 180000);
+    }, 300000);
 
     // ISSUE 60: Reintentar initialize si falla por Chrome ya corriendo
     // ISSUE 66: Timeout por si initialize cuelga (Chrome nunca termina de cargar)

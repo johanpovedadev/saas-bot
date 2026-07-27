@@ -125,17 +125,23 @@ async function handleFlujoGato(sock, jid, t, userSession, ctx) {
 
     if (t === '1' || /^(si|sí|continuar|dale|ok|elegir)$/i.test(t)) {
         delete userSession._gatoOpcionMostrada;
+        userSession.errorCount = 0;
         userSession.datosTitular = {};
         userSession.pasoDatos = 0;
+        userSession._titularStepId = (userSession._titularStepId || 0) + 1;
+        const stepId = userSession._titularStepId;
         userSession.phase = PHASE.INS_DATOS_TITULAR;
-        setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 1000);
+        setTimeout(() => {
+            if (userSession._titularStepId === stepId) handleDatosTitularStep(sock, jid, userSession, ctx);
+        }, 1000);
         return;
     }
 
     if (t === '2' || t.includes('volver') || t.includes('menu')) {
         delete userSession._gatoOpcionMostrada;
+        userSession.planSeleccionado = null;
         userSession.phase = PHASE.INS_SALUDO;
-        setTimeout(() => showWelcome(sock, jid, userSession, ctx), 1000);
+        setTimeout(() => showWelcome(sock, jid, ctx), 1000);
         return;
     }
 
@@ -181,10 +187,15 @@ async function handleFlujoPerro(sock, jid, t, userSession, ctx) {
     if (t === '1' || t.includes('elegir') || t.includes('plus')) {
         userSession.planSeleccionado = userSession.tipo === 'premium' ? 'PREMIUM' : 'PLUS';
         delete userSession._perroOpcionMostrada;
+        userSession.errorCount = 0;
         userSession.phase = PHASE.INS_DATOS_TITULAR;
         userSession.datosTitular = {};
         userSession.pasoDatos = 0;
-        setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 1000);
+        userSession._titularStepId = (userSession._titularStepId || 0) + 1;
+        const stepId = userSession._titularStepId;
+        setTimeout(() => {
+            if (userSession._titularStepId === stepId) handleDatosTitularStep(sock, jid, userSession, ctx);
+        }, 1000);
         return;
     }
     if (t === '2' || t.includes('premium') || t.includes('premiun')) {
@@ -238,16 +249,22 @@ async function handleFlujoPerroPremium(sock, jid, t, userSession, ctx) {
     if (t === '1' || t.includes('elegir') || t.includes('premium')) {
         userSession.planSeleccionado = 'PREMIUM';
         delete userSession._premiumOpcionMostrada;
+        userSession.errorCount = 0;
         userSession.phase = PHASE.INS_DATOS_TITULAR;
         userSession.datosTitular = {};
         userSession.pasoDatos = 0;
-        setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 1000);
+        userSession._titularStepId = (userSession._titularStepId || 0) + 1;
+        const stepId = userSession._titularStepId;
+        setTimeout(() => {
+            if (userSession._titularStepId === stepId) handleDatosTitularStep(sock, jid, userSession, ctx);
+        }, 1000);
         return;
     }
 
     if (t === '2' || t.includes('volver') || t.includes('planes')) {
         delete userSession._premiumOpcionMostrada;
         delete userSession._perroOpcionMostrada;
+        delete userSession.tipo;
         userSession.phase = PHASE.INS_FLUJO_PERRO;
         return await handleFlujoPerro(sock, jid, t, userSession, ctx);
     }
@@ -337,8 +354,9 @@ function validarFecha(text) {
     const mes = parseInt(match[2], 10);
     const anio = parseInt(match[3], 10);
     if (mes < 1 || mes > 12) return false;
-    if (dia < 1 || dia > 31) return false;
-    if (anio < 1900 || anio > 2026) return false;
+    if (anio < 1900 || anio > new Date().getFullYear()) return false;
+    const diasPorMes = [31, (anio % 4 === 0 && (anio % 100 !== 0 || anio % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (dia < 1 || dia > diasPorMes[mes - 1]) return false;
     return true;
 }
 
@@ -361,7 +379,11 @@ async function handleDatosTitularStep(sock, jid, userSession, ctx) {
         userSession.phase = PHASE.INS_DATOS_MASCOTA;
         userSession.pasoDatos = 0;
         userSession.datosMascota = {};
-        setTimeout(() => handleDatosMascotaStep(sock, jid, userSession, ctx), 1000);
+        userSession._mascotaStepId = (userSession._mascotaStepId || 0) + 1;
+        const stepId = userSession._mascotaStepId;
+        setTimeout(() => {
+            if (userSession._mascotaStepId === stepId) handleDatosMascotaStep(sock, jid, userSession, ctx);
+        }, 1000);
         return;
     }
 
@@ -400,8 +422,13 @@ Ejemplo: 15/03/1990`, ctx);
         }
     }
 
+    userSession.errorCount = 0;
     userSession.pasoDatos = paso + 1;
-    setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 1000);
+    userSession._titularStepId = (userSession._titularStepId || 0) + 1;
+    const stepId = userSession._titularStepId;
+    setTimeout(() => {
+        if (userSession._titularStepId === stepId) handleDatosTitularStep(sock, jid, userSession, ctx);
+    }, 1000);
 }
 
 // ===================================
@@ -461,8 +488,13 @@ async function handleDatosMascota(sock, jid, text, userSession, ctx) {
         }
     }
 
+    userSession.errorCount = 0;
     userSession.pasoDatos = paso + 1;
-    setTimeout(() => handleDatosMascotaStep(sock, jid, userSession, ctx), 1000);
+    userSession._mascotaStepId = (userSession._mascotaStepId || 0) + 1;
+    const stepId = userSession._mascotaStepId;
+    setTimeout(() => {
+        if (userSession._mascotaStepId === stepId) handleDatosMascotaStep(sock, jid, userSession, ctx);
+    }, 1000);
 }
 
 // ===================================
@@ -519,6 +551,7 @@ Genero: {genero}
 
 async function handleConfirmacion(sock, jid, t, userSession, ctx) {
     if (t === '1' || /^(si|sí|confirmar|confirmo|correcto|ok|dale)$/i.test(t)) {
+        userSession.errorCount = 0;
         await guardarSolicitud(sock, jid, userSession, ctx, 'pendiente', '');
         userSession.phase = PHASE.INS_FINAL;
         await handleFinal(sock, jid, '', userSession, ctx);
@@ -526,11 +559,16 @@ async function handleConfirmacion(sock, jid, t, userSession, ctx) {
     }
 
     if (t === '2' || /^(no|corregir|editar|modificar)$/i.test(t)) {
+        userSession.errorCount = 0;
         userSession.phase = PHASE.INS_DATOS_TITULAR;
         userSession.pasoDatos = 0;
         userSession.datosTitular = {};
         userSession.datosMascota = {};
-        setTimeout(() => handleDatosTitularStep(sock, jid, userSession, ctx), 500);
+        userSession._titularStepId = (userSession._titularStepId || 0) + 1;
+        const stepId = userSession._titularStepId;
+        setTimeout(() => {
+            if (userSession._titularStepId === stepId) handleDatosTitularStep(sock, jid, userSession, ctx);
+        }, 500);
         return;
     }
 
@@ -546,6 +584,14 @@ async function handleConfirmacion(sock, jid, t, userSession, ctx) {
 // ISSUE #8 — Guardar rechazos en Sheets
 // ===================================
 async function handleRechazo(sock, jid, t, userSession, ctx) {
+    if (userSession._rechazoSent) {
+        delete userSession._rechazoSent;
+        userSession.phase = PHASE.INS_SALUDO;
+        await showWelcome(sock, jid, ctx);
+        return;
+    }
+    userSession._rechazoSent = true;
+
     const msg = envConfig.bot?.insuranceFlow?.messages?.rechazoEdad
         ? envConfig.bot.insuranceFlow.messages.rechazoEdad.replace('{nombre}', userSession.datosTitular?.nombre || '')
         : `😔 Lo sentimos, ${userSession.datosTitular?.nombre || ''}.\n\nActualmente no es posible asegurar mascotas mayores de 12 años.\n\nGracias por comunicarte con ${envConfig.business.name}.`;
@@ -615,6 +661,17 @@ async function guardarSolicitud(sock, jid, userSession, ctx, status, cancelReaso
 // ISSUE #10 — Mensaje final con nombre
 // ===================================
 async function handleFinal(sock, jid, t, userSession, ctx) {
+    if (userSession._finalSent && t) {
+        delete userSession._finalSent;
+        userSession.phase = PHASE.INS_SALUDO;
+        userSession.datosTitular = {};
+        userSession.datosMascota = {};
+        userSession.planSeleccionado = null;
+        userSession.tipoMascota = null;
+        userSession.pasoDatos = 0;
+        await showWelcome(sock, jid, ctx);
+        return;
+    }
     if (userSession._finalSent) return;
     userSession._finalSent = true;
 
