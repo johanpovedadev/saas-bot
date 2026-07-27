@@ -42,6 +42,7 @@ const parserHandler = require('./modules/parser.handler');
 const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
+const { say } = require('./modules/handler.utils');
 
 // ===================================
 // IMPORTS - Services
@@ -205,10 +206,13 @@ async function processIncomingMessage(sock, messageData, ctx) {
         const userSession = initializeUserSession(jid, ctx);
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
-        if (!userSession.phase || !Object.values(PHASE).includes(userSession.phase)) {
-            const currentFlow = getCurrentFlow();
+        const currentFlow = getCurrentFlow();
+        const phaseIsValid = userSession.phase && Object.values(PHASE).includes(userSession.phase);
+        const phaseBelongsToFlow = currentFlow && currentFlow.isFlowPhase(userSession.phase);
+        const needsRedirect = !phaseIsValid || (currentFlow && !phaseBelongsToFlow);
+        if (needsRedirect) {
             const fallbackPhase = currentFlow ? currentFlow.getInitialPhase() : PHASE.SELECCION_OPCION;
-            logger.warn(`[${jid}] ⚠️ Fase indefinida o inválida: "${userSession.phase}". Reiniciando a ${fallbackPhase}.`);
+            logger.warn(`[${jid}] ⚠️ Fase "${userSession.phase}" no pertenece al flow. Reiniciando a ${fallbackPhase}.`);
             userSession.phase = fallbackPhase;
             userSession.errorCount = 0;
             if (currentFlow) {
@@ -223,7 +227,7 @@ async function processIncomingMessage(sock, messageData, ctx) {
         
         // 5. Log de conversación
         messageHandler.logIncomingMessage(jid, text, userSession);        // 6. Detectar comandos de administrador
-        if (await adminHandler.handleAdminCommand(sock, jid, text, ctx)) {
+        if (await adminHandler.handleAdminCommand(sock, jid, text, userSession, ctx)) {
             return;
         }
         
@@ -232,18 +236,42 @@ async function processIncomingMessage(sock, messageData, ctx) {
         logger.debug(`[${jid}] Verificando saludo: "${text}" -> ${greetingDetected}`);
         
         if (greetingDetected) {
-            const currentFlow = getCurrentFlow();
-            if (currentFlow && currentFlow.isFlowPhase(userSession.phase)) {
-                // Ya estamos en medio de un flow conversacional (finance, seguros, etc.)
-                // No interceptar — dejar que el flow procese el mensaje
-                logger.debug(`[${jid}] Saludo ignorado: ya en fase de flow (${userSession.phase})`);
+            if (userSession.phase === PHASE.AWAITING_NAME) {
+                // Ya le preguntamos el nombre, dejar pasar para que el delegate lo procese
+                logger.debug(`[${jid}] Saludo ignorado: ya en AWAITING_NAME`);
             } else {
+                const currentFlow = getCurrentFlow();
+                // Si hay flow registrado (mascotas/seguros), NO pedir nombre — ir directo al flow
                 if (currentFlow) {
+                    if (currentFlow.isFlowPhase(userSession.phase)) {
+                        // Reiniciar flow al inicio
+                        logger.debug(`[${jid}] Saludo en flow (${userSession.phase}), reiniciando`);
+                    }
                     userSession.phase = currentFlow.getInitialPhase();
+                    userSession.errorCount = 0;
+                    delete userSession._gatoOpcionMostrada;
+                    delete userSession._perroOpcionMostrada;
+                    delete userSession._premiumOpcionMostrada;
+                    delete userSession._titularStepId;
+                    delete userSession._mascotaStepId;
+                    delete userSession._finalSent;
+                    delete userSession._rechazoSent;
+                    userSession.planSeleccionado = null;
+                    userSession.tipoMascota = null;
                     await currentFlow.showWelcome(sock, jid, ctx);
-                } else {
-                    await greetingsHandler.handleGreeting(sock, jid, userSession, ctx);
+                    return;
                 }
+                // Sin flow (finance) — pedir nombre si no lo tiene
+                const userStore = require('../services/userStore');
+                const user = userStore.getUser(jid);
+                if (!user || !user.name) {
+                    userSession.phase = PHASE.AWAITING_NAME;
+                    userSession.greetingProcessed = true;
+                    await handlerUtils.say(sock, jid, '¡Hola! Antes de empezar, ¿cuál es tu nombre?', ctx);
+                    return;
+                }
+                userSession.userName = user.name;
+                await greetingsHandler.handleGreeting(sock, jid, userSession, ctx);
                 return;
             }
         }
@@ -276,8 +304,10 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // 9. Delegar según la fase actual (Máquina de Estados)
         await delegateToPhaseHandler(sock, jid, text, userSession, ctx);        // ✅ 10. VERIFICACIÓN GLOBAL DE FRUSTRACIÓN
         // Después de procesar cualquier mensaje, verificar si el usuario está frustrado
-        // Esto garantiza que el sistema de frustración funcione en TODAS las fases
-        if (userSession.errorCount >= 2 && userSession.phase !== PHASE.WAITING_HUMAN) {
+        // Las fases INS_* manejan su propio errorCount, se les da margen mayor
+        const isInsurancePhase = userSession.phase && userSession.phase.toLowerCase().startsWith('ins_');
+        const frustrationThreshold = isInsurancePhase ? 5 : 2;
+        if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
             logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);
             
             // Detectar frustración y derivar a admin si es necesario
@@ -324,6 +354,47 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
     logger.debug(`[${jid}] 🔄 Delegando a handler | Fase: ${phase} | Mensaje: "${text.substring(0, 50)}..."`);
 
     switch (phase) {        
+        // ===================================
+        // FASE: ESPERANDO NOMBRE (primer saludo)
+        // Guarda el nombre y avanza al menu/flow
+        // ===================================
+        case PHASE.AWAITING_NAME: {
+            const userStore = require('../services/userStore');
+            const existing = userStore.getUser(jid);
+            if (existing && existing.name) {
+                userSession.userName = existing.name;
+                userStore.saveUser(jid, existing.name, process.env.BUSINESS_KEY || '');
+                const currentFlow = getCurrentFlow();
+                if (currentFlow) {
+                    userSession.phase = currentFlow.getInitialPhase();
+                    await currentFlow.showWelcome(sock, jid, ctx);
+                } else {
+                    userSession.phase = PHASE.SELECCION_OPCION;
+                    userSession.errorCount = 0;
+                    await menuHandler.sendMainMenu(sock, jid, ctx);
+                }
+                return;
+            }
+            const name = text.trim().replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ\s]/g, '');
+            const greetings = /^(hola|ola|alo|buenas|buen[oa]s|hey|ey|hi|hello|men[uú]|volver|atr[aá]s)$/i;
+            if (!name || name.length < 2 || greetings.test(name.trim())) {
+                await handlerUtils.say(sock, jid, 'Por favor, escríbeme tu nombre para poder ayudarte.', ctx);
+                return;
+            }
+            userStore.saveUser(jid, name, process.env.BUSINESS_KEY || '');
+            userSession.userName = name;
+            const currentFlow = getCurrentFlow();
+            if (currentFlow) {
+                userSession.phase = currentFlow.getInitialPhase();
+                await currentFlow.showWelcome(sock, jid, ctx);
+            } else {
+                userSession.phase = PHASE.SELECCION_OPCION;
+                userSession.errorCount = 0;
+                await menuHandler.sendMainMenu(sock, jid, ctx);
+            }
+            return;
+        }
+
         // ===================================
         // FASE: SELECCIÓN DE OPCIÓN PRINCIPAL
         // Siguiente: BROWSE_IMAGES, ENCARGO, etc.
@@ -460,7 +531,7 @@ async function handleConfirmation(sock, jid, text, userSession, ctx) {
     if (!pending) {
         logger.warn(`[${jid}] No hay confirmación pendiente`);
         userSession.phase = PHASE.BROWSE_IMAGES;
-        await menuHandler.sendMainMenu(sock, jid, userSession, ctx);
+        await menuHandler.sendMainMenu(sock, jid, ctx);
         return;
     }
 
@@ -567,7 +638,46 @@ function setupSocketHandlers(sock, ctx) {
             // Extraer datos del mensaje usando el módulo existente
             const messageData = messageHandler.extractMessageData(msg);
 
-            // Validar mensaje
+            // Handle audio/image messages BEFORE text validation (media may have no caption)
+            if (messageData.mediaType === 'audio' || messageData.mediaType === 'image') {
+                logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
+                const userSession = initializeUserSession(messageData.from, ctx);
+                const currentFlow = getCurrentFlow();
+                if (currentFlow && process.env.BUSINESS_KEY === 'finance') {
+                    try {
+                        const media = await msg.downloadMedia();
+                        if (!media || !media.data) {
+                            await sock.sendMessage(messageData.from, { text: 'No pude recibir el archivo. Intenta de nuevo.' });
+                            return;
+                        }
+                        const financeAi = require('../services/financeAi');
+                        let transcribed = null;
+                        if (messageData.mediaType === 'audio') {
+                            await sock.sendMessage(messageData.from, { text: '🎙️ Procesando tu nota de voz...' });
+                            transcribed = await financeAi.interpretAudio(media.data, userSession);
+                        } else {
+                            await sock.sendMessage(messageData.from, { text: '🖼️ Leyendo tu imagen...' });
+                            transcribed = await financeAi.interpretImage(media.data, userSession, media.mimetype || 'image/jpeg');
+                        }
+                        if (!transcribed) {
+                            await sock.sendMessage(messageData.from, { text: 'No pude entender el contenido. Intenta escribirlo como texto.' });
+                            return;
+                        }
+                        // Route transcribed text through normal finance handle
+                        await currentFlow.handle(sock, messageData.from, transcribed, userSession, ctx);
+                        return;
+                    } catch (mediaErr) {
+                        logger.error('Error procesando media para finance:', mediaErr.message);
+                        await sock.sendMessage(messageData.from, { text: 'Hubo un error procesando tu archivo. Intenta de nuevo.' });
+                        return;
+                    }
+                }
+                // Non-finance businesses: ignore media silently
+                logger.debug(`[${messageData.from}] Media ignorado (no es flow finance)`);
+                return;
+            }
+
+            // Validar mensaje (text-only from here)
             if (!messageHandler.isValidMessage(messageData)) {
                 logger.debug(`Mensaje inválido o vacío, ignorando`);
                 return;

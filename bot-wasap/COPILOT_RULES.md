@@ -1,0 +1,73 @@
+# Reglas para trabajar en este bot (multi-tenant)
+
+Este proyecto corre **un solo código** (`bot-wasap/`) para **varios negocios** (tenants).
+Cada negocio se distingue por la variable `BUSINESS_KEY` (ej: `pescaderia`, `mascotas`,
+`finance`, `heladeria`). Cada tenant corre como **proceso PM2 separado**
+(`ecosystem.config.js`), así que un crash de un bot no tumba a los demás — pero como
+comparten el mismo código y buena parte de la configuración, un bug o un cambio mal hecho
+en un archivo compartido (`handlers/handler.js`, `config/env.loader.js`,
+`handlers/flowRegistry.js`) **rompe a todos los tenants a la vez**, no solo al que estás
+tocando.
+
+## Antes de tocar código compartido
+
+Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegistry.js`,
+`services/sessionService.js` o cualquier archivo bajo `handlers/modules/`:
+
+1. Corre el smoke test con al menos **dos tenants distintos** (uno con flow propio como
+   `finance`, uno sin flow propio como `pescaderia`):
+   ```bash
+   node -e "process.env.BUSINESS_KEY='pescaderia'; require('./config/env.loader'); require('./handlers/handler.js'); console.log('OK')"
+   node -e "process.env.BUSINESS_KEY='finance'; require('./config/env.loader'); require('./handlers/handler.js'); console.log('OK')"
+   ```
+2. Corre los tests existentes en la raíz de `bot-wasap/`: todo archivo `test_*.js` y
+   `services/*.test.js` (`node test_qa_seguros.js`, `node test_finance_media_flow.js`, etc.).
+3. Si el cambio toca nombres de funciones/variables entre archivos (ej. un `require`), grep
+   el nombre en todo el repo antes de asumir que existe — este proyecto ha tenido bugs por
+   variables mal escritas que solo se notan en producción (ver "Bugs ya corregidos" abajo).
+
+## Checklist para agregar un negocio/bot nuevo
+
+1. Crea `config/businesses/<key>.json` (copia uno existente como `pescaderia.json`) **o**,
+   si el negocio necesita lógica propia (como `finance`), crea
+   `handlers/flows/<key>.flow.js` con un `module.exports.config` (ver `finance.flow.js`
+   como ejemplo) y regístralo — `index.js` lo auto-descubre por nombre de archivo.
+2. Agrega el tenant a `config/tenants.json` (si se lanza con `launch-tenants.js`) y/o a
+   `ecosystem.config.js` (si se corre con PM2), con su propio `BUSINESS_KEY`.
+3. Si el negocio necesita variables propias que **no deben afectar a otros tenants**
+   (API keys distintas, `BOT_AI_ENABLED`, spreadsheet propio, etc.), créale un archivo
+   `.env.<BUSINESS_KEY>` en la raíz del proyecto (junto al `.env` general). Se carga
+   automáticamente y tiene prioridad sobre el `.env` compartido — no hace falta tocar
+   código. Si no creas ese archivo, el tenant sigue usando el `.env` compartido como hoy.
+4. Corre el checklist de "Antes de tocar código compartido" de arriba usando el `BUSINESS_KEY`
+   nuevo.
+5. Si el bot usa IA (voz, fotos, texto libre), prueba los tres caminos manualmente o con un
+   test tipo `test_finance_media_flow.js`: la IA de este proyecto valida `GEMINI_API_KEY`
+   directamente desde `process.env` en cada servicio (`financeAi.js`, etc.), **no** siempre
+   respeta el flag `bot.ai.enabled` de la config — no asumas que un flag apagado significa
+   que la IA no corre, ni que uno prendido significa que sí (revisa el servicio puntual).
+
+## Bugs ya corregidos (no los reintroduzcas)
+
+- `handlers/handler.js`, bloque de manejo de audio/imagen: usaba `sessionService
+  .getOrCreateUserSession(...)` (no existe) y `flowsRegistry.getCurrentFlow(...)`
+  (variable indefinida — el objeto real se llama `flowRegistry` y no tiene ese método).
+  Esto rompía silenciosamente las notas de voz y fotos de recibo del bot `finance`.
+  Fix: usar la función local `initializeUserSession(jid, ctx)` y `getCurrentFlow()`
+  (ambas ya definidas arriba en el mismo archivo), y comparar
+  `process.env.BUSINESS_KEY === 'finance'` en vez de una propiedad `businessKey` que
+  ningún flow module exporta.
+- Antes de este fix, `finance.flow.js` no traía `businessKey` en su `module.exports` —
+  si agregas un flow module nuevo, no asumas que expone esa propiedad; usa
+  `BUSINESS_KEY`/`envConfig.business.type` para identificar el tenant activo.
+
+## Recordatorio de aislamiento
+
+- Un solo `.env` compartido en la raíz sigue siendo la base para todos los tenants.
+  Variables como `GEMINI_API_KEY`, `BOT_AI_ENABLED`, `API_BASE`, etc. son globales salvo
+  que el tenant tenga su propio `.env.<BUSINESS_KEY>`.
+- El `sheet_id` / `api_base` de Google Sheets y del backend SÍ son por-tenant desde el
+  JSON de negocio (`config/businesses/<key>.json`) — no dependen del `.env`.
+- Antes de editar el `.env` compartido pensando en un solo negocio, pregúntate si esa
+  variable debería ser específica de ese tenant — si sí, créale su `.env.<BUSINESS_KEY>`
+  en vez de tocar la global.

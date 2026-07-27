@@ -22,22 +22,32 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 
 // ============================================================================
-// CARGAR .ENV DESDE LA RAÍZ DEL PROYECTO (UN SOLO ARCHIVO)
+// CARGAR .ENV: PRIMERO EL ESPECÍFICO DEL TENANT, LUEGO EL COMPARTIDO COMO BASE
 // ============================================================================
 // bot-wasap/ está dentro de la raíz, por lo tanto subimos 1 nivel
+// dotenv.config() NUNCA sobreescribe una variable que ya esté en process.env,
+// así que cargar primero .env.<BUSINESS_KEY> le da prioridad sobre el .env
+// compartido sin romper a los tenants que todavía no tienen archivo propio.
 const projectRoot = path.resolve(__dirname, '..', '..');
 const envPath = path.join(projectRoot, '.env');
+const businessKeyForEnv = (process.env.BUSINESS_KEY || '').replace(/\.json$/, '');
+const tenantEnvPath = businessKeyForEnv ? path.join(projectRoot, `.env.${businessKeyForEnv}`) : null;
+
+if (tenantEnvPath && fs.existsSync(tenantEnvPath)) {
+    require('dotenv').config({ path: tenantEnvPath });
+    console.log(`✅ Bot cargando .env propio del tenant: ${tenantEnvPath}`);
+}
 
 require('dotenv').config({ path: envPath });
 
-console.log(`✅ Bot cargando .env desde: ${envPath}`);
+console.log(`✅ Bot cargando .env compartido (base) desde: ${envPath}`);
 
 // Cargar config de negocio dinámicamente
 // ISSUE 41+45: JSON config via BUSINESS_KEY, fallback a JS config via BUSINESS_CONFIG
 let businessConfig = null;
-const fs = require('fs');
 try {
     const businessKey = (process.env.BUSINESS_KEY || 'mascotas').replace(/\.json$/, '');
     const jsonPath = path.join(__dirname, 'businesses', `${businessKey}.json`);
