@@ -60,6 +60,19 @@ Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegist
 - Antes de este fix, `finance.flow.js` no traía `businessKey` en su `module.exports` —
   si agregas un flow module nuevo, no asumas que expone esa propiedad; usa
   `BUSINESS_KEY`/`envConfig.business.type` para identificar el tenant activo.
+- El proceso PM2 llamado `bot-finance` en producción llevaba dias corriendo en realidad
+  con `BUSINESS_KEY=pescaderia` (env vieja, nunca actualizada). `pm2 restart <nombre>`
+  reutiliza el env con el que el proceso fue creado por primera vez; **no** relee
+  `ecosystem.config.js` a menos que lo borres y lo vuelvas a arrancar desde ese archivo.
+  Si editas `ecosystem.config.js`, aplica el cambio con:
+  ```bash
+  pm2 delete <nombre-app>
+  pm2 start ecosystem.config.js --only <nombre-app>
+  pm2 save
+  ```
+  y verifica el banner de arranque (`Negocio:`, `businessKey` en el log) antes de darlo
+  por bueno — el nombre del proceso en `pm2 status` NO garantiza que esté corriendo esa
+  configuración.
 
 ## Recordatorio de aislamiento
 
