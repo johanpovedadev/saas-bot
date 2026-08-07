@@ -154,5 +154,67 @@ async function send(text) {
     const editNumOut = await send('2');
     if (!/¿Qué dato deseas editar\?/.test(editNumOut)) console.log('\n⚠️ "2" no disparó la edición');
 
+    // 9) CLASIFICADOR HÍBRIDO — duda en la fase de sabores (responde SIN perder progreso)
+    sessionService.resetChat(JID, ctx);
+    await send('hola');
+    await send('1');
+    await send('banana split');
+    const s9 = ctx.sessions[JID];
+    if (s9.phase !== 'HELADO_SABORES') console.log('\n⚠️ No se entró a HELADO_SABORES para probar la duda');
+    const dudaOut = await send('¿qué toppings tienen?');
+    const s9b = ctx.sessions[JID];
+    if (s9b.phase !== 'HELADO_SABORES') console.log('\n⚠️ Tras la duda se esperaba mantenerse en HELADO_SABORES, got:', s9b.phase);
+    if (!dudaOut.trim()) console.log('\n⚠️ La duda no produjo respuesta');
+    else console.log('\n✅ Duda respondida sin perder la fase de sabores');
+
+    // 10) PEDIDO COMPLETO EN LENGUAJE NATURAL (clasificador): producto + sabores + sin toppings + cantidad + dirección
+    await send('s1 s2 s3');
+    await send('sin');
+    await send('1');
+    const s10 = ctx.sessions[JID];
+    if (s10.phase !== 'HELADO_POST_ADD') console.log('\n⚠️ Se esperaba HELADO_POST_ADD antes del pedido natural');
+    const co = (ctx.productsCache || []).find(p => /copa osito/i.test(p[require('./config/env.loader').backend.fields.productName] || ''));
+    if (co) console.log('\n   copa osito (opcionesExtra1/2 sabores/toppings):', co.opcionesExtra1, '/', co.opcionesExtra2);
+    const natOut = await send('quiero una copa osito con fresa y arequipe, sin toppings, 2 unidades, para la cra 23');
+    const s10b = ctx.sessions[JID];
+    console.log('\n   fase tras pedido natural:', s10b.phase);
+    if (!natOut.trim()) console.log('\n⚠️ El pedido natural no produjo respuesta');
+    if (s10b.phase === 'confirm_order') {
+        if (s10b.order && s10b.order.address && /cra 23/i.test(s10b.order.address)) console.log('\n✅ Pedido natural completo: copa osito + sabores + sin toppings + cantidad + dirección → checkout');
+        else console.log('\n⚠️ Pedido natural llegó a checkout pero sin dirección esperada:', s10b.order && s10b.order.address);
+    } else {
+        console.log('\n⚠️ Pedido natural no avanzó a confirm_order (IA no interpretó o producto sin opciones). fase:', s10b.phase);
+    }
+
+    // 11) CHECKOUT CON SINÓNIMOS (determinista): "sí" confirma, "nequi" pago, "editar" edita
+    sessionService.resetChat(JID, ctx);
+    await send('hola');
+    await send('1');
+    await send('banana split');
+    await send('s1 s2 s3');
+    await send('sin');
+    await send('1');
+    await send('pagar');
+    const s11a = ctx.sessions[JID];
+    if (s11a.phase !== 'confirm_order') console.log('\n⚠️ No se llegó a confirm_order para probar sinónimos');
+
+    const sinOut = await send('sí');
+    const s11b = ctx.sessions[JID];
+    if (s11b.phase !== 'checkout_dir') console.log('\n⚠️ "sí" no confirmó el pedido (se esperaba checkout_dir), got:', s11b.phase);
+    else console.log('\n✅ Sinónimo "sí" confirmó el pedido');
+
+    await send('Cra 45 #12-34');
+    await send('Carlos');
+    await send('3123456789');
+    const payOut2 = await send('nequi');
+    const s11c = ctx.sessions[JID];
+    if (s11c.phase !== 'finalize_order') console.log('\n⚠️ "nequi" no avanzó a finalize_order, got:', s11c.phase);
+    else if (/Pago: nequi/i.test(payOut2) && /Escribe \*1\* para confirmar o \*2\* para editar/.test(payOut2)) console.log('\n✅ "nequi" aceptado en CHECK_PAGO (fallback) con resumen final');
+    else console.log('\n⚠️ "nequi" no generó el resumen final esperado');
+
+    const editSynOut = await send('editar');
+    if (!/¿Qué dato deseas editar\?/.test(editSynOut)) console.log('\n⚠️ Sinónimo "editar" no disparó la edición');
+    else console.log('\n✅ Sinónimo "editar" disparó la edición');
+
     console.log('\n=== VALIDACIÓN HELADERÍA COMPLETA ===');
 })().catch(e => { console.error('TEST ERROR:', e); process.exit(1); });

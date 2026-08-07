@@ -205,4 +205,140 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
     return null;
 }
 
-module.exports = { interpretAudioIntent, transcribeAudio };
+/**
+ * Genera contenido con reintentos y backoff (2 intentos), estilo interpretAudioIntent.
+ */
+async function generateWithRetry(prompt, modelName, systemInstruction) {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: modelName });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const parts = [];
+            if (systemInstruction) parts.push(systemInstruction);
+            parts.push(prompt);
+            const result = await Promise.race([
+                model.generateContent(parts),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+            ]);
+            const response = await result.response;
+            const text = response.text().trim();
+            if (!text) return null;
+            return text;
+        } catch (e) {
+            logger.warn(`heladeriaAi generateWithRetry intento ${attempt}: ${e.message}`);
+            if (attempt < 2 && !isDailyQuotaError(e)) {
+                const delay = Math.min(get429DelayMs(e) || 1000, 15000);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * CLASIFICADOR HÍBRIDO (ISSUE): interpreta un mensaje de TEXTO del cliente y
+ * extrae SOLO datos estructurados del pedido (sin conversar). Devuelve
+ * { producto, sabores, toppings, cantidad, direccion, duda } o null.
+ *
+ * El prompt recibe el paso actual del flujo + las opciones válidas del paso
+ * (menú de productos, lista de sabores, lista de toppings) para acotar el
+ * clasificador al contexto real de la conversación.
+ *
+ * @param {string} text - Mensaje del cliente
+ * @param {Object} contextInfo - { step, stepDesc, sabores, toppings, products }
+ */
+async function interpretOrderText(text, contextInfo = {}) {
+    if (!hasValidKey()) {
+        logger.warn('heladeriaAi: Gemini key no disponible para clasificador de texto');
+        return null;
+    }
+
+    const businessName = envConfig.business.name || 'Mundo Helados';
+    const step = contextInfo.step || 'esperando_producto';
+    const stepDesc = contextInfo.stepDesc || '';
+    const sabores = (contextInfo.sabores || []).join('\n') || '(sin sabores disponibles)';
+    const toppings = (contextInfo.toppings || []).join('\n') || '(sin toppings disponibles)';
+    const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
+
+    const systemInstruction = `Eres un clasificador de pedidos de *${businessName}* (heladería). Recibes el mensaje del cliente y el paso actual del flujo. Tu ÚNICA tarea es extraer datos del pedido en JSON. NO respondas al cliente, NO converses, NO hagas preguntas.`;
+
+    const prompt = `Paso actual: ${step}${stepDesc ? `\nContexto del paso: ${stepDesc}` : ''}
+
+Sabores disponibles (código | nombre):
+${sabores}
+
+Toppings disponibles (código | nombre):
+${toppings}
+
+Productos del menú (código | nombre):
+${products}
+
+Mensaje del cliente: "${text}"
+
+Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni después):
+{
+  "producto": "nombre exacto de un producto del menú o null",
+  "sabores": ["nombres exactos de sabores detectados o []"],
+  "toppings": ["nombres exactos de toppings detectados o []"],
+  "cantidad": número entero >= 1 o null,
+  "direccion": "texto de la dirección si el cliente la menciona; si no, null",
+  "duda": "si el cliente hizo una pregunta o expresó una duda en vez de responder el paso, escribe la duda aquí; si no, null"
+}
+
+Reglas:
+- Usa SIEMPRE nombres exactos de las listas. Haz fuzzy match (acentos, mayúsculas, typos).
+- Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
+- cantidad solo si indica unidades ("una" → 1, "dos" → 2, "un litro" → null).
+- direccion: solo si el cliente escribe algo como "para la cra 23", "la dirección es...", "calle/carrera/diagonal/avenida/cll/cra".
+- Si el cliente hace una pregunta (ej: "qué toppings tienen?", "cuánto cuesta?"), ponla en "duda" y deja los demás campos en null/[].
+- No inventes productos, sabores, toppings ni precios.`;
+
+    const textOut = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    if (!textOut) return null;
+
+    let cleaned = textOut.trim();
+    if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7, -3).trim();
+    else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3, -3).trim();
+
+    try {
+        const parsed = JSON.parse(cleaned);
+        if (!parsed.producto) parsed.producto = null;
+        if (!Array.isArray(parsed.sabores)) parsed.sabores = [];
+        if (!Array.isArray(parsed.toppings)) parsed.toppings = [];
+        if (parsed.cantidad === undefined || parsed.cantidad === null) parsed.cantidad = null;
+        if (!parsed.direccion) parsed.direccion = null;
+        if (!parsed.duda) parsed.duda = null;
+        logger.info(`heladeriaAi interpretOrderText (${step}): producto=${parsed.producto} sabores=${parsed.sabores.length} toppings=${parsed.toppings.length} cant=${parsed.cantidad} duda=${!!parsed.duda}`);
+        return parsed;
+    } catch (e) {
+        logger.warn(`heladeriaAi interpretOrderText: JSON inválido del modelo: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Responde una duda del cliente (campo "duda" del clasificador) en lenguaje
+ * natural. Llama a Gemini de nuevo SOLO cuando el clasificador detectó una duda,
+ * para no quemar cuota en el flujo feliz.
+ */
+async function answerDoubt(doubt, contextInfo = {}) {
+    if (!hasValidKey() || !doubt) return null;
+
+    const businessName = envConfig.business.name || 'Mundo Helados';
+    const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
+
+    const systemInstruction = `Eres el asistente virtual de *${businessName}* (heladería). Responde la duda del cliente de forma breve, cálida y con emojis (máximo 3 líneas), sin inventar productos, precios ni promociones que no estén en el menú.`;
+    const prompt = `Menú (código | nombre | precio):
+${products}
+
+Duda del cliente: "${doubt}"
+
+Responde SOLO con el texto de la respuesta, sin comillas ni prefijos.`;
+
+    const answer = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    return answer;
+}
+
+module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt };

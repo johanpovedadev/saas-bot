@@ -308,6 +308,12 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         const c = getCounts(r.product);
         userSession.errorCount = 0;
         if (c.sabores > 0 || c.toppings > 0) {
+            if (hasExtraOrderData(text, ctx)) {
+                // Pedido completo en lenguaje natural (producto + sabores +
+                // toppings + cantidad + dirección): que el clasificador híbrido
+                // los aplique y avance; si la IA falla, se cae al flujo guiado.
+                if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+            }
             await handleProductOptions(sock, jid, r.product, userSession, ctx);
         } else {
             addPlainToCarrito(userSession, r);
@@ -317,6 +323,8 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         }
         return;
     }
+
+    if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
 
     await say(sock, jid,
         `❌ No entendí. Elige una opción:\n\n` +
@@ -358,6 +366,7 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
             sabor = saboresList.find(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase().includes(tok)) || null;
         }
         if (!sabor) {
+            if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
             await say(sock, jid, `❌ No reconocí "${tok}". Escribe códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
             return;
         }
@@ -450,6 +459,7 @@ async function handleQuantity(sock, jid, text, userSession, ctx) {
     const qty = parseInt(parts[0], 10);
 
     if (isNaN(qty) || qty < 1 || qty > 100) {
+        if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
         await say(sock, jid, '❌ Por favor ingresa una cantidad válida (entre 1 y 100).\n\n_Ejemplo: "1" o "2 sin arequipe"_', ctx);
         return;
     }
@@ -696,6 +706,417 @@ async function showWelcome(sock, jid, ctx) {
     await menuHandler.sendMainMenu(sock, jid, ctx);
 }
 
+/**
+ * ====================================================================
+ * CLASIFICADOR HÍBRIDO (flujo determinista + IA de respaldo)
+ *
+ * El flujo determinista (códigos S1/T1, números, sí/no) sigue siendo la ruta
+ * primaria y GRATIS. Cuando el cliente escribe lenguaje natural o un pedido
+ * completo de una vez ("quiero una copa osito con lulo y arequipe, sin
+ * toppings, 1 unidad, para la Cra 23"), el clasificador llama a Gemini y
+ * avanza el flujo sin perder los pasos ya resueltos.
+ *
+ * Se invoca desde:
+ *  - Los handlers genéricos (menu/products/selection/parser/handler.js) vía
+ *    getTenantFlowWithCapability('handleNotUnderstood'), JUSTO ANTES del
+ *    mensaje de "no entendí".
+ *  - Las fases guiadas propias (handleSabores/handleQuantity/handlePostAdd)
+ *    en sus ramas de error.
+ * ====================================================================
+ */
+
+const CHECKOUT_PHASES = [
+    PHASE.CONFIRM_ORDER, PHASE.CHECK_DIR, PHASE.CHECK_NAME,
+    PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO, PHASE.FINALIZE_ORDER,
+    PHASE.EDIT_OPTIONS, PHASE.EDIT_CART_SELECTION
+];
+
+/**
+ * Mapea nombres de sabores/toppings a códigos S<n>/T<n> usando el índice en la
+ * lista ordenada (misma alineación que el prompt S1..Sn / T1..Tn). Evita que
+ * nombres con espacios ("Fresa con trocitos") rompan el tokenizador.
+ */
+function mapNamesToCodes(names, list, prefix) {
+    const dbFields = getDbFields();
+    const codes = [];
+    for (const n of (names || [])) {
+        const target = stripAccents(String(n || '')).toLowerCase();
+        const idx = list.findIndex(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase() === target);
+        if (idx >= 0) codes.push(`${prefix}${idx + 1}`);
+    }
+    return codes;
+}
+
+/**
+ * Contexto que recibe la IA: paso actual + opciones válidas del paso
+ * (menú de productos, sabores, toppings) para acotar el clasificador.
+ */
+function buildClassifierContext(userSession, ctx) {
+    const dbFields = getDbFields();
+    const lists = buildOptionLists(ctx);
+    const products = getProducts(ctx);
+    const phase = userSession.phase;
+    const flow = userSession.heladoFlow;
+    const mapList = (arr) => arr.map(p => {
+        const codigo = p[dbFields.productCode] || '';
+        const nombre = p[dbFields.productName] || '';
+        return codigo ? `${codigo} | ${nombre}` : nombre;
+    });
+
+    let step = 'esperando_producto';
+    let stepDesc = 'El cliente puede escribir un producto del menú, pagar, ver el menú o hacer una pregunta.';
+    let saboresElegidos = [];
+
+    if (flow) {
+        const counts = flow.counts || {};
+        saboresElegidos = (flow.saboresSeleccionados || []).map(s => s[dbFields.productName] || s);
+        if (phase === HELADO_SABORES) {
+            step = 'esperando_sabores';
+            stepDesc = `El cliente debe elegir ${counts.sabores} sabores obligatorios (ya eligió: ${saboresElegidos.length ? saboresElegidos.join(', ') : 'ninguno'}).`;
+        } else if (phase === HELADO_TOPPINGS) {
+            step = 'esperando_toppings';
+            stepDesc = 'El cliente puede elegir toppings opcionales o escribir "sin".';
+        } else if (phase === HELADO_QUANTITY) {
+            step = 'esperando_cantidad';
+            stepDesc = 'El cliente debe indicar cuántas unidades quiere de este producto.';
+        }
+    } else if (phase === HELADO_POST_ADD) {
+        step = 'post_add';
+        stepDesc = 'El cliente acaba de agregar un producto. Puede pedir OTRO producto, pagar, ver el menú o hacer una pregunta.';
+    }
+
+    return {
+        step,
+        stepDesc,
+        products: mapList(products),
+        sabores: mapList(lists.sabores),
+        toppings: mapList(lists.toppings),
+        saboresElegidos
+    };
+}
+
+/**
+ * Re-muestra el prompt del paso actual SIN perder el progreso ya guardado
+ * (usado cuando el clasificador respondió una duda).
+ */
+async function reshowCurrentStep(sock, jid, userSession, ctx) {
+    const dbFields = getDbFields();
+    const flow = userSession.heladoFlow;
+    switch (userSession.phase) {
+        case HELADO_SABORES: {
+            const counts = flow.counts;
+            const nombre = getProductName(flow.product);
+            const lista = formatList(buildOptionLists(ctx).sabores, 'S', dbFields);
+            const palabra = counts.sabores > 1 ? 'sabores' : 'sabor';
+            await say(sock, jid,
+                `🍦 *${nombre}* — elige *${counts.sabores} ${palabra}*:\n\n` +
+                `${lista || '_No hay sabores disponibles._'}\n\n` +
+                `_Ejemplo: s1 s2 s3_`, ctx);
+            return;
+        }
+        case HELADO_TOPPINGS: {
+            const lista = formatList(buildOptionLists(ctx).toppings, 'T', dbFields);
+            await say(sock, jid,
+                `📍 *Toppings (opcional):*\n\n${lista || '_No hay toppings disponibles._'}\n\n` +
+                `_Escribe los códigos (ej: t1 t5) o "sin" para continuar._`, ctx);
+            return;
+        }
+        case HELADO_QUANTITY:
+            await say(sock, jid, `¿Cuántas unidades deseas?\n\n_Ejemplo: "1" o "2"_`, ctx);
+            return;
+        case HELADO_POST_ADD:
+            await sendPostAddOptions(sock, jid, ctx);
+            return;
+        default:
+            await menuHandler.sendMainMenu(sock, jid, ctx);
+            return;
+    }
+}
+
+/**
+ * Núcleo del clasificador: aplica el JSON estructurado devuelto por la IA
+ * avanzando el flujo paso a paso (sabores → toppings → cantidad → checkout).
+ * Retorna true si envió una respuesta útil; false si no hay nada aplicable
+ * (en ese caso el mensaje de error original del paso se muestra intacto).
+ */
+async function classifyOrderInput(sock, jid, text, userSession, ctx) {
+    const contextInfo = buildClassifierContext(userSession, ctx);
+    const result = await heladeriaAi.interpretOrderText(text, contextInfo);
+    if (!result) return false;
+
+    // 1) Duda → responder con Gemini y re-mostrar el paso SIN perder progreso
+    if (result.duda) {
+        const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
+        await say(sock, jid, `😊 ${answer || '¡Claro! ¿En qué más te ayudo?'}`, ctx);
+        await reshowCurrentStep(sock, jid, userSession, ctx);
+        return true;
+    }
+
+    const dbFields = getDbFields();
+    const lists = buildOptionLists(ctx);
+    const saboresList = lists.sabores;
+    const toppingsList = lists.toppings;
+    const currentFlowProduct = userSession.heladoFlow ? userSession.heladoFlow.product : null;
+
+    // 2) ¿Producto pedido distinto al actual (o no hay flujo)? Iniciar su flujo
+    let targetProduct = null;
+    if (result.producto) {
+        const resolved = resolveProducts([{ nombre: result.producto }], ctx);
+        if (resolved.length > 0) targetProduct = resolved[0].product;
+    }
+    const targetIsCurrent = targetProduct && currentFlowProduct &&
+        (targetProduct[dbFields.productCode] || '') === (currentFlowProduct[dbFields.productCode] || '');
+    if (targetProduct && !targetIsCurrent) {
+        await handleProductOptions(sock, jid, targetProduct, userSession, ctx);
+    }
+
+    let acted = false;
+
+    // 3) Aplicar sabores si es el turno (re-jugada con códigos S<n> seguros)
+    if (userSession.heladoFlow && userSession.phase === HELADO_SABORES && result.sabores && result.sabores.length > 0) {
+        const codes = mapNamesToCodes(result.sabores, saboresList, 'S');
+        if (codes.length > 0) {
+            await handleSabores(sock, jid, codes.join(' '), userSession, ctx);
+            acted = true;
+        }
+    }
+
+    // 4) Aplicar toppings si es el turno. Si el cliente dijo "sin toppings"
+    //    explícitamente (en un pedido completo), avanzar con "sin" para no
+    //    bloquear la cascada sabores → toppings → cantidad → dirección.
+    const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
+    if (userSession.heladoFlow && userSession.phase === HELADO_TOPPINGS) {
+        if (result.toppings && result.toppings.length > 0) {
+            const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
+            if (codes.length > 0) {
+                await handleToppings(sock, jid, codes.join(' '), userSession, ctx);
+                acted = true;
+            }
+        } else if (sinToppings) {
+            await handleToppings(sock, jid, 'sin', userSession, ctx);
+            acted = true;
+        }
+    }
+
+    // 5) Aplicar cantidad si es el turno (flujo guiado)
+    const cant = Number(result.cantidad);
+    if (userSession.heladoFlow && userSession.phase === HELADO_QUANTITY && cant >= 1 && cant <= 100) {
+        await handleQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx);
+        acted = true;
+    }
+
+    // 5b) Cantidad en el paso determinista (producto simple sin opciones)
+    if (!userSession.heladoFlow && userSession.phase === PHASE.SELECT_QUANTITY && cant >= 1 && cant <= 100) {
+        const selectionHandler = require('../modules/selection.handler');
+        await selectionHandler.handleSelectQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx);
+        acted = true;
+    }
+
+    // 6) Dirección detectada al terminar el flujo → ir directo al checkout
+    if (result.direccion && userSession.phase === HELADO_POST_ADD) {
+        if (!userSession.order) userSession.order = {};
+        userSession.order.address = result.direccion;
+        await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+        acted = true;
+    }
+
+    return acted;
+}
+
+/**
+ * Error contextual de las fases del flujo (solo se muestra si la IA tampoco
+ * entendió). Evita que handleNotUnderstood deje al usuario sin respuesta.
+ */
+function genericGuidedError(sock, jid, userSession, ctx) {
+    switch (userSession.phase) {
+        case HELADO_SABORES: {
+            const flow = userSession.heladoFlow;
+            const n = flow ? flow.counts.sabores : 1;
+            return say(sock, jid, `❌ No entendí eso. Elige *${n}* ${n > 1 ? 'sabores' : 'sabor'} con códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
+        }
+        case HELADO_TOPPINGS:
+            return say(sock, jid, `❌ No entendí. Escribe los códigos de toppings (ej: *t1 t5*) o *sin* para continuar.`, ctx);
+        case HELADO_QUANTITY:
+            return say(sock, jid, `❌ Ingresa una cantidad válida (entre 1 y 100).`, ctx);
+        case HELADO_POST_ADD:
+            return sendPostAddOptions(sock, jid, ctx);
+        default:
+            return say(sock, jid, `😅 No entendí bien lo que necesitas. Escribe *menú* para ver nuestras opciones. 🍦`, ctx);
+    }
+}
+
+/**
+ * Detecta si un mensaje con nombre de producto trae ADEMÁS datos de pedido
+ * (sabores/toppings/cantidad/dirección/"sin") que el flujo directo perdería.
+ * Si es así, el clasificador híbrido debe procesar el mensaje completo.
+ */
+function hasExtraOrderData(text, ctx) {
+    const t = stripAccents(String(text || '').toLowerCase());
+    if (/\b(sin|ningun|ninguna|nada)\b/i.test(t)) return true;
+    if (/(\d+\s*unidades?|una\s+unidad|dos\s+unidades?|tres\s+unidades?)/i.test(t)) return true;
+    if (/\b(cra|cll|calle|carrera|diagonal|avenida|av\.?|transv|trav|para la)\b/i.test(t)) return true;
+    const dbFields = getDbFields();
+    const opts = buildOptionLists(ctx);
+    const names = [...opts.sabores, ...opts.toppings]
+        .map(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase())
+        .filter(Boolean);
+    return names.some(n => n.length >= 3 && t.includes(n));
+}
+
+/**
+ * Resumen compacto del pedido (local, para el resumen FINALIZE de respaldo en
+ * checkout). No toca la lógica compartida de checkoutHandler.js.
+ */
+function buildLocalSummary(order) {
+    if (!order || !Array.isArray(order.items)) return { text: '', total: 0 };
+    let total = 0;
+    const lines = order.items.map(i => {
+        const precio = Number(i.precio || 0) || 0;
+        const cantidad = Number(i.cantidad) || 1;
+        total += precio * cantidad;
+        let t = `*${cantidad}x* ${i.nombre || 'Producto'} - *${money(precio * cantidad)}*`;
+        if (i.sabores && i.sabores.length) t += `\n  sabores: _${i.sabores.map(s => (s && (s.NombreProducto || s.nombre)) ? (s.NombreProducto || s.nombre) : s).join(', ')}_`;
+        if (i.toppings && i.toppings.length) t += `\n  toppings: _${i.toppings.map(x => (x && (x.NombreProducto || x.nombre)) ? (x.NombreProducto || x.nombre) : x).join(', ')}_`;
+        if (i.observaciones) t += `\n  Observaciones: _${i.observaciones}_`;
+        return t;
+    });
+    return { text: lines.join('\n\n'), total };
+}
+
+async function sendLocalFinalSummary(sock, jid, userSession, ctx) {
+    const summary = buildLocalSummary(userSession.order);
+    const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
+    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+        ? money(userSession.order.deliveryCost)
+        : 'Por confirmar';
+    const summaryText = `📝 *Resumen final del pedido*\n\n` +
+        `*Productos:*\n${summary.text}\n\n` +
+        `Subtotal: ${money(summary.total)}\n` +
+        `Domicilio: ${deliveryText}\n` +
+        `*Total a pagar: ${money(orderTotal)}*\n\n` +
+        `*Datos de entrega:*\n` +
+        `👤 Nombre: ${userSession.order.name}\n` +
+        `🏠 Dirección: ${userSession.order.address}\n` +
+        `📞 Teléfono: ${userSession.order.telefono}\n` +
+        `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
+        `¿Está todo correcto?\nEscribe *1* para confirmar o *2* para editar.`;
+    await say(sock, jid, summaryText, ctx);
+    userSession.phase = PHASE.FINALIZE_ORDER;
+}
+
+const CHECKOUT_CONFIRM_WORDS = ['si', 'sí', 'sip', 'yes', 'ok', 'okay', 'dale', 'listo', 'confirmo', 'confirmar', 'correcto'];
+const CHECKOUT_EDIT_WORDS = ['editar', 'edita', 'corregir', 'cambiar', 'cambio', '2'];
+
+function hasWord(input, words) {
+    const tokens = String(input || '').toLowerCase().replace(/[^a-z0-9áéíóúüñ\s]/gi, ' ').trim().split(/\s+/);
+    return tokens.some(w => words.includes(w));
+}
+
+/**
+ * Respaldo DETERMINISTA para las fases de checkout (CONFIRM_ORDER, CHECK_PAGO,
+ * FINALIZE_ORDER): cubre sinónimos de confirmar/editar y métodos de pago que el
+ * validador genérico no acepta (nequi, daviplata, tarjeta). Retorna true si
+ * respondió; false si debe mostrarse el prompt de la fase.
+ */
+async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
+    const phase = userSession.phase;
+    const t = String(text || '').toLowerCase().trim();
+
+    if (phase === PHASE.CONFIRM_ORDER) {
+        if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
+            await checkoutHandler.handleEnterAddress(sock, jid, '', userSession, ctx, true);
+            return true;
+        }
+        if (hasWord(t, ['2', 'seguir', 'comprando', 'mas', 'más', 'agregar'])) {
+            userSession.phase = PHASE.SELECCION_OPCION;
+            await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
+            return true;
+        }
+        if (hasWord(t, ['3', 'cancelar', 'cancelar pedido', 'vaciar', 'borrar'])) {
+            if (userSession.order) userSession.order.items = [];
+            userSession.phase = PHASE.MENU_PRINCIPAL;
+            await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
+            return true;
+        }
+        return false;
+    }
+
+    if (phase === PHASE.CHECK_PAGO) {
+        const pay = /transferencia|transfiere/i.test(t) ? 'transferencia'
+            : /efectivo|efecty/i.test(t) ? 'efectivo'
+            : (/nequi|daviplata|tarjeta|pse/i.exec(t) || [null])[0];
+        if (pay) {
+            if (!userSession.order) userSession.order = {};
+            userSession.order.paymentMethod = pay;
+            userSession.errorCount = 0;
+            await sendLocalFinalSummary(sock, jid, userSession, ctx);
+            return true;
+        }
+        return false;
+    }
+
+    if (phase === PHASE.FINALIZE_ORDER) {
+        if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
+            await checkoutHandler.handleFinalizeOrder(sock, jid, '1', userSession, ctx);
+            return true;
+        }
+        if (hasWord(t, CHECKOUT_EDIT_WORDS)) {
+            await checkoutHandler.handleFinalizeOrder(sock, jid, '2', userSession, ctx);
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
+    switch (userSession.phase) {
+        case PHASE.CONFIRM_ORDER:
+            await say(sock, jid, '❌ Opción no válida. Escribe *1* para confirmar, *2* para seguir comprando o *3* para cancelar.', ctx);
+            return;
+        case PHASE.CHECK_DIR:
+            await say(sock, jid, '❌ Por favor, escribe tu *dirección de entrega* (mínimo 8 caracteres).', ctx);
+            return;
+        case PHASE.CHECK_NAME:
+            await say(sock, jid, '❌ Por favor, escribe tu *nombre* (mínimo 3 caracteres).', ctx);
+            return;
+        case PHASE.CHECK_TELEFONO:
+            await say(sock, jid, '❌ Por favor, escribe tu *número de teléfono* (mínimo 7 dígitos).', ctx);
+            return;
+        case PHASE.CHECK_PAGO:
+            await say(sock, jid, '❌ ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+            return;
+        case PHASE.FINALIZE_ORDER:
+            await say(sock, jid, '❌ Opción no válida. Escribe *1* para confirmar o *2* para editar.', ctx);
+            return;
+        default:
+            await say(sock, jid, '😅 No entendí. Escribe *menú* para ver nuestras opciones. 🍦', ctx);
+            return;
+    }
+}
+
+/**
+ * ROUTER DE RESPALDO (Clasificador híbrido): se invoca desde los handlers
+ * genéricos (menu/products/selection/parser/checkout/handler.js) JUSTO ANTES
+ * de mostrar el mensaje de "no entendí". Interpreta el mensaje con Gemini y
+ * avanza el flujo (producto/sabores/toppings/cantidad/dirección) o responde
+ * una duda sin perder progreso. SIEMPRE envía una respuesta.
+ */
+async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
+    userSession.productsCache = getProducts(ctx);
+
+    if (CHECKOUT_PHASES.includes(userSession.phase)) {
+        if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
+        await checkoutFallbackPrompt(sock, jid, userSession, ctx);
+        return;
+    }
+
+    const handled = await classifyOrderInput(sock, jid, text, userSession, ctx);
+    if (handled) return;
+    await genericGuidedError(sock, jid, userSession, ctx);
+}
+
 module.exports = {
     config: {
         business: {
@@ -717,6 +1138,7 @@ module.exports = {
     routeIntent,
     processAudio,
     showWelcome,
+    handleNotUnderstood,
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => HELADERIA_PHASES.includes(phase),
     getPhases: () => HELADERIA_PHASES,
