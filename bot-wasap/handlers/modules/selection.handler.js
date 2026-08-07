@@ -137,6 +137,17 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
         userSession.awaitingField = 'quantity';
         await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
     } else {
+        // Modo híbrido: intentar IA antes del mensaje genérico
+        try {
+            const flowRegistry = require('../flowRegistry');
+            const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+            if (aiFlow) {
+                await aiFlow.handleNotUnderstood(sock, jid, rawInput, userSession, ctx);
+                return;
+            }
+        } catch (aiErr) {
+            logger.error(`[${jid}] Error delegando selección de detalles a IA: ${aiErr.message}`);
+        }
         const msg = `❌ No entendí tu respuesta. Por favor, selecciona ${nomenclature.itemPrimaryPlural} (S1), ${nomenclature.itemSecondaryPlural} (T1) o indica la cantidad.`;
         await say(sock, jid, msg, ctx);
     }

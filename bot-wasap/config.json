@@ -1,1 +1,0 @@
-{ "_deprecated": "config moved to environment variables (see .env or Secret Manager)" }

@@ -116,6 +116,18 @@ async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
             break;        default:
             logger.warn(`[${jid}] -> Opción de menú desconocida: ${option}`);
             
+            // Modo híbrido: si algún flow expone IA, delegar texto libre antes del mensaje genérico
+            try {
+                const flowRegistry = require('../flowRegistry');
+                const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+                if (aiFlow) {
+                    await aiFlow.handleNotUnderstood(sock, jid, option, userSession, ctx);
+                    return;
+                }
+            } catch (aiErr) {
+                logger.error(`[${jid}] Error delegando opción inválida a IA: ${aiErr.message}`);
+            }
+            
             // Incrementar contador de errores
             userSession.errorCount = (userSession.errorCount || 0) + 1;
             logger.info(`[${jid}] errorCount: ${userSession.errorCount}`);

@@ -27,6 +27,11 @@ bot-wasap/service_account.json
 replace-secrets.txt
 bot-wasap/.env
 bot-wasap/.env.local
+# Tenant-specific env files contain secrets - NUNCA commitear
+.env.pescaderia
+.env.*
+!.env.example
+!.env.template
 
 # Additional sensitive artifacts
 service_account_decoded.json
@@ -69,3 +74,14 @@ run_tenants.bat
 .idea/
 *.swp
 *.swo
+
+# WhatsApp Web JS cache + session QR (no commitear)
+.wwebjs_cache/
+bot-wasap/.wwebjs_cache/
+bot-wasap/qr_code.png
+bot-wasap/assets/*/qr_code.png
+
+# Artefactos accidentales por rutas rotas de salida
+UsersAdministradorDocumentsempanadas_prods.json
+ersAdministradorDocumentsMundoherladoscobot-wasap
+nul

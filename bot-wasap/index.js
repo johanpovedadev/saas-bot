@@ -2,7 +2,26 @@
 
 const path = require('path');
 const fs = require('fs');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, Message } = require('whatsapp-web.js');
+
+// PATCH: WhatsApp Web renombró el getter id._serialized → id.$1 (2026).
+// Sin esto, downloadMedia() pasa undefined como msgId a la página y falla con
+// el error opaco "r: r", rompiendo la descarga de audio/imagen. Backfill seguro:
+const __wwebMsgPatch = (function () {
+    const proto = Message && Message.prototype;
+    if (!proto || typeof proto._patch !== 'function') return false;
+    const orig = proto._patch;
+    proto._patch = function (data) {
+        if (data && data.id && data.id._serialized == null && data.id.$1 != null) {
+            data = Object.assign({}, data, {
+                id: Object.assign({}, data.id, { _serialized: data.id.$1 })
+            });
+        }
+        return orig.call(this, data);
+    };
+    return true;
+})();
+if (__wwebMsgPatch) console.log('🩹 Patch whatsapp-web.js aplicado: id._serialized ← id.$1');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { say, loadAllProductsCache } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');

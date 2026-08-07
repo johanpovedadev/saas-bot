@@ -20,12 +20,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # CARGAR VARIABLES DE ENTORNO DESDE .env
 # ============================================================================
 # CRÍTICO: Django DEBE cargar .env antes de acceder a os.environ
-# Cada negocio tiene su propio .env en la raíz del proyecto
+# Cada negocio tiene su propio .env.<BUSINESS_KEY> en la raíz del proyecto.
+# PRECEDENCIA (igual que env.loader.js del bot): primero .env.<BUSINESS_KEY>,
+# luego el .env compartido como base. dotenv NO sobreescribe variables ya
+# definidas en os.environ, así el tenant tiene prioridad.
+business_key_for_env = (os.environ.get('BUSINESS_KEY') or '').replace('.json', '').strip()
+tenant_env_path = BASE_DIR / f'.env.{business_key_for_env}' if business_key_for_env else None
+
+if tenant_env_path and tenant_env_path.exists():
+    load_dotenv(dotenv_path=tenant_env_path)
+    print(f"Django cargando .env propio del tenant: {tenant_env_path}")
+
 env_path = BASE_DIR / '.env'
 load_dotenv(dotenv_path=env_path)
 
-print(f"Django cargando .env desde: {env_path}")
+print(f"Django cargando .env compartido (base) desde: {env_path}")
 print(f"GOOGLE_SHEET_ID detectado: {os.environ.get('GOOGLE_SHEET_ID', 'NO ENCONTRADO')}")
+print(f"GOOGLE_SHEET_ID_ENTREGAS detectado: {os.environ.get('GOOGLE_SHEET_ID_ENTREGAS', 'NO ENCONTRADO')}")
+print(f"SHEET_NAME_PRODUCTS detectado: {os.environ.get('SHEET_NAME_PRODUCTS', 'NO ENCONTRADO')}")
+print(f"SHEET_TAB_DOMICILIOS detectado: {os.environ.get('SHEET_TAB_DOMICILIOS', 'NO ENCONTRADO')}")
 
 
 # Quick-start development settings - unsuitable for production

@@ -1,0 +1,1 @@
+- [x] Definición de arquitectura multitenant y reglas en agents.md.

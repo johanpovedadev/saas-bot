@@ -125,9 +125,17 @@ def get_spreadsheet_id():
 # Mantener variable global para compatibilidad, pero se actualiza dinámicamente
 SPREADSHEET_ID = get_spreadsheet_id()
 
-# Nombres de las hojas dentro del spreadsheet
-PRODUCTS_WORKSHEET_NAME = 'Inventario'   # Hoja con inventario (nombre real en el sheet)
-DELIVERIES_WORKSHEET_NAME = 'Domicilios'  # Hoja con pedidos/entregas
+def get_deliveries_spreadsheet_id():
+    """Obtiene el SPREADSHEET_ID de pedidos (puede ser distinto al de productos).
+    Usa GOOGLE_SHEET_ID_ENTREGAS si existe, si no el mismo de productos."""
+    return os.environ.get('GOOGLE_SHEET_ID_ENTREGAS') or get_spreadsheet_id()
+
+# Nombres de las hojas dentro del spreadsheet (configurables por tenant desde .env)
+def _env_or(name, default):
+    return os.environ.get(name) or default
+
+PRODUCTS_WORKSHEET_NAME = _env_or('SHEET_NAME_PRODUCTS', 'Inventario')  # Hoja con inventario (real en el sheet)
+DELIVERIES_WORKSHEET_NAME = _env_or('SHEET_TAB_DOMICILIOS', 'Domicilios')  # Hoja con pedidos/entregas
 LEADS_WORKSHEET_NAME = 'LEADS'  # Hoja con leads de seguros
 
 # ---------- Helpers de normalización ----------
@@ -198,8 +206,8 @@ def obtener_categorias_desde_inventario():
 def agregar_entrega(data):
     try:
         client = get_gs_client()
-        # CRÍTICO: Leer SPREADSHEET_ID dinámicamente
-        current_spreadsheet_id = get_spreadsheet_id()
+        # CRÍTICO: Leer SPREADSHEET_ID dinámicamente (puede ser distinto al de productos)
+        current_spreadsheet_id = get_deliveries_spreadsheet_id()
         sheet = client.open_by_key(current_spreadsheet_id).worksheet(DELIVERIES_WORKSHEET_NAME)
         
         # Obtenemos la fecha y hora actuales

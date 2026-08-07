@@ -58,6 +58,9 @@ SERVICE_ACCOUNT_FILE = _get_service_account_file()
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID')
 INVENTARIO_SHEET_NAME = os.environ.get('SHEET_NAME_PRODUCTS')
 ENTREGAS_SHEET_NAME = os.environ.get('SHEET_TAB_DOMICILIOS')
+# Hoja de pedidos puede estar en un spreadsheet distinto al de productos.
+# Por defecto usa el mismo spreadsheet que los productos (compatibilidad).
+GOOGLE_SHEET_ID_ENTREGAS = os.environ.get('GOOGLE_SHEET_ID_ENTREGAS') or GOOGLE_SHEET_ID
 
 # Validación de variables críticas al inicio
 if not GOOGLE_SHEET_ID:
@@ -223,7 +226,7 @@ def obtener_datos_inventario():
 def _get_entregas_worksheet():
     """Obtiene la hoja de entregas, creándola si no existe"""
     client = _get_gspread_client()
-    ss = client.open_by_key(GOOGLE_SHEET_ID)
+    ss = client.open_by_key(GOOGLE_SHEET_ID_ENTREGAS)
     try:
         return ss.worksheet(ENTREGAS_SHEET_NAME)
     except gspread.WorksheetNotFound:

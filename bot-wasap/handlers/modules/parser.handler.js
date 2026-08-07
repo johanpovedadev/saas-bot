@@ -109,6 +109,17 @@ async function handleParserOrder(sock, jid, parserResult, userSession, ctx) {
         const producto = chooseProductFromSearch(searchResp.data, parsed.product_name);
 
         if (!producto) {
+            // Modo híbrido: intentar IA antes del mensaje genérico
+            try {
+                const flowRegistry = require('../flowRegistry');
+                const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+                if (aiFlow) {
+                    await aiFlow.handleNotUnderstood(sock, jid, parsed.product_name, userSession, ctx);
+                    return false;
+                }
+            } catch (aiErr) {
+                logger.error(`[${jid}] Error delegando parser sin producto a IA: ${aiErr.message}`);
+            }
             await say(sock, jid, 
                 `❌ No encontré el producto *"${parsed.product_name}"* en nuestro catálogo.\n\n` +
                 `¿Puedes decirme exactamente el nombre o escribir *menú* para verlo?`, 

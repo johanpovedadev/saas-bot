@@ -179,6 +179,18 @@ async function handleMultipleProductsFoundEmpathic(sock, jid, productos, userSes
  * @returns {Promise<void>}
  */
 async function handleNoProductsFoundEmpathic(sock, jid, userSession, ctx, originalQuery) {
+    // Modo híbrido: si algún flow expone IA, delegar antes del mensaje genérico
+    try {
+        const flowRegistry = require('../flowRegistry');
+        const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+        if (aiFlow) {
+            await aiFlow.handleNotUnderstood(sock, jid, originalQuery, userSession, ctx);
+            return;
+        }
+    } catch (aiErr) {
+        logger.error(`[${jid}] Error delegando búsqueda sin resultados a IA: ${aiErr.message}`);
+    }
+
     userSession.errorCount++;
     
     // ✅ Detectar frustración después de 2 errores consecutivos
@@ -342,6 +354,17 @@ async function handleSingleProductFound(sock, jid, producto, userSession, ctx) {
         valor2: opciones2,
         total: totalOpciones
     });
+
+    // 🍦 Interceptor para flows con opciones guiadas (ej: heladería):
+    // si el tenant actual implementa handleProductOptions, la conversación de
+    // sabores/toppings se delega al flow. Para el resto, comportamiento intacto.
+    const _flowRegistry = require('../flowRegistry');
+    const _optionsFlow = _flowRegistry.getTenantFlowWithCapability('handleProductOptions');
+    if (_optionsFlow && totalOpciones > 0) {
+        logger.info(`[${jid}] -> 🎯 Flow con opciones guiadas, delegando sabores/toppings`);
+        await _optionsFlow.handleProductOptions(sock, jid, producto, userSession, ctx);
+        return;
+    }
 
     if (totalOpciones > 0) {
         // Tiene opciones → SELECT_DETAILS
@@ -519,6 +542,17 @@ async function handleProductSelection(sock, jid, input, userSession, ctx) {
     
     if (!producto) {
         logger.warn(`[${jid}] -> No se encontró producto con input: "${input}"`);
+        // Modo híbrido: delegar a la IA antes del mensaje genérico
+        try {
+            const flowRegistry = require('../flowRegistry');
+            const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+            if (aiFlow) {
+                await aiFlow.handleNotUnderstood(sock, jid, input, userSession, ctx);
+                return;
+            }
+        } catch (aiErr) {
+            logger.error(`[${jid}] Error delegando selección sin producto a IA: ${aiErr.message}`);
+        }
         await say(sock, jid, 
             `❌ No encontré ese producto en la lista.\n\n` +
             `Por favor escribe el *número* (ejemplo: 1) o el *nombre exacto* del producto que deseas. 😊`, 
@@ -558,6 +592,17 @@ async function handleProductSelection(sock, jid, input, userSession, ctx) {
         total: totalOpciones,
         producto: producto[dbFields.productName]
     });
+    
+    // 🍦 Interceptor para flows con opciones guiadas (ej: heladería):
+    // si el tenant actual implementa handleProductOptions, la conversación de
+    // sabores/toppings se delega al flow. Para el resto, comportamiento intacto.
+    const _flowRegistry = require('../flowRegistry');
+    const _optionsFlow = _flowRegistry.getTenantFlowWithCapability('handleProductOptions');
+    if (_optionsFlow && totalOpciones > 0) {
+        logger.info(`[${jid}] -> 🎯 Flow con opciones guiadas, delegando sabores/toppings`);
+        await _optionsFlow.handleProductOptions(sock, jid, producto, userSession, ctx);
+        return;
+    }
     
     if (totalOpciones > 0) {
         // ✅ TIENE OPCIONES → Ir a fase SELECT_DETAILS

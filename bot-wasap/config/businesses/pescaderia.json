@@ -1,5 +1,5 @@
 {
-  "business_name": "Pescaderia Donde Mary",
+  "business_name": "Ricuras del Pacífico",
   "business_type": "RESTAURANT",
   "sheet_id": "10DpiaNPvEPnwAq5rQsmchprZX_6l-rf6W8DapVA6XMo",
   "sheet_tab": "Entregas",
@@ -12,7 +12,7 @@
   "department": "Cundinamarca",
   "timezone": "America/Bogota",
   "currency": "COP",
-  "api_base": "http://localhost:8001/api",
+  "api_base": "http://localhost:8002/api",
   "api_timeout": 8000,
   "endpoint_products": "/obtener_todos_los_productos/",
   "endpoint_orders": "/registrar_confirmacion/",

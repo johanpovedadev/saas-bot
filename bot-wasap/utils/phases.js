@@ -51,7 +51,15 @@ const PHASE = {
     FIN_GOAL_ONBOARDING: 'fin_goal_onboarding',
     FIN_GOALS: 'fin_goals',
     FIN_CHECKIN: 'fin_checkin',
-    FIN_MAIN: 'fin_main'
+    FIN_MAIN: 'fin_main',
+
+    // ===================================
+    // 🍦 FASES FLUJO GUIADO MUNDO HELADOS
+    // ===================================
+    HELADO_SABORES: 'HELADO_SABORES',       // Selección de sabores obligatorios
+    HELADO_TOPPINGS: 'HELADO_TOPPINGS',     // Selección de toppings opcionales
+    HELADO_QUANTITY: 'HELADO_QUANTITY',     // Cantidad + agregar al carrito
+    HELADO_POST_ADD: 'HELADO_POST_ADD'      // Opciones post-compra (seguir/pagar/menú) - flujo heladería
 };
 
 module.exports = PHASE;

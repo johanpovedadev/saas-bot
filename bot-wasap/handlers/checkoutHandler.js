@@ -20,6 +20,52 @@ function getAdminJids() {
     return notificationService.getAdminJids();
 }
 
+/**
+ * Reglas de checkout específicas del tenant actual (resueltas desde el flow
+ * registrado vía getCheckoutConfig). Permite aislar comportamientos como
+ * "nunca pedir el nombre" o "confirmar/editar con números" SOLO al tenant que
+ * lo declare, sin tocar a los demás.
+ */
+function getTenantCheckoutConfig() {
+    try {
+        const flowRegistry = require('./flowRegistry');
+        const flow = flowRegistry.getTenantFlowWithCapability('getCheckoutConfig');
+        return (flow && typeof flow.getCheckoutConfig === 'function') ? (flow.getCheckoutConfig() || {}) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/**
+ * Texto de la acción final del pedido (FINALIZE_ORDER):
+ * - numericConfirm: confirmar/editar con números (1/2).
+ * - Por defecto: palabras "confirmar"/"editar".
+ */
+function getFinalActionHint(cfg) {
+    if (cfg && cfg.numericConfirm) {
+        return 'Escribe *1* para confirmar o *2* para editar.';
+    }
+    return 'Escribe *confirmar* para finalizar o *editar* para cambiar algún dato.';
+}
+
+/**
+ * Modo híbrido: delega un mensaje inesperado a la IA del flow del tenant actual.
+ * Retorna true si el flow se hizo cargo, false si no hay IA o falla.
+ */
+async function delegateToAI(sock, jid, text, userSession, ctx) {
+    try {
+        const flowRegistry = require('./flowRegistry');
+        const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+        if (aiFlow) {
+            await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
+            return true;
+        }
+    } catch (aiErr) {
+        logger.error(`[${jid}] Error delegando a IA en checkout: ${aiErr.message}`);
+    }
+    return false;
+}
+
 function generateCartSummary(userSession) {
     if (!userSession || !userSession.order || !userSession.order.items) {
         return { text: 'Tu carrito está vacío.', total: 0 };
@@ -107,6 +153,25 @@ function validateInput(input, expectedType, options = {}) {
 
 async function handleCartSummary(sock, jid, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleCartSummary.`);
+
+    // 🍦 Tenants con carrito propio (session.carrito, ej: flujo heladería):
+    // sincronizar el carrito al pedido (order.items) justo al avanzar a checkout.
+    // Es idempotente: los ítems marcados _fromCarrito se reemplazan en cada dump.
+    if (userSession && Array.isArray(userSession.carrito)) {
+        if (!userSession.order) userSession.order = { items: [] };
+        const existing = (userSession.order.items || []).filter(i => !i._fromCarrito);
+        const carritoItems = userSession.carrito.map(item => ({
+            codigo: item.codigo,
+            nombre: item.nombre,
+            precio: item.precio || 0,
+            cantidad: item.cantidad || 1,
+            sabores: Array.isArray(item.sabores) ? [...item.sabores] : [],
+            toppings: Array.isArray(item.toppings) ? [...item.toppings] : [],
+            observaciones: item.observaciones || '',
+            _fromCarrito: true
+        }));
+        userSession.order.items = existing.concat(carritoItems);
+    }
     
     if (!userSession.order || userSession.order.items.length === 0) {
         logger.info(`[${jid}] -> Carrito vacío. Volviendo al menú principal.`);
@@ -116,6 +181,11 @@ async function handleCartSummary(sock, jid, userSession, ctx) {
     }
 
     const summary = generateCartSummary(userSession);
+
+    const cfg = getTenantCheckoutConfig();
+    const confirmHint = cfg.numericConfirm
+        ? 'Escribe *1*'
+        : 'Escribe *1* o *confirmar*';
 
     const fullMessage = `📝 *Resumen de tu pedido:*
 
@@ -128,7 +198,7 @@ ${summary.text}
 ¿Qué deseas hacer?
 
 1️⃣ ✅ *Confirmar pedido*
-   Escribe *1* o *confirmar*
+   ${confirmHint}
 
 2️⃣ ➕ *Seguir comprando*
    Escribe *2* o el nombre del producto
@@ -172,8 +242,9 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
         return;
     }
     
-    // Opción inválida
+    // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
+    if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para cancelar', ctx);
 }
 
@@ -244,6 +315,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         }
 
         userSession.phase = PHASE.FINALIZE_ORDER;
+        const cfg = getTenantCheckoutConfig();
         const summary = generateCartSummary(userSession);
         userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
         const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
@@ -260,7 +332,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
             `🏠 Dirección: ${userSession.order.address}\n` +
             `📞 Teléfono: ${userSession.order.telefono}\n` +
             `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
-            `¿Está todo correcto?\nEscribe *confirmar* para finalizar o *editar* para cambiar algún dato.`;
+            `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 
         await say(sock, jid, summaryText, ctx);
         logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen (entrada única).`);
@@ -312,6 +384,8 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     const paymentMethod = input.toLowerCase().trim();
     if (!validateInput(paymentMethod, 'payment')) {
         userSession.errorCount++;
+        // Modo híbrido: intentar IA antes del mensaje genérico
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
         await say(sock, jid, '❌ Opción no válida. Por favor, escribe *Transferencia* o *Efectivo*.', ctx);
         return;
     }
@@ -333,6 +407,7 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         await say(sock, jid, '⚠️ Ocurrió un error crítico de configuración. Por favor, contacta a soporte.', ctx);
         return;
     }    userSession.phase = PHASE.FINALIZE_ORDER;
+    const cfg = getTenantCheckoutConfig();
     const summary = generateCartSummary(userSession);
     userSession.order.deliveryCost = 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
@@ -350,7 +425,7 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         `👤 Nombre: ${userSession.order.name}\n` +
         `🏠 Dirección: ${userSession.order.address}\n` +
         `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
-        `¿Está todo correcto?\nEscribe *confirmar* para finalizar o *editar* para cambiar algún dato.`;
+        `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 
     await say(sock, jid, summaryText, ctx);
     logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen.`);
@@ -358,6 +433,7 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
 
 async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
     const finalAction = input.toLowerCase().trim();
+    const cfg = getTenantCheckoutConfig();
 
     if (validateInput(finalAction, 'confirmation')) {
         logger.info(`[${jid}] -> Pedido confirmado. Enviando al backend en ${API_BASE}`);
@@ -521,10 +597,26 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             await say(sock, jid, '⚠️ Ocurrió un error al registrar tu pedido. El negocio ha sido notificado y tu pedido se guardó para reintento.', ctx);
         }
 
-    } else if (validateInput(finalAction, 'edit')) {
+        // 💾 Persistir historial para flows que lo soporten (ej: restaurantStore del flow pescaderia)
+        try {
+            const flowRegistry = require('./flowRegistry');
+            const flow = flowRegistry.getTenantFlowWithCapability('persistOrder');
+            if (flow) {
+                await flow.persistOrder(jid, userSession.order, orderTotal, ctx);
+            }
+        } catch (persistErr) {
+            logger.error(`[${jid}] Error persistiendo historial: ${persistErr.message}`);
+        }
+
+    } else if (validateInput(finalAction, 'edit') || (cfg && cfg.numericConfirm && finalAction === '2')) {
         await say(sock, jid, '✏️ De acuerdo. ¿Qué dato deseas editar? (Dirección, Nombre, Pago)', ctx);
     } else {
-        await say(sock, jid, '❌ Opción no válida. Por favor, escribe *confirmar* o *editar*.', ctx);
+        // Modo híbrido: intentar IA antes del mensaje genérico
+        if (await delegateToAI(sock, jid, finalAction, userSession, ctx)) return;
+        const invalidHint = (cfg && cfg.numericConfirm)
+            ? 'escribe *1* para confirmar o *2* para editar'
+            : 'escribe *confirmar* o *editar*';
+        await say(sock, jid, `❌ Opción no válida. Por favor, ${invalidHint}.`, ctx);
     }
 }
 

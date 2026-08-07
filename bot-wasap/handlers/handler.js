@@ -53,9 +53,7 @@ const envConfig = require('../config/env.loader');
 const flowRegistry = require('./flowRegistry');
 
 function getCurrentFlow() {
-    return flowRegistry.getFlow(envConfig.business?.type) ||
-           flowRegistry.getFlow(process.env.BUSINESS_KEY) ||
-           null;
+    return flowRegistry.getTenantFlow();
 }
 
 // ===================================
@@ -156,8 +154,20 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
         await menuHandler.sendMainMenu(sock, jid, ctx);
         return;
     }
-      // Opción inválida: incrementar errorCount y verificar frustración
+      // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[POST_ADD_OPTIONS] Opción inválida: "${t}"`);
+
+    try {
+        const flowRegistry = require('./flowRegistry');
+        const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+        if (aiFlow) {
+            await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
+            return;
+        }
+    } catch (aiErr) {
+        logger.error(`[${jid}] Error delegando post_add_options a IA: ${aiErr.message}`);
+    }
+
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     
     // ✅ Sistema de frustración después de 2 errores
@@ -280,8 +290,8 @@ async function processIncomingMessage(sock, messageData, ctx) {
         if (userSession.awaitingField) {
             logger.info(`[${jid}] Procesando campo pendiente: ${userSession.awaitingField}`);
             
-            // Campos de selección de producto: sabores, toppings
-            if (['sabores', 'toppings', 'paso1', 'paso2'].includes(userSession.awaitingField)) {
+            // Campos de selección de producto: sabores, toppings, detalles
+            if (['sabores', 'toppings', 'paso1', 'paso2', 'details'].includes(userSession.awaitingField)) {
                 await selectionHandler.handleSelectDetails(sock, jid, text, userSession, ctx);
                 return;
             }
@@ -499,6 +509,16 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
                 await currentFlow.handle(sock, jid, text, userSession, ctx);
                 break;
             }
+            // Modo híbrido: si algún flow expone IA, intentar interpretar antes de resetear
+            try {
+                const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+                if (aiFlow) {
+                    await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
+                    break;
+                }
+            } catch (aiErr) {
+                logger.error(`[${jid}] Error delegando fase desconocida a IA: ${aiErr.message}`);
+            }
             logger.error(`[${jid}] ❌ Fase desconocida o no manejada: "${phase}"`);
             if (currentFlow) {
                 userSession.phase = currentFlow.getInitialPhase();
@@ -600,6 +620,32 @@ async function handleConfirmation(sock, jid, text, userSession, ctx) {
 // ===================================
 
 /**
+ * Descarga el media de un mensaje con reintentos.
+ * whatsapp-web.js a veces falla con ProtocolError (Network.getResponseBody) al
+ * descargar media que aún se está resolviendo en el navegador; reintentar tras
+ * una pequeña espera suele resolverlo. Devuelve MessageMedia o null.
+ */
+async function downloadMediaWithRetry(msg, jid, maxAttempts = 3) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const media = await msg.downloadMedia();
+            if (media && media.data) return media;
+            lastErr = new Error('downloadMedia devolvió undefined');
+        } catch (e) {
+            lastErr = e;
+        }
+        if (attempt < maxAttempts) {
+            const waitMs = attempt * 1500;
+            logger.warn(`[${jid}] Media descarga falló (intento ${attempt}/${maxAttempts}), reintentando en ${waitMs}ms: ${lastErr?.message || lastErr?.name || lastErr}`);
+            await new Promise(r => setTimeout(r, waitMs));
+        }
+    }
+    logger.error(`[${jid}] Media no pudo descargarse tras ${maxAttempts} intentos: ${lastErr?.stack?.split('\n').slice(0,4).join(' | ') || lastErr?.message || lastErr}`);
+    return null;
+}
+
+/**
  * Configura los event handlers del socket de whatsapp-web.js
  * 
  * @param {Object} sock - Cliente de whatsapp-web.js
@@ -638,42 +684,91 @@ function setupSocketHandlers(sock, ctx) {
             // Extraer datos del mensaje usando el módulo existente
             const messageData = messageHandler.extractMessageData(msg);
 
+            // WhatsApp migró a JIDs @lid (privacidad): los mensajes entrantes de contactos
+            // sin conversación previa llegan como "xxx@lid". Enviar de vuelta al @lid suele
+            // fallar silenciosamente, así que resolvemos el teléfono real (@c.us) con la API
+            // oficial de whatsapp-web.js (getContactLidAndPhone) y respondemos a ese JID.
+            if (messageData.from && messageData.from.endsWith('@lid') && typeof sock.getContactLidAndPhone === 'function') {
+                try {
+                    const lidResults = await sock.getContactLidAndPhone([messageData.from]);
+                    const resolved = Array.isArray(lidResults) ? lidResults[0] : null;
+                    if (resolved && resolved.pn) {
+                        logger.info(`[${messageData.from}] LID resuelto a ${resolved.pn}`);
+                        messageData.from = resolved.pn;
+                    }
+                } catch (lidErr) {
+                    logger.warn(`No se pudo resolver LID ${messageData.from}: ${lidErr.message}`);
+                }
+            }
+
             // Handle audio/image messages BEFORE text validation (media may have no caption)
             if (messageData.mediaType === 'audio' || messageData.mediaType === 'image') {
+                // Ignorar media de grupos/estados/boletines y propios (igual que shouldProcessMessage)
+                if (!messageData.from ||
+                    messageData.from.includes('@g.us') ||
+                    messageData.from.includes('status@broadcast') ||
+                    messageData.from.includes('@newsletter') ||
+                    messageData.fromMe) {
+                    logger.debug(`[${messageData.from}] Media de grupo/estado/propio ignorado`);
+                    return;
+                }
                 logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
                 const userSession = initializeUserSession(messageData.from, ctx);
                 const currentFlow = getCurrentFlow();
-                if (currentFlow && process.env.BUSINESS_KEY === 'finance') {
+                const isAudio = messageData.mediaType === 'audio';
+                // Resolver función de transcripción: método del flow (pescaderia) o financeAi (retro-compat finance)
+                let transcribeFn = currentFlow ? (isAudio ? currentFlow.transcribeAudio : currentFlow.transcribeImage) : null;
+                if (!transcribeFn && process.env.BUSINESS_KEY === 'finance') {
+                    const financeAi = require('../services/financeAi');
+                    transcribeFn = async (data, sess, mime) => {
+                        return isAudio ? financeAi.interpretAudio(data, sess) : financeAi.interpretImage(data, sess, mime || 'image/jpeg');
+                    };
+                }
+                if (transcribeFn || (currentFlow && currentFlow.processAudio)) {
                     try {
-                        const media = await msg.downloadMedia();
+                        logger.info(`[${messageData.from}] media: descargando...`);
+                        const media = await downloadMediaWithRetry(msg, messageData.from);
+                        logger.info(`[${messageData.from}] media: descarga terminó: ${media ? 'con datos' : 'null'}`);
                         if (!media || !media.data) {
-                            await sock.sendMessage(messageData.from, { text: 'No pude recibir el archivo. Intenta de nuevo.' });
+                            await sock.sendMessage(messageData.from, 'No pude recibir el archivo. Intenta de nuevo.');
                             return;
                         }
-                        const financeAi = require('../services/financeAi');
-                        let transcribed = null;
-                        if (messageData.mediaType === 'audio') {
-                            await sock.sendMessage(messageData.from, { text: '🎙️ Procesando tu nota de voz...' });
-                            transcribed = await financeAi.interpretAudio(media.data, userSession);
+                        if (isAudio) {
+                            await sock.sendMessage(messageData.from, '🎙️ Procesando tu nota de voz...');
                         } else {
-                            await sock.sendMessage(messageData.from, { text: '🖼️ Leyendo tu imagen...' });
-                            transcribed = await financeAi.interpretImage(media.data, userSession, media.mimetype || 'image/jpeg');
+                            await sock.sendMessage(messageData.from, '🖼️ Leyendo tu imagen...');
                         }
-                        if (!transcribed) {
-                            await sock.sendMessage(messageData.from, { text: 'No pude entender el contenido. Intenta escribirlo como texto.' });
+                        // Ruta combinada (1 solo call IA): transcribe + clasifica intención en un solo request.
+                        const processMedia = currentFlow && isAudio ? currentFlow.processAudio : null;
+                        if (processMedia) {
+                            await processMedia(sock, messageData.from, media.data, media.mimetype || 'audio/ogg', isAudio, userSession, ctx);
                             return;
                         }
-                        // Route transcribed text through normal finance handle
+                        logger.info(`[${messageData.from}] media: transcribiendo (mime=${media.mimetype})...`);
+                        const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg');
+                        logger.info(`[${messageData.from}] media: transcripción terminó: ${transcribed ? JSON.stringify(transcribed.substring(0, 60)) : 'null'}`);
+                        if (!transcribed) {
+                            await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');
+                            return;
+                        }
+                        // Enrutar el texto transcrito a través del flow
                         await currentFlow.handle(sock, messageData.from, transcribed, userSession, ctx);
                         return;
                     } catch (mediaErr) {
-                        logger.error('Error procesando media para finance:', mediaErr.message);
-                        await sock.sendMessage(messageData.from, { text: 'Hubo un error procesando tu archivo. Intenta de nuevo.' });
+                        const errDesc = mediaErr instanceof Error
+                            ? `${mediaErr.name}: ${mediaErr.message}\n${(mediaErr.stack || '').split('\n').slice(0, 8).join('\n')}`
+                            : `[valor: ${typeof mediaErr}] ${JSON.stringify(mediaErr, Object.getOwnPropertyNames(mediaErr || {}))}`;
+                        logger.error(`Error procesando media (detalle):\n${errDesc}`);
+                            try {
+                                await sock.sendMessage(messageData.from, 'Hubo un error procesando tu archivo. Intenta de nuevo.');
+                            } catch (e2) {
+                            logger.error(`Además, falló enviar el aviso de error: ${e2?.message || e2}`);
+                        }
                         return;
                     }
                 }
-                // Non-finance businesses: ignore media silently
-                logger.debug(`[${messageData.from}] Media ignorado (no es flow finance)`);
+                // Sin flow con transcripción: ignorar media silenciosamente
+                logger.debug(`[${messageData.from}] Media ignorado (no hay flow con transcripción)`);
                 return;
             }
 

@@ -351,8 +351,8 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             }))
         };
 
-        const endpoint = (envConfig.endpoints && (envConfig.endpoints.registrarConfirmacion || envConfig.endpoints.registrarEntrega))
-            ? (envConfig.endpoints.registrarConfirmacion || envConfig.endpoints.registrarEntrega)
+        const endpoint = (envConfig.backend && envConfig.backend.endpoints && envConfig.backend.endpoints.orders)
+            ? envConfig.backend.endpoints.orders
             : '/registrar_entrega/';
         const url = `${API_BASE}${endpoint}`;
 

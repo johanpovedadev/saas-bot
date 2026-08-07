@@ -11,7 +11,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
-        BUSINESS_KEY: 'pescaderia'
+        BUSINESS_KEY: 'pescaderia',
+        DJANGO_PORT: '8002'
       }
     },
     {
@@ -38,7 +39,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
-        BUSINESS_KEY: 'mascotas'
+        BUSINESS_KEY: 'mascotas',
+        DJANGO_PORT: '8001'
       }
     },
     {
@@ -65,6 +67,34 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'finance'
+      }
+    },
+    {
+      name: 'django-heladeria',
+      cwd: 'C:\\Users\\Administrador\\Documents\\empanadas',
+      script: 'run_wsgi.py',
+      interpreter: 'python',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'production',
+        PYTHONUNBUFFERED: '1',
+        BUSINESS_KEY: 'heladeria',
+        DJANGO_PORT: '8000'
+      }
+    },
+    {
+      name: 'bot-heladeria',
+      cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
+      script: 'index.js',
+      interpreter: 'node',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'production',
+        BUSINESS_KEY: 'heladeria'
       }
     },
     {
