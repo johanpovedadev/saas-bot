@@ -57,7 +57,8 @@ function buildSystemPrompt(userSession) {
         const nombre = p[dbFields.productName] || '';
         const precio = p[dbFields.productPrice] || 0;
         const cat = p[dbFields.productCategory] || '';
-        return `${codigo} | ${nombre} | $${precio} | ${cat}`;
+        const desc = p.Descripcion || p.descripcion || '';
+        return `${codigo} | ${nombre} | $${precio} | ${cat}${desc ? ` | ${desc}` : ''}`;
     });
     const businessName = envConfig.business.name || 'Mundo Helados';
 
@@ -65,7 +66,7 @@ function buildSystemPrompt(userSession) {
 
 Tu PERSONAJE/ROL: eres un heladero amigable y entusiasta, experto en helados, copas, conos y malteadas. Eres cercano, servicial y siempre mantienes el tono de un local amigable: usas emojis 🍦🍨🧇 con moderación, respondes de forma breve (1-3 líneas) y evitas tecnicismos. Nunca inventes productos, precios ni promociones que no estén en el menú. Si no entiendes, pides clarificación con amabilidad.
 
-Menú disponible (código | nombre | precio | categoría):
+Menú disponible (código | nombre | precio | categoría | ingredientes/descripción):
 ${productNames.length > 0 ? productNames.join('\n') : '(catálogo no disponible)'}
 
 Categorías: ${categoryList.join(', ')}
@@ -75,7 +76,7 @@ El negocio vende helados. Algunos productos piden elegir N sabores y M toppings 
 Analiza el mensaje del usuario y devuelve SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "order" | "repeat_order" | "checkout" | "custom_order" | "query_menu" | "location" | "hours" | "help" | "human" | "chat" | "not_understood",
+  "intent": "order" | "repeat_order" | "checkout" | "custom_order" | "query_menu" | "query_product" | "location" | "hours" | "help" | "human" | "chat" | "not_understood",
   "products": [
     {
       "codigo": "<código exacto del producto, ej: 21>",
@@ -92,6 +93,7 @@ Reglas de intents:
 - repeat_order: el usuario quiere repetir un pedido anterior ("quiero lo de la última vez", "repite mi pedido").
 - custom_order: el usuario pide algo que no está en el menú o un encargo especial ("50 helados para un evento").
 - query_menu: pregunta qué hay en el menú, precios, sabores, recomendaciones ("qué sabores tienen?", "cuánto cuesta la copa?").
+- query_product: pregunta QUÉ CONTIENE o qué ingredientes/lleva un producto específico del menú ("qué contiene la copa osito?", "qué lleva el banana split?", "qué ingredientes tiene?"). Debes completar "products" con el código y nombre EXACTOS del producto consultado y poner en "response" la descripción/ingredientes de ESE producto tal como aparecen en el menú.
 - location: pregunta la dirección, cómo llegar ("dónde quedan?", "dirección de la heladería").
 - hours: pregunta horarios ("a qué hora abren?", "horarios").
 - help: pide ayuda o instrucciones.
@@ -272,7 +274,7 @@ ${sabores}
 Toppings disponibles (código | nombre):
 ${toppings}
 
-Productos del menú (código | nombre):
+Productos del menú (código | nombre | ingredientes/descripción):
 ${products}
 
 Mensaje del cliente: "${text}"
@@ -329,8 +331,8 @@ async function answerDoubt(doubt, contextInfo = {}) {
     const businessName = envConfig.business.name || 'Mundo Helados';
     const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
 
-    const systemInstruction = `Eres el asistente virtual de *${businessName}* (heladería). Responde la duda del cliente de forma breve, cálida y con emojis (máximo 3 líneas), sin inventar productos, precios ni promociones que no estén en el menú.`;
-    const prompt = `Menú (código | nombre | precio):
+    const systemInstruction = `Eres el asistente virtual de *${businessName}* (heladería). Responde la duda del cliente de forma breve, cálida y con emojis (máximo 3 líneas), sin inventar productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado.`;
+    const prompt = `Menú (código | nombre | precio | ingredientes/descripción):
 ${products}
 
 Duda del cliente: "${doubt}"

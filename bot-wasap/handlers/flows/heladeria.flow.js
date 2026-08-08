@@ -616,6 +616,22 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
         case 'query_menu':
             await menuHandler.handleVerMenuOption(sock, jid, userSession, ctx);
             return;
+        case 'query_product': {
+            const resolved = resolveProducts(result.products, ctx);
+            if (resolved.length > 0) {
+                const p = resolved[0].product;
+                const desc = p.Descripcion || p.descripcion || '';
+                const nombre = getProductName(p);
+                if (desc) {
+                    await say(sock, jid, `🍨 *${nombre}* — ${desc}\n\n¿Deseas pedirlo? Escribe *1* para agregarlo 😊`, ctx);
+                    return;
+                }
+                await say(sock, jid, `🍨 *${nombre}* — ${money(resolved[0].precio)}. No tengo ingredientes detallados de este producto. ¿Deseas pedirlo? Escribe *1* para agregarlo 😊`, ctx);
+                return;
+            }
+            await say(sock, jid, result.response || '😅 No encontré ese producto. Escribe *menú* para ver nuestras opciones 🍦', ctx);
+            return;
+        }
         case 'location':
             await menuHandler.handleDireccionOption(sock, jid, userSession, ctx);
             return;
@@ -762,6 +778,12 @@ function buildClassifierContext(userSession, ctx) {
         const nombre = p[dbFields.productName] || '';
         return codigo ? `${codigo} | ${nombre}` : nombre;
     });
+    const mapProducts = (arr) => arr.map(p => {
+        const codigo = p[dbFields.productCode] || '';
+        const nombre = p[dbFields.productName] || '';
+        const desc = p.Descripcion || p.descripcion || '';
+        return `${codigo} | ${nombre}${desc ? ` | ${desc}` : ''}`;
+    });
 
     let step = 'esperando_producto';
     let stepDesc = 'El cliente puede escribir un producto del menú, pagar, ver el menú o hacer una pregunta.';
@@ -788,7 +810,7 @@ function buildClassifierContext(userSession, ctx) {
     return {
         step,
         stepDesc,
-        products: mapList(products),
+        products: mapProducts(products),
         sabores: mapList(lists.sabores),
         toppings: mapList(lists.toppings),
         saboresElegidos

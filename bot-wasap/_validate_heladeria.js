@@ -248,5 +248,22 @@ async function send(text) {
     else if (/Se quitó/.test(removeOut) && /Resumen de tu pedido/.test(removeOut)) console.log('\n✅ Ítem quitado y resumen actualizado (carrito sincronizado con 1 ítem)');
     else console.log('\n⚠️ No se confirmó la quita del ítem: "' + removeOut.slice(0, 120) + '"');
 
+    // 13) QUÉ CONTIENE UN PRODUCTO (ingredientes desde el sheet): pregunta por
+    //     "qué contiene la copa osito" y verifica que la respuesta mencione
+    //     ingredientes de la columna Descripcion (y no un mero catálogo).
+    sessionService.resetChat(JID, ctx);
+    await send('hola');
+    const co13 = (ctx.productsCache || []).find(p => /copa osito/i.test(p[require('./config/env.loader').backend.fields.productName] || ''));
+    if (co13) console.log('\n   copa osito Descripcion:', (co13.Descripcion || '(vacía)').slice(0, 90));
+    const q13Out = await send('¿qué contiene la copa osito?');
+    const s13 = ctx.sessions[JID];
+    const stop = new Set(['con','una','de','del','deliciosa','delicioso','y','e','o','a','el','la','los','las','un','para','que','dos','tres','mas','muy','su','sus','crujiente','base','suave','es','se']);
+    const ingrs = ((co13 && co13.Descripcion) || '').toLowerCase().split(/[^a-záéíóúñü0-9]+/i).filter(w => w.length >= 4 && !stop.has(w));
+    const found = [...new Set(ingrs.filter(w => q13Out.toLowerCase().includes(w)))];
+    if (!q13Out.trim()) console.log('\n⚠️ La pregunta de contenido no produjo respuesta');
+    else if (found.length && !/Escribe \*1\* para confirmar|Resumen de tu pedido/i.test(q13Out)) console.log('\n✅ El bot respondió mencionando ingredientes reales del sheet: ' + found.join(', '));
+    else console.log('\n⚠️ La respuesta de contenido no detectó ingredientes del sheet: "' + q13Out.slice(0, 150) + '"');
+    if (s13 && s13.phase === 'seleccion_opcion') console.log('\n✅ Se mantuvo en el menú sin perder la conversación');
+
     console.log('\n=== VALIDACIÓN HELADERÍA COMPLETA ===');
 })().catch(e => { console.error('TEST ERROR:', e); process.exit(1); });
