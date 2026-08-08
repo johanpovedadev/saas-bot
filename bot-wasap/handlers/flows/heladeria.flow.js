@@ -622,6 +622,9 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
                 const p = resolved[0].product;
                 const desc = p.Descripcion || p.descripcion || '';
                 const nombre = getProductName(p);
+                userSession.lastMatches = [p];
+                userSession.phase = PHASE.SELECCION_PRODUCTO;
+                userSession.errorCount = 0;
                 if (desc) {
                     await say(sock, jid, `🍨 *${nombre}* — ${desc}\n\n¿Deseas pedirlo? Escribe *1* para agregarlo 😊`, ctx);
                     return;
