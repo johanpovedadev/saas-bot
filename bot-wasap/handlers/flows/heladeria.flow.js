@@ -704,8 +704,6 @@ async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSessi
  * (0 calls de IA).
  */
 async function showWelcome(sock, jid, ctx) {
-    const userStore = require('../../services/userStore');
-    const user = userStore.getUser(jid);
     const userSession = ctx.sessions && ctx.sessions[jid];
 
     if (userSession) {
@@ -714,12 +712,14 @@ async function showWelcome(sock, jid, ctx) {
         userSession.errorCount = 0;
     }
 
-    const name = user && user.name ? user.name : '';
-    const greeting = name
-        ? `🍦☀️ ¡Hola ${name}! Soy ISA, la dueña de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋`
-        : '🍦☀️ ¡Hola! Soy ISA, la dueña de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋';
+    const greeting = `Holiii ☺️
+
+*1)* 🛍️ Ver nuestro menú y hacer un pedido
+*2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
+*3)* 📍 Dirección y horarios
+
+_Escribe el número de la opción (1, 2 o 3)._`;
     await say(sock, jid, greeting, ctx);
-    await menuHandler.sendMainMenu(sock, jid, ctx);
 }
 
 /**
