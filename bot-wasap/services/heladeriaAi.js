@@ -294,6 +294,8 @@ async function interpretOrderText(text, contextInfo = {}) {
     const sabores = (contextInfo.sabores || []).join('\n') || '(sin sabores disponibles)';
     const toppings = (contextInfo.toppings || []).join('\n') || '(sin toppings disponibles)';
     const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
+    const lastMentioned = (contextInfo.lastMentioned || []).join(', ') || '(ninguno)';
+    const lastBotReply = (contextInfo.lastBotReply || '').trim() || '(no hay)';
 
     const systemInstruction = `Eres un clasificador de pedidos de *${businessName}* (heladería). Recibes el mensaje del cliente y el paso actual del flujo. Tu ÚNICA tarea es extraer datos del pedido en JSON. NO respondas al cliente, NO converses, NO hagas preguntas.`;
 
@@ -307,6 +309,12 @@ ${toppings}
 
 Productos del menú (código | nombre | ingredientes/descripción):
 ${products}
+
+Productos mencionados recientemente al cliente (el cliente puede referirse a ellos con "esa", "esas", "una de esas", "esa que me dijiste", "lo que me dijiste", "la que me dices"):
+${lastMentioned}
+
+Último mensaje del bot:
+${lastBotReply}
 
 Mensaje del cliente: "${text}"
 
@@ -325,6 +333,8 @@ Reglas:
 - Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
 - cantidad solo si indica unidades ("una" → 1, "dos" → 2, "un litro" → null).
 - direccion: solo si el cliente escribe algo como "para la cra 23", "la dirección es...", "calle/carrera/diagonal/avenida/cll/cra".
+- Si el cliente se refiere a algo ya mencionado ("esa", "esas", "una de esas", "esa que me dijiste", "lo que me dijiste", "la que me dices", "esas"), resuelve "producto" a un nombre de la lista "Productos mencionados recientemente". Si hay varios candidatos, elige el más probable; si es imposible decidir, pon en "duda" una pregunta corta de confirmación (ej: "¿cuál de esas te provoca?").
+- Si el cliente expresa intención de COMPRAR ("quiero", "dame", "me das", "me llevo", "quiero una de esas", "esa que me dices", "pídeme", "me provoca") y hay candidatos en "Productos mencionados recientemente", resuelve "producto" al más probable y NO lo pongas en "duda". Solo usa "duda" si es genuinamente imposible elegir.
 - Si el cliente hace una pregunta (ej: "qué toppings tienen?", "cuánto cuesta?"), ponla en "duda" y deja los demás campos en null/[].
 - No inventes productos, sabores, toppings ni precios.`;
 
@@ -361,10 +371,12 @@ async function answerDoubt(doubt, contextInfo = {}) {
 
     const businessName = envConfig.business.name || 'Mundo Helados';
     const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
+    const lastMentioned = (contextInfo.lastMentioned || []).join(', ') || '';
 
-    const systemInstruction = `Sos ISA, la dueña de *${businessName}* (heladería en Riohacha), con calidez costeña genuina. Responde la duda del cliente de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona.`;
+    const systemInstruction = `Sos ISA, la dueña de *${businessName}* (heladería en Riohacha), con calidez costeña genuina. Responde la duda del cliente de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si la duda es elegir entre productos ya mencionados, prioriza LOS "Productos mencionados recientemente". Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona.`;
     const prompt = `Menú (código | nombre | precio | ingredientes/descripción):
 ${products}
+${lastMentioned ? `\nProductos mencionados recientemente (priorízalos si la duda es elegir/ordenar):\n${lastMentioned}` : ''}
 
 Duda del cliente: "${doubt}"
 

@@ -816,8 +816,23 @@ function buildClassifierContext(userSession, ctx) {
         products: mapProducts(products),
         sabores: mapList(lists.sabores),
         toppings: mapList(lists.toppings),
-        saboresElegidos
+        saboresElegidos,
+        lastMentioned: userSession.lastMentionedProducts || [],
+        lastBotReply: userSession.lastBotReply || ''
     };
+}
+
+function extractMentionedProducts(text, ctx) {
+    const dbFields = getDbFields();
+    const t = stripAccents(String(text || '').toLowerCase());
+    const found = [];
+    for (const p of getProducts(ctx)) {
+        const name = stripAccents(String(p[dbFields.productName] || '').toLowerCase());
+        if (name.length >= 4 && t.includes(name)) {
+            if (!found.includes(name)) found.push(name);
+        }
+    }
+    return found.slice(0, 6);
 }
 
 /**
@@ -871,7 +886,10 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     // 1) Duda → responder con Gemini y re-mostrar el paso SIN perder progreso
     if (result.duda) {
         const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
-        await say(sock, jid, `😊 ${answer || '¡Claro! ¿En qué más te ayudo?'}`, ctx);
+        const reply = answer || '¡Claro! ¿En qué más te ayudo?';
+        userSession.lastMentionedProducts = extractMentionedProducts(reply, ctx);
+        userSession.lastBotReply = reply.slice(0, 300);
+        await say(sock, jid, `😊 ${reply}`, ctx);
         await reshowCurrentStep(sock, jid, userSession, ctx);
         return true;
     }
@@ -881,6 +899,8 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     const saboresList = lists.sabores;
     const toppingsList = lists.toppings;
     const currentFlowProduct = userSession.heladoFlow ? userSession.heladoFlow.product : null;
+
+    let acted = false;
 
     // 2) ¿Producto pedido distinto al actual (o no hay flujo)? Iniciar su flujo
     let targetProduct = null;
@@ -892,9 +912,9 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         (targetProduct[dbFields.productCode] || '') === (currentFlowProduct[dbFields.productCode] || '');
     if (targetProduct && !targetIsCurrent) {
         await handleProductOptions(sock, jid, targetProduct, userSession, ctx);
+        acted = true;
     }
 
-    let acted = false;
 
     // 3) Aplicar sabores si es el turno (re-jugada con códigos S<n> seguros)
     if (userSession.heladoFlow && userSession.phase === HELADO_SABORES && result.sabores && result.sabores.length > 0) {
