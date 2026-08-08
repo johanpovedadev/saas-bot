@@ -716,8 +716,8 @@ async function showWelcome(sock, jid, ctx) {
 
     const name = user && user.name ? user.name : '';
     const greeting = name
-        ? `🍦☀️ ¡Hola ${name}! Soy el asesor de pedidos de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋`
-        : '🍦☀️ ¡Hola! Soy el asesor de pedidos de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋';
+        ? `🍦☀️ ¡Hola ${name}! Soy ISA, la dueña de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋`
+        : '🍦☀️ ¡Hola! Soy ISA, la dueña de *Mundo Helados*. Con este calorcito de Riohacha, ¿qué se te antoja hoy? 😋';
     await say(sock, jid, greeting, ctx);
     await menuHandler.sendMainMenu(sock, jid, ctx);
 }
