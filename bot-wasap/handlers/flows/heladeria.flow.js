@@ -853,7 +853,6 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
             await sendPostAddOptions(sock, jid, ctx);
             return;
         default:
-            await menuHandler.sendMainMenu(sock, jid, ctx);
             return;
     }
 }
