@@ -203,11 +203,108 @@ ${summary.text}
 2️⃣ ➕ *Seguir comprando*
    Escribe *2* o el nombre del producto
 
-3️⃣ ❌ *Cancelar pedido*
-   Escribe *3* o *cancelar*`;
+3️⃣ ✏️ *Editar pedido*
+   Escribe *3*`;
 
     await say(sock, jid, fullMessage, ctx);
     userSession.phase = PHASE.CONFIRM_ORDER;
+}
+
+/**
+ * Muestra las opciones de edición del carrito (fase EDIT_CART_SELECTION):
+ * lista numerada de ítems + comandos (vaciar / menú).
+ */
+function showEditCartOptions(sock, jid, userSession, ctx) {
+    const items = userSession.order.items || [];
+    const lines = items.map((it, i) => {
+        const sabores = (it.sabores && it.sabores.length) ? ` (${it.sabores.map(s => s.NombreProducto || s).join(', ')})` : '';
+        const toppings = (it.toppings && it.toppings.length) ? ` (${it.toppings.map(t => t.NombreProducto || t).join(', ')})` : '';
+        return `*${i + 1}.* ${it.nombre || it.producto}${sabores}${toppings} x${it.cantidad || 1}`;
+    }).join('\n');
+    return say(sock, jid,
+        `✏️ *Editar tu pedido:*\n\n${lines}\n\n` +
+        `Escribe el *número* del producto que deseas *quitar*.\n\n` +
+        `• *vaciar* para vaciar el carrito\n` +
+        `• *menú* para volver al inicio`, ctx);
+}
+
+/**
+ * Entra al flujo de edición del carrito: fase EDIT_CART_SELECTION + lista numerada.
+ */
+async function startEditCart(sock, jid, userSession, ctx) {
+    logger.info(`[${jid}] -> Iniciando edición del carrito.`);
+    if (!userSession.order || !Array.isArray(userSession.order.items) || userSession.order.items.length === 0) {
+        userSession.phase = PHASE.SELECCION_OPCION;
+        await say(sock, jid, '🛒 Tu carrito está vacío. Escribe *menú* para empezar a comprar.', ctx);
+        return;
+    }
+    userSession.phase = PHASE.EDIT_CART_SELECTION;
+    await showEditCartOptions(sock, jid, userSession, ctx);
+}
+
+/**
+ * Maneja las fases EDIT_CART_SELECTION / EDIT_OPTIONS (handler.js las enruta aquí).
+ * El usuario quita ítems por número, vacía el carrito o vuelve al resumen.
+ */
+async function handleEditPhase(sock, jid, input, userSession, ctx) {
+    logger.info(`[${jid}] -> handleEditPhase: input "${input}"`);
+    if (!userSession.order || !Array.isArray(userSession.order.items) || userSession.order.items.length === 0) {
+        userSession.phase = PHASE.SELECCION_OPCION;
+        await say(sock, jid, '🛒 Tu carrito está vacío. Escribe *menú* para empezar a comprar.', ctx);
+        return;
+    }
+
+    const clean = String(input || '').toLowerCase().trim();
+
+    // Volver al resumen del pedido
+    if (/^(menu|menú|volver|atras|atrás|inicio|salir)$/.test(clean)) {
+        await handleCartSummary(sock, jid, userSession, ctx);
+        return;
+    }
+
+    // Vaciar carrito
+    if (/^(vaciar|vaciar carrito|borrar|borrar todo|quitar todo|cancelar)$/.test(clean)) {
+        userSession.order.items = [];
+        if (Array.isArray(userSession.carrito)) userSession.carrito = [];
+        userSession.phase = PHASE.SELECCION_OPCION;
+        await say(sock, jid, '🗑️ Carrito vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
+        return;
+    }
+
+    // Quitar un ítem por número
+    const num = parseInt(clean, 10);
+    if (!isNaN(num) && num >= 1 && num <= userSession.order.items.length) {
+        const idx = num - 1;
+        const removed = userSession.order.items.splice(idx, 1)[0];
+        const nombre = (removed && (removed.nombre || removed.producto)) || 'Producto';
+        // Reconstruir carrito desde los ítems _fromCarrito que quedan, para
+        // mantener consistencia entre order.items y session.carrito (heladería).
+        if (Array.isArray(userSession.carrito)) {
+            userSession.carrito = userSession.order.items
+                .filter(i => i._fromCarrito)
+                .map(i => ({
+                    codigo: i.codigo,
+                    nombre: i.nombre,
+                    precio: i.precio,
+                    cantidad: i.cantidad,
+                    sabores: Array.isArray(i.sabores) ? [...i.sabores] : [],
+                    toppings: Array.isArray(i.toppings) ? [...i.toppings] : [],
+                    observaciones: i.observaciones || '',
+                    subtotal: (i.precio || 0) * (i.cantidad || 1)
+                }));
+        }
+        await say(sock, jid, `🗑️ Se quitó *${nombre}* de tu pedido.`, ctx);
+        if (userSession.order.items.length === 0) {
+            userSession.phase = PHASE.SELECCION_OPCION;
+            await say(sock, jid, '🛒 Tu carrito quedó vacío.\n\nEscribe *menú* para ver las opciones.', ctx);
+            return;
+        }
+        await handleCartSummary(sock, jid, userSession, ctx);
+        return;
+    }
+
+    // No entendió → re-mostrar opciones de edición
+    await showEditCartOptions(sock, jid, userSession, ctx);
 }
 
 // Nueva función para manejar la respuesta del usuario en CONFIRM_ORDER
@@ -231,11 +328,21 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
         return;
     }
     
-    // Opción 3: Cancelar pedido
-    if (cleanInput === '3' || cleanInput === 'cancelar') {
+    // Opción 3: Editar pedido
+    if (cleanInput === '3' || cleanInput === 'editar' || cleanInput === 'editar pedido') {
+        logger.info(`[${jid}] -> Usuario eligió EDITAR pedido.`);
+        await startEditCart(sock, jid, userSession, ctx);
+        return;
+    }
+    
+    // Palabras de cancelación (escape oculto, no son opción visible)
+    if (cleanInput === 'cancelar' || cleanInput === 'vaciar' || cleanInput === 'borrar' || cleanInput === 'cancelar pedido') {
         logger.info(`[${jid}] -> Usuario eligió CANCELAR pedido.`);
         if (userSession.order) {
             userSession.order.items = [];
+        }
+        if (Array.isArray(userSession.carrito)) {
+            userSession.carrito = [];
         }
         userSession.phase = PHASE.MENU_PRINCIPAL;
         await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
@@ -245,7 +352,7 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
     if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
-    await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para cancelar', ctx);
+    await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
 }
 
 async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitialCall = false) {
@@ -643,8 +750,12 @@ async function handleConfirmOrder(sock, jid, input, userSession, ctx) {
         const exampleKeywords = envConfig.keywords.products.slice(0, 3).map(k => `"${k.charAt(0).toUpperCase() + k.slice(1)}"`).join(', ');
         await say(sock, jid, `${emoji} ¡Perfecto! Escribe el nombre del producto que deseas añadir (ej: ${exampleKeywords}).`, ctx);
     } 
-    // Opción 3: Cancelar pedido
-    else if (confirmation === '3' || /^(cancelar|vaciar|borrar)$/i.test(confirmation)) {
+    // Opción 3: Editar pedido
+    else if (confirmation === '3' || /^(editar|editar pedido)$/i.test(confirmation)) {
+        await startEditCart(sock, jid, userSession, ctx);
+    }
+    // Palabras de cancelación (escape oculto, no son opción visible)
+    else if (/^(cancelar|vaciar|borrar)$/i.test(confirmation)) {
         userSession.order.items = [];
         userSession.order.notes = [];
         const { resetChat } = require('../services/bot_core');
@@ -749,6 +860,8 @@ module.exports = {
     handleFinalizeOrder,
     handleConfirmOrder,
     handleConfirmOrderChoice,
+    handleEditPhase,
+    startEditCart,
     validateInput,
     sendOrderNotification,
     handleCheckoutPhase

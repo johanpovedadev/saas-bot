@@ -1032,8 +1032,13 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
             await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
             return true;
         }
-        if (hasWord(t, ['3', 'cancelar', 'cancelar pedido', 'vaciar', 'borrar'])) {
+        if (hasWord(t, ['3', 'editar', 'editar pedido', 'corregir', 'cambiar', 'cambio'])) {
+            await checkoutHandler.startEditCart(sock, jid, userSession, ctx);
+            return true;
+        }
+        if (hasWord(t, ['cancelar', 'cancelar pedido', 'vaciar', 'borrar'])) {
             if (userSession.order) userSession.order.items = [];
+            if (Array.isArray(userSession.carrito)) userSession.carrito = [];
             userSession.phase = PHASE.MENU_PRINCIPAL;
             await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
             return true;
@@ -1073,7 +1078,11 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
 async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
     switch (userSession.phase) {
         case PHASE.CONFIRM_ORDER:
-            await say(sock, jid, '❌ Opción no válida. Escribe *1* para confirmar, *2* para seguir comprando o *3* para cancelar.', ctx);
+            await say(sock, jid, '❌ Opción no válida. Escribe *1* para confirmar, *2* para seguir comprando o *3* para editar el pedido.', ctx);
+            return;
+        case PHASE.EDIT_CART_SELECTION:
+        case PHASE.EDIT_OPTIONS:
+            await checkoutHandler.startEditCart(sock, jid, userSession, ctx);
             return;
         case PHASE.CHECK_DIR:
             await say(sock, jid, '❌ Por favor, escribe tu *dirección de entrega* (mínimo 8 caracteres).', ctx);

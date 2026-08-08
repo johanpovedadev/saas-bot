@@ -20,10 +20,10 @@
 
     2️⃣ RESUMEN DE PEDIDO
        ─────────────────
-       Ahora muestra 3 opciones:
-       1 = Confirmar pedido
-       2 = Seguir comprando
-       3 = Cancelar pedido
+        Ahora muestra 3 opciones:
+        1 = Confirmar pedido
+        2 = Seguir comprando
+        3 = Editar pedido
 
     3️⃣ PAGO EXPRESS MEJORADO
        ─────────────────────
@@ -60,7 +60,7 @@
          
          1️⃣ Confirmar pedido
          2️⃣ Seguir comprando
-         3️⃣ Cancelar pedido
+         3️⃣ Editar pedido
 
     Usuario: "1"  ← SOLO UN NÚMERO!
     Bot: 🏠 Por favor escribe tu dirección...
@@ -121,16 +121,17 @@
     
     ✅ Resultado: Admins reciben notificación
 
-    TEST 3: Cancelar pedido
-    ───────────────────────
+    TEST 3: Editar pedido
+    ─────────────────────
     1. Escribe: "paleta"
     2. Selecciona sabores: "s1 s2"
     3. Responde toppings: "sin"
     4. Cantidad: "2"
     5. Opción: "2" (Ver carrito)
-    6. Cancelar: "3"
-    
-    ✅ Resultado: Carrito vaciado, sesión reseteada
+    6. Editar: "3"
+    7. Quita un ítem: número del producto
+
+    ✅ Resultado: Ítem quitado y resumen actualizado
 
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -143,7 +144,7 @@
 
     ✅ handlers/checkoutHandler.js
        ├─ handleCartSummary() - Resumen con 3 opciones
-       └─ handleConfirmOrder() - Manejo opciones 1-3
+       └─ handleConfirmOrder() - Manejo opciones 1-3 (3 = editar)
 
     ✅ NUMBERED_OPTIONS_UX_IMPROVEMENT.md
        └─ Análisis completo y propuesta (650 líneas)

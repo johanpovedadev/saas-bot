@@ -27,7 +27,10 @@ const JID = '573138777115@c.us';
 
     const s = ctx.sessions[JID] = {
         phase: 'seleccion_opcion',
-        order: { items: [{ codigo: 'PLATO-1', nombre: 'Arroz Marinero', precio: 15000, cantidad: 2, sabores: [], toppings: [], observaciones: '' }] }
+        order: { items: [
+            { codigo: 'PLATO-1', nombre: 'Arroz Marinero', precio: 15000, cantidad: 2, sabores: [], toppings: [], observaciones: '' },
+            { codigo: 'PLATO-2', nombre: 'Cazuela de Mariscos', precio: 18000, cantidad: 1, sabores: [], toppings: [], observaciones: '' }
+        ] }
     };
 
     await checkoutHandler.handleCartSummary(sock, JID, s, ctx);
@@ -37,6 +40,17 @@ const JID = '573138777115@c.us';
 
     await checkoutHandler.handleConfirmOrderChoice(sock, JID, '1', s, ctx);
     console.log('"1" confirma ->', s.phase, '| respondió:', sent.length > 0);
+    sent.length = 0;
+
+    // Opción 3 = Editar pedido (ya no cancela): debe entrar a edit_cart_selection
+    s.phase = 'confirm_order';
+    await checkoutHandler.handleConfirmOrderChoice(sock, JID, '3', s, ctx);
+    console.log('"3" edita ->', s.phase, '| muestra lista:', /Editar tu pedido/.test(sent.join('\n')));
+    sent.length = 0;
+
+    // Quitar un ítem por número → vuelve al resumen
+    await checkoutHandler.handleEditPhase(sock, JID, '1', s, ctx);
+    console.log('quitar #1 ->', s.phase, '| items restantes:', s.order.items.length, '| resume:', /Resumen de tu pedido/.test(sent.join('\n')));
     sent.length = 0;
 
     s.phase = 'finalize_order';

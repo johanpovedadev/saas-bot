@@ -216,5 +216,37 @@ async function send(text) {
     if (!/¿Qué dato deseas editar\?/.test(editSynOut)) console.log('\n⚠️ Sinónimo "editar" no disparó la edición');
     else console.log('\n✅ Sinónimo "editar" disparó la edición');
 
+    // 12) OPCIÓN 3 DEL RESUMEN = EDITAR PEDIDO (ya no cancela): quitar ítem por número
+    sessionService.resetChat(JID, ctx);
+    await send('hola');
+    await send('1');
+    await send('banana split');
+    await send('s1 s2 s3');
+    await send('sin');
+    await send('1');
+    await send('seguir comprando');
+    await send('1');
+    await send('banana split');
+    await send('s2 s4 s5');
+    await send('sin');
+    await send('2');
+    await send('pagar');
+    const s12a = ctx.sessions[JID];
+    if (s12a.phase !== 'confirm_order') console.log('\n⚠️ No se llegó a confirm_order para probar la opción 3');
+    if (!/✏️ \*Editar pedido\*/.test(sent.join('\n')) || /Cancelar pedido/.test(sent.join('\n'))) console.log('\n⚠️ El resumen CONFIRM_ORDER no muestra la opción 3 como "Editar pedido"');
+
+    const editCartOut = await send('3');
+    const s12b = ctx.sessions[JID];
+    if (s12b.phase !== 'edit_cart_selection') console.log('\n⚠️ "3" no entró a edit_cart_selection, got:', s12b.phase);
+    else if (!/Editar tu pedido/.test(editCartOut)) console.log('\n⚠️ La fase de edición no mostró la lista del pedido');
+    else console.log('\n✅ "3" entró a la edición del carrito');
+
+    const removeOut = await send('1');
+    const s12c = ctx.sessions[JID];
+    if (s12c.phase !== 'confirm_order') console.log('\n⚠️ Tras quitar el ítem se esperaba volver a confirm_order, got:', s12c.phase);
+    else if (Array.isArray(s12c.carrito) && s12c.carrito.length !== 1) console.log('\n⚠️ session.carrito no quedó sincronizado tras quitar el ítem, got:', s12c.carrito && s12c.carrito.length);
+    else if (/Se quitó/.test(removeOut) && /Resumen de tu pedido/.test(removeOut)) console.log('\n✅ Ítem quitado y resumen actualizado (carrito sincronizado con 1 ítem)');
+    else console.log('\n⚠️ No se confirmó la quita del ítem: "' + removeOut.slice(0, 120) + '"');
+
     console.log('\n=== VALIDACIÓN HELADERÍA COMPLETA ===');
 })().catch(e => { console.error('TEST ERROR:', e); process.exit(1); });
