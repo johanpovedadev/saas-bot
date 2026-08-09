@@ -177,6 +177,13 @@ const TOPPING_GROUPS = [
     { label: '✨ Otros', match: /.+/i }
 ];
 
+const TOPPING_STOPWORDS = new Set([
+    'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
+    'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'agreganos',
+    'añade', 'añadele', 'dale', 'me', 'te', 'le', 'que', 'se', 'a', 'en', 'al', 'es', 'porfa',
+    'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
+]);
+
 function formatToppingsGrouped(ctx) {
     const dbFields = getDbFields();
     const list = buildOptionLists(ctx).toppings;
@@ -439,6 +446,27 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
 }
 
 /**
+ * Resuelve el topping cuyo nombre mejor coincide con `target` (sin acentos):
+ *  1) nombre exacto,
+ *  2) el nombre MÁS CORTO que contiene a `target` ("wafer" → "galletas wafer",
+ *     no "chocolatina wafer jet"),
+ *  3) si `target` contiene el nombre completo (variante corta).
+ * Para tokens muy cortos (< 3) solo se usan coincidencias exactas o
+ * "target incluye el nombre", evitando falsos positivos como "y" → "chantilly".
+ */
+function findBestTopping(target, list, dbFields) {
+    const norm = (p) => stripAccents(String(p[dbFields.productName] || '').toLowerCase());
+    const exact = list.find(p => norm(p) === target);
+    if (exact) return exact;
+    if (target.length < 3) return list.find(p => target.includes(norm(p))) || null;
+    const candidates = list
+        .filter(p => norm(p).includes(target))
+        .sort((a, b) => norm(a).length - norm(b).length);
+    if (candidates.length) return candidates[0];
+    return list.find(p => target.includes(norm(p))) || null;
+}
+
+/**
  * Paso 2: toppings opcionales. El cliente responde por NOMBRE (sin códigos):
  *  - "no/sin/nada" → avanza.
  *  - "lista"/"cuáles hay" → muestra la lista agrupada por categoría y se queda.
@@ -459,8 +487,10 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    // "¿cuáles hay?" o "lista" → mostrar opciones agrupadas y quedarse en el paso
-    if (/^(lista|opciones|listame|cuales|cuales hay|cuales tiene|que toppings|cuales toppings|que hay|cuales son)\b/i.test(input)) {
+    // "¿cuáles hay?" / "lista" (en cualquier posición, ej: "léame la lista de
+    // todos") → mostrar opciones agrupadas y quedarse en el paso. El input ya
+    // viene sin acentos (stripAccents), por eso se usan formas planas.
+    if (/lista|listame|listeme|liste|opciones|cuales|que hay|que toppings|mostrame|muestrame|dame la lista/.test(input)) {
         const lista = formatToppingsGrouped(ctx) || '_No hay toppings disponibles._';
         await say(sock, jid,
             `📍 *Toppings disponibles:*\n\n${lista}\n\n` +
@@ -468,8 +498,8 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    // "todos" / "de todo" → agregar todos sin lógica especial
-    if (/\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+    // "todos" / "de todo" → agregar todos. Se ignora si pide la LISTA de todos.
+    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
         for (const t of toppingsList) {
             if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
                 flow.toppingsSeleccionados.push(t);
@@ -481,13 +511,7 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
     }
 
     const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
-    const STOPWORDS = new Set([
-        'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
-        'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'agreganos',
-        'añade', 'añadele', 'dale', 'me', 'te', 'le', 'que', 'se', 'a', 'en', 'al', 'es', 'porfa',
-        'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
-    ]);
-    const meaningful = tokens.filter(t => !STOPWORDS.has(t) && t.length >= 2);
+    const meaningful = tokens.filter(t => !TOPPING_STOPWORDS.has(t) && t.length >= 2);
 
     if (meaningful.length === 0) {
         if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
@@ -497,37 +521,45 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
 
     const added = [];
     const observaciones = [];
-    for (const tok of meaningful) {
-        const m = tok.match(/^t(\d+)$/i);
-        let top = null;
-        if (m) {
-            top = toppingsList[parseInt(m[1], 10) - 1] || null;
-            if (!top) {
-                await say(sock, jid, `❌ No encontré el topping *${tok.toUpperCase()}*. Escribe el nombre o *"lista"* para ver las opciones.`, ctx);
-                return;
-            }
-        } else {
-            const target = stripAccents(String(tok).toLowerCase());
-            top = toppingsList.find(p => {
-                const name = stripAccents(String(p[dbFields.productName] || '').toLowerCase());
-                if (name === target) return true;
-                if (target.length >= 3 && name.includes(target)) return true;
-                if (target.includes(name)) return true;
-                return false;
-            }) || null;
+    let matchedSomething = false;
+
+    // Intento 1: la frase completa ("gomitas trululu", "galletas oreo") como un
+    // único topping. Evita que "gomitas" parcial resuelva a "gomitas de osito".
+    const joinedPhrase = meaningful.join(' ');
+    const wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    if (wholeMatch) {
+        matchedSomething = true;
+        if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (wholeMatch.CodigoProducto || wholeMatch))) {
+            flow.toppingsSeleccionados.push(wholeMatch);
+            added.push(wholeMatch);
         }
-        if (top) {
-            if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (top.CodigoProducto || top))) {
-                flow.toppingsSeleccionados.push(top);
-                added.push(top);
+    } else {
+        for (const tok of meaningful) {
+            const m = tok.match(/^t(\d+)$/i);
+            let top = null;
+            if (m) {
+                top = toppingsList[parseInt(m[1], 10) - 1] || null;
+                if (!top) {
+                    await say(sock, jid, `❌ No encontré el topping *${tok.toUpperCase()}*. Escribe el nombre o *"lista"* para ver las opciones.`, ctx);
+                    return;
+                }
+            } else {
+                top = findBestTopping(stripAccents(String(tok).toLowerCase()), toppingsList, dbFields);
             }
-        } else if (!/^\d+$/.test(tok)) {
-            observaciones.push(tok);
+            if (top) {
+                matchedSomething = true;
+                if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (top.CodigoProducto || top))) {
+                    flow.toppingsSeleccionados.push(top);
+                    added.push(top);
+                }
+            } else if (!/^\d+$/.test(tok)) {
+                observaciones.push(tok);
+            }
         }
     }
 
     // No resolvió nada útil → respaldo del clasificador híbrido antes del error
-    if (added.length === 0 && observaciones.length === 0 && meaningful.length > 0) {
+    if (!matchedSomething && observaciones.length === 0 && meaningful.length > 0) {
         if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
         await say(sock, jid, `❌ No reconocí esos toppings. Escribe *"lista"* para ver las opciones, o *"no"* para continuar.`, ctx);
         return;
@@ -551,6 +583,28 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
 }
 
 /**
+ * Detecta si el mensaje es una interacción de toppings (lista o nombres de
+ * topping). Se usa en la fase de cantidad para no perder la selección de
+ * toppings cuando el cliente sigue agregando (ej: "Wafer", "cereal flips",
+ * "dame la lista") y el bot ya estaba preguntando cuántas unidades.
+ */
+function isToppingsRequest(text, ctx) {
+    const input = stripAccents(String(text || '').toLowerCase());
+    if (/lista|listame|listeme|opciones|cuales|topping/.test(input)) return true;
+    const dbFields = getDbFields();
+    const toppingsList = buildOptionLists(ctx).toppings;
+    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+        .filter(t => !TOPPING_STOPWORDS.has(t) && t.length >= 2 && !/^\d+$/.test(t));
+    return tokens.some(tok => {
+        const target = stripAccents(String(tok).toLowerCase());
+        return toppingsList.some(p => {
+            const name = stripAccents(String(p[dbFields.productName] || '').toLowerCase());
+            return name === target || (target.length >= 3 && name.includes(target)) || target.includes(name);
+        });
+    });
+}
+
+/**
  * Paso 3: cantidad → agrega al carrito (con sabores/toppings/observaciones)
  * y continúa con las opciones de post-compra.
  */
@@ -561,6 +615,12 @@ async function handleQuantity(sock, jid, text, userSession, ctx) {
     const qty = parseInt(parts[0], 10);
 
     if (isNaN(qty) || qty < 1 || qty > 100) {
+        // Sigue agregando toppings ("wafer", "cereal flips", "lista") en vez de
+        // responder cantidad → dejarlo seleccionar toppings sin perder el flujo.
+        if (isToppingsRequest(text, ctx)) {
+            await handleToppings(sock, jid, text, userSession, ctx);
+            return;
+        }
         if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
         await say(sock, jid, '❌ Por favor ingresa una cantidad válida (entre 1 y 100).\n\n_Ejemplo: "1" o "2 sin arequipe"_', ctx);
         return;
@@ -1107,18 +1167,19 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         }
     }
 
-    // 4) Aplicar toppings si es el turno. Si el cliente dijo "sin toppings"
-    //    explícitamente (en un pedido completo), avanzar con "sin" para no
-    //    bloquear la cascada sabores → toppings → cantidad → dirección.
+    // 4) Aplicar toppings si es el turno (o si el cliente sigue agregando
+    //    toppings estando en la fase de cantidad). Si el cliente dijo "sin
+    //    toppings" explícitamente (en un pedido completo), avanzar con "sin"
+    //    para no bloquear la cascada sabores → toppings → cantidad → dirección.
     const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
-    if (userSession.heladoFlow && userSession.phase === HELADO_TOPPINGS) {
+    if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY)) {
         if (result.toppings && result.toppings.length > 0) {
             const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
             if (codes.length > 0) {
                 await handleToppings(sock, jid, codes.join(' '), userSession, ctx);
                 acted = true;
             }
-        } else if (sinToppings) {
+        } else if (sinToppings && userSession.phase === HELADO_TOPPINGS) {
             await handleToppings(sock, jid, 'sin', userSession, ctx);
             acted = true;
         }

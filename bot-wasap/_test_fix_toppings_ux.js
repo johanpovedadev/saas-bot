@@ -52,6 +52,12 @@ function makeToppingsSession() {
     };
 }
 
+function makeQuantitySession() {
+    const s = makeToppingsSession();
+    s.phase = 'HELADO_QUANTITY';
+    return s;
+}
+
 async function handle(text, userSession) {
     sent.length = 0;
     ctx.sessions[JID] = userSession;
@@ -109,6 +115,36 @@ async function handle(text, userSession) {
     check(s5.order && s5.order.address === 'Cra 23 #10-20', `CASCADA: dirección registrada (${s5.order && s5.order.address})`);
     check(s5.phase === PHASE.CONFIRM_ORDER, `CASCADA: llega a confirmar pedido (fase: ${s5.phase})`);
     check(/Copa Osito/.test(r5), 'CASCADA: resumen muestra la copa');
+
+    // ---- "léame la lista de todos" NO debe agregar todos (caso del chat real) ----
+    const s6 = makeToppingsSession();
+    const r6 = await handle('léame la lista de todos', s6);
+    check((s6.heladoFlow.toppingsSeleccionados || []).length === 0,
+        `TOPP-listaTodos: NO agrega toppings al pedir la lista (${(s6.heladoFlow.toppingsSeleccionados || []).length})`);
+    check(/Galletas/.test(r6) && /Perlas/.test(r6), 'TOPP-listaTodos: muestra la lista agrupada');
+    check(s6.phase === 'HELADO_TOPPINGS', `TOPP-listaTodos: se queda en toppings (fase: ${s6.phase})`);
+
+    // ---- Desde la fase de cantidad sigue agregando toppings por NOMBRE ----
+    const s7 = makeQuantitySession();
+    const r7 = await handle('de gomitas trululu', s7);
+    const tops7 = (s7.heladoFlow.toppingsSeleccionados || []).map(t => t.NombreProducto || t);
+    check(tops7.length === 1 && /gomitas trululu/i.test(tops7[0]),
+        `TOPP-qty: "de gomitas trululu" agrega solo gomitas trululu (${tops7.join(', ')})`);
+    check(s7.phase === 'HELADO_QUANTITY', `TOPP-qty: se queda en cantidad (fase: ${s7.phase})`);
+
+    const s8 = makeQuantitySession();
+    const r8 = await handle('wafer', s8);
+    const tops8 = (s8.heladoFlow.toppingsSeleccionados || []).map(t => t.NombreProducto || t);
+    check(tops8.length === 1 && /galletas wafer/i.test(tops8[0]),
+        `TOPP-qty: "wafer" resuelve galletas wafer (${tops8.join(', ')})`);
+    check(s8.phase === 'HELADO_QUANTITY', `TOPP-qty: "wafer" se queda en cantidad (fase: ${s8.phase})`);
+
+    const s9 = makeQuantitySession();
+    const r9 = await handle('cereal flips', s9);
+    const tops9 = (s9.heladoFlow.toppingsSeleccionados || []).map(t => t.NombreProducto || t);
+    check(tops9.length === 1 && /cereal flips/i.test(tops9[0]),
+        `TOPP-qty: "cereal flips" resuelve cereal flips (${tops9.join(', ')})`);
+    check(s9.phase === 'HELADO_QUANTITY', `TOPP-qty: "cereal flips" se queda en cantidad (fase: ${s9.phase})`);
 
     heladeriaAi.interpretOrderText = origInterpret;
     console.log('\n' + (failures === 0 ? '✅ TODO OK' : `❌ ${failures} FALLOS`));
