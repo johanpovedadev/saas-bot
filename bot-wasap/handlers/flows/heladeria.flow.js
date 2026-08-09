@@ -20,7 +20,8 @@
  */
 
 const PHASE = require('../../utils/phases');
-const { say } = require('../../services/bot_core');
+const path = require('path');
+const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
 const menuHandler = require('../modules/menu.handler');
@@ -30,6 +31,12 @@ const heladeriaAi = require('../../services/heladeriaAi');
 const { money } = require('../../utils/util');
 
 const FLOW_TYPE = 'ICE_CREAM';
+
+// Imágenes del menú (catálogo visual) — enviadas al inicio y al pedir menú.
+const MENU_IMAGES = [
+    { path: path.join(__dirname, '../../assets/heladeria/menu_1.jpeg'), caption: '📋 Nuestro menú 🍦' },
+    { path: path.join(__dirname, '../../assets/heladeria/menu_2.jpeg'), caption: '🍨 Más de nuestras delicias 😋' }
+];
 
 // Fases propias del flujo guiado de helados
 const HELADO_SABORES = 'HELADO_SABORES';
@@ -614,6 +621,7 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
             return;
         case 'query_menu':
+            await sendMenuImages(sock, jid, ctx);
             await menuHandler.handleVerMenuOption(sock, jid, userSession, ctx);
             return;
         case 'query_product': {
@@ -667,6 +675,9 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
         default:
         case 'not_understood':
             userSession.errorCount = (userSession.errorCount || 0) + 1;
+            if ((userSession.errorCount || 0) === 1) {
+                await sendMenuImages(sock, jid, ctx);
+            }
             await say(sock, jid, result.response || '😅 No entendí bien lo que necesitas. Escribe *menú* para ver nuestras opciones.', ctx);
             return;
     }
@@ -737,6 +748,31 @@ async function showWelcome(sock, jid, ctx) {
 
 _Escribe el número de la opción (1, 2 o 3)._`;
     await say(sock, jid, greeting, ctx);
+    await sendMenuImages(sock, jid, ctx);
+}
+
+/**
+ * Envía las imágenes del catálogo (menú visual). Se usan:
+ * - Al inicio de la conversación (para que el cliente vea el menú sin pedirlo).
+ * - Cuando el cliente no sabe qué quiere o pregunta por el menú.
+ */
+async function sendMenuImages(sock, jid, ctx) {
+    for (const img of MENU_IMAGES) {
+        try {
+            await sendImage(sock, jid, img.path, img.caption, ctx);
+        } catch (e) {
+            logger.warn(`heladeria.flow sendMenuImages: ${e.message}`);
+        }
+    }
+}
+
+/**
+ * true cuando el mensaje del cliente pide ver el menú/catálogo o expresa que
+ * no sabe qué quiere (palabras clave). Se usa para acompañar con las imágenes.
+ */
+function shouldSendMenuImages(text) {
+    const t = stripAccents(String(text || '').toLowerCase());
+    return /(^|\s)(menu|menú|menu del dia|cat[aá]logo|opciones|que hay|que tienen|que venden|que tiene|que vendes|precios|listado|lista de productos|productos|recomend[ae]|sugerencia|no (se|sé) que quiero|no (se|sé) que pedir|muestrame|muéstrame|mostrame|mostr[aá]me|ver productos|foto)/.test(t);
 }
 
 /**
@@ -1177,6 +1213,10 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
         if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
         await checkoutFallbackPrompt(sock, jid, userSession, ctx);
         return;
+    }
+
+    if (shouldSendMenuImages(text)) {
+        await sendMenuImages(sock, jid, ctx);
     }
 
     const handled = await classifyOrderInput(sock, jid, text, userSession, ctx);

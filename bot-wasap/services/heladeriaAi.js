@@ -21,8 +21,11 @@ const envConfig = require('../config/env.loader');
 
 const MODELS = {
     intent: 'models/gemini-3.1-flash-lite',
-    audio: 'models/gemini-flash-latest'
+    audio: 'models/gemini-flash-latest',
+    audioFallback: 'models/gemini-3.1-flash-lite'
 };
+
+const AUDIO_TIMEOUT_MS = 60000;
 
 function hasValidKey() {
     const key = process.env.GEMINI_API_KEY;
@@ -191,10 +194,6 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({
-        model: MODELS.audio,
-        generationConfig: { responseMimeType: 'application/json' }
-    });
 
     const lastBotReply = (userSession && userSession.lastBotReply) ? userSession.lastBotReply.slice(0, 300) : '(no hay)';
     const currentPhase = (userSession && userSession.phase) ? userSession.phase : '(ninguna)';
@@ -202,15 +201,21 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
         `\n\nCONTEXTO DE LA CONVERSACIÓN (lo último que el bot le dijo al usuario): "${lastBotReply}" (fase actual del pedido: ${currentPhase}). El usuario envió un mensaje de voz JUSTO DESPUÉS de eso. Primero transcríbelo EXACTAMENTE al español (incluye cantidades y nombres de productos tal cual) en el campo "transcription". Luego clasifica la intención con las reglas de intents indicadas arriba, teniendo en cuenta que el audio es una RESPUESTA a lo que el bot preguntó. Devuelve EXCLUSIVAMENTE un JSON válido con: intent, products (códigos y nombres exactos del menú si aplica), transcription y response. No agregues texto antes ni después del JSON.`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
+    const candidateModels = [MODELS.audio, MODELS.audioFallback];
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const modelName = candidateModels[attempt <= 2 ? 0 : 1];
         try {
+            const model = genAI.getGenerativeModel({
+                model: modelName,
+                generationConfig: { responseMimeType: 'application/json' }
+            });
             const audioPart = {
                 inlineData: { mimeType: mime, data: audioBase64 }
             };
             const result = await Promise.race([
                 model.generateContent([combinedPrompt, audioPart]),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), AUDIO_TIMEOUT_MS))
             ]);
             const response = await result.response;
             let text = response.text().trim();
@@ -219,12 +224,13 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.products)) parsed.products = [];
-            logger.info(`heladeriaAi interpretAudioIntent: intent=${parsed.intent}, transcripción="${(parsed.transcription || '').substring(0, 120)}"`);
+            logger.info(`heladeriaAi interpretAudioIntent (${modelName}): intent=${parsed.intent}, transcripción="${(parsed.transcription || '').substring(0, 120)}"`);
             return parsed;
         } catch (e) {
-            logger.warn(`heladeriaAi interpretAudioIntent intento ${attempt}: ${e.message}`);
-            if (attempt < 2 && !isDailyQuotaError(e)) {
-                const delay = Math.min(get429DelayMs(e) || 1000, 15000);
+            const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
+            logger.warn(`heladeriaAi interpretAudioIntent intento ${attempt} (${modelName}): ${e.message}`);
+            if (attempt < 3 && !isDailyQuotaError(e) && saturated) {
+                const delay = Math.min(get429DelayMs(e) || 2000, 15000);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
@@ -245,30 +251,33 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: MODELS.audio });
 
     const prompt = `Eres un asistente de transcripción de una heladería. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz, en español. No agregues nada, no interpretes, solo transcribe. Incluye cantidades y nombres de productos tal cual los dijo. Ejemplo: "Un cono sencillo de lulo maracuya con arequipe"`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
+    const candidateModels = [MODELS.audio, MODELS.audioFallback];
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const modelName = candidateModels[attempt <= 2 ? 0 : 1];
         try {
+            const model = genAI.getGenerativeModel({ model: modelName });
             const audioPart = {
                 inlineData: { mimeType: mime, data: audioBase64 }
             };
             const result = await Promise.race([
                 model.generateContent([prompt, audioPart]),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), AUDIO_TIMEOUT_MS))
             ]);
             const response = await result.response;
             const text = response.text().trim();
             if (!text) return null;
-            logger.info(`heladeriaAi transcribeAudio: "${text.substring(0, 80)}"`);
+            logger.info(`heladeriaAi transcribeAudio (${modelName}): "${text.substring(0, 80)}"`);
             return text;
         } catch (e) {
-            logger.warn(`heladeriaAi transcribeAudio intento ${attempt}: ${e.message}`);
-            if (attempt < 2 && !isDailyQuotaError(e)) {
-                const delay = Math.min(get429DelayMs(e) || 1000, 15000);
+            const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
+            logger.warn(`heladeriaAi transcribeAudio intento ${attempt} (${modelName}): ${e.message}`);
+            if (attempt < 3 && !isDailyQuotaError(e) && saturated) {
+                const delay = Math.min(get429DelayMs(e) || 2000, 15000);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
