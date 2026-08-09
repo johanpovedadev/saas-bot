@@ -165,6 +165,35 @@ function formatList(items, prefix, dbFields) {
 }
 
 /**
+ * Agrupación de toppings por categoría para mostrarlos de forma escaneable.
+ * Los toppings NO tienen campo de subcategoría en la hoja; se agrupan por
+ * palabras clave del nombre. El cliente responde por NOMBRE, nunca por código.
+ */
+const TOPPING_GROUPS = [
+    { label: '🍒 Perlas y frutas', match: /perla|fresa/i },
+    { label: '🍪 Galletas', match: /^gallet| gallet/i },
+    { label: '🍬 Gomitas', match: /gomit|gusanito|trululu/i },
+    { label: '🍫 Dulces y chocolates', match: /chocolate|brownie|bolitas|chipas?|cereal flips|masmello|ojo relleno|quipito|wafer jet|barquillos|crema chantilly|queso/i },
+    { label: '✨ Otros', match: /.+/i }
+];
+
+function formatToppingsGrouped(ctx) {
+    const dbFields = getDbFields();
+    const list = buildOptionLists(ctx).toppings;
+    const blocks = [];
+    for (const g of TOPPING_GROUPS) {
+        const items = list.filter(p => g.match.test(String(p[dbFields.productName] || '')));
+        if (!items.length) continue;
+        const itemLines = items.map(p => {
+            const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${p[dbFields.productName]}${precio ? ` - ${money(precio)}` : ''}`;
+        });
+        blocks.push(`*${g.label}*\n${itemLines.join('\n')}`);
+    }
+    return blocks.join('\n\n');
+}
+
+/**
  * INTERCEPTOR del TICKET 3 (products.handler.js). Se invoca SOLO cuando el
  * producto seleccionado tiene opciones (sabores/toppings). Inicia el flujo
  * guiado de Mundo Helados.
@@ -201,12 +230,10 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
     if (counts.toppings > 0) {
         userSession.phase = HELADO_TOPPINGS;
         userSession.awaitingField = null;
-        const lista = formatList(buildOptionLists(ctx).toppings, 'T', dbFields);
         await say(sock, jid,
             `🍦 *${nombre}* seleccionado.\n\n` +
-            `📍 *Paso 1 (opcional):* Agrega toppings:\n\n` +
-            `${lista || '_No hay toppings disponibles._'}\n\n` +
-            `_Escribe los códigos (ej: t1 t5) o "sin" para continuar._`, ctx);
+            `📍 *Paso 1 (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
+            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos" para agregar de todo, "lista" para ver las opciones, o "no" para continuar._`, ctx);
         return;
     }
 
@@ -398,15 +425,13 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    // Sabores completos → toppings opcionales
+    // Sabores completos → toppings opcionales (pregunta abierta, sin lista de códigos)
     if (flow.counts.toppings > 0) {
         userSession.phase = HELADO_TOPPINGS;
-        const lista = formatList(buildOptionLists(ctx).toppings, 'T', dbFields);
         await say(sock, jid,
             `✅ Sabores: *${nombres}*.\n\n` +
-            `📍 *Paso 2 (opcional):* Agrega toppings:\n\n` +
-            `${lista || '_No hay toppings disponibles._'}\n\n` +
-            `_Escribe los códigos (ej: t1 t5) o "sin" para continuar._`, ctx);
+            `📍 *Paso 2 (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
+            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
     } else {
         userSession.phase = HELADO_QUANTITY;
         await say(sock, jid, `✅ Sabores: *${nombres}*.\n\n¿Cuántas unidades deseas?`, ctx);
@@ -414,7 +439,12 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
 }
 
 /**
- * Paso 2: toppings opcionales (T1..Tn) u observaciones de texto libre.
+ * Paso 2: toppings opcionales. El cliente responde por NOMBRE (sin códigos):
+ *  - "no/sin/nada" → avanza.
+ *  - "lista"/"cuáles hay" → muestra la lista agrupada por categoría y se queda.
+ *  - "todos" → agrega todos los toppings.
+ *  - Nombres → se resuelven contra el catálogo (fuzzy) y se confirman con precio.
+ *  - Palabras sin resolver → observaciones de texto libre (ej: "sin arequipe").
  */
 async function handleToppings(sock, jid, text, userSession, ctx) {
     const flow = userSession.heladoFlow;
@@ -429,32 +459,95 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
+    // "¿cuáles hay?" o "lista" → mostrar opciones agrupadas y quedarse en el paso
+    if (/^(lista|opciones|listame|cuales|cuales hay|cuales tiene|que toppings|cuales toppings|que hay|cuales son)\b/i.test(input)) {
+        const lista = formatToppingsGrouped(ctx) || '_No hay toppings disponibles._';
+        await say(sock, jid,
+            `📍 *Toppings disponibles:*\n\n${lista}\n\n` +
+            `_Escribe los nombres que quieras (ej: "oreo y arándano") o "no" para continuar._`, ctx);
+        return;
+    }
+
+    // "todos" / "de todo" → agregar todos sin lógica especial
+    if (/\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+        for (const t of toppingsList) {
+            if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
+                flow.toppingsSeleccionados.push(t);
+            }
+        }
+        userSession.phase = HELADO_QUANTITY;
+        await say(sock, jid, `✅ ¡Le ponemos de todo! 😋\n\n¿Cuántas unidades deseas?`, ctx);
+        return;
+    }
+
     const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
-    for (const tok of tokens) {
+    const STOPWORDS = new Set([
+        'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
+        'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'agreganos',
+        'añade', 'añadele', 'dale', 'me', 'te', 'le', 'que', 'se', 'a', 'en', 'al', 'es', 'porfa',
+        'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
+    ]);
+    const meaningful = tokens.filter(t => !STOPWORDS.has(t) && t.length >= 2);
+
+    if (meaningful.length === 0) {
+        if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+        await say(sock, jid, `❌ No reconocí esos toppings. Escribe *"lista"* para ver las opciones, o *"no"* para continuar.`, ctx);
+        return;
+    }
+
+    const added = [];
+    const observaciones = [];
+    for (const tok of meaningful) {
         const m = tok.match(/^t(\d+)$/i);
+        let top = null;
         if (m) {
-            const idx = parseInt(m[1], 10) - 1;
-            const top = toppingsList[idx];
+            top = toppingsList[parseInt(m[1], 10) - 1] || null;
             if (!top) {
-                await say(sock, jid, `❌ No encontré el topping *${tok.toUpperCase()}*. Usa un código entre T1 y T${toppingsList.length}.`, ctx);
+                await say(sock, jid, `❌ No encontré el topping *${tok.toUpperCase()}*. Escribe el nombre o *"lista"* para ver las opciones.`, ctx);
                 return;
             }
+        } else {
+            const target = stripAccents(String(tok).toLowerCase());
+            top = toppingsList.find(p => {
+                const name = stripAccents(String(p[dbFields.productName] || '').toLowerCase());
+                if (name === target) return true;
+                if (target.length >= 3 && name.includes(target)) return true;
+                if (target.includes(name)) return true;
+                return false;
+            }) || null;
+        }
+        if (top) {
             if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (top.CodigoProducto || top))) {
                 flow.toppingsSeleccionados.push(top);
+                added.push(top);
             }
         } else if (!/^\d+$/.test(tok)) {
-            // Observaciones de texto libre (ej: "sin arequipe")
-            flow.observaciones = flow.observaciones
-                ? `${flow.observaciones}, ${tok}`
-                : tok;
+            observaciones.push(tok);
         }
     }
 
+    // No resolvió nada útil → respaldo del clasificador híbrido antes del error
+    if (added.length === 0 && observaciones.length === 0 && meaningful.length > 0) {
+        if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+        await say(sock, jid, `❌ No reconocí esos toppings. Escribe *"lista"* para ver las opciones, o *"no"* para continuar.`, ctx);
+        return;
+    }
+
     userSession.phase = HELADO_QUANTITY;
-    const nombresTop = flow.toppingsSeleccionados.map(t => t[dbFields.productName] || t).join(', ');
+    if (observaciones.length) {
+        flow.observaciones = flow.observaciones
+            ? `${flow.observaciones}, ${observaciones.join(', ')}`
+            : observaciones.join(', ');
+    }
     const obs = flow.observaciones ? `\nObservaciones: ${flow.observaciones}` : '';
+    const lines = added.length
+        ? added.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
+        }).join('\n')
+        : 'sin toppings';
     await say(sock, jid,
-        `✅ Toppings: ${nombresTop || 'sin toppings'}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
+        `✅ Toppings:\n${lines}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
 }
 
 /**
@@ -845,7 +938,7 @@ function buildClassifierContext(userSession, ctx) {
             stepDesc = `El cliente debe elegir ${counts.sabores} sabores obligatorios (ya eligió: ${saboresElegidos.length ? saboresElegidos.join(', ') : 'ninguno'}).`;
         } else if (phase === HELADO_TOPPINGS) {
             step = 'esperando_toppings';
-            stepDesc = 'El cliente puede elegir toppings opcionales o escribir "sin".';
+            stepDesc = 'El cliente puede elegir toppings opcionales por nombre (ej: "oreo y arándano"), escribir "todos", "no", o "lista" para ver los disponibles.';
         } else if (phase === HELADO_QUANTITY) {
             step = 'esperando_cantidad';
             stepDesc = 'El cliente debe indicar cuántas unidades quiere de este producto.';
@@ -900,10 +993,9 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
             return;
         }
         case HELADO_TOPPINGS: {
-            const lista = formatList(buildOptionLists(ctx).toppings, 'T', dbFields);
             await say(sock, jid,
-                `📍 *Toppings (opcional):*\n\n${lista || '_No hay toppings disponibles._'}\n\n` +
-                `_Escribe los códigos (ej: t1 t5) o "sin" para continuar._`, ctx);
+                `📍 *Toppings (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
+                `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
             return;
         }
         case HELADO_QUANTITY:
@@ -1069,7 +1161,7 @@ function genericGuidedError(sock, jid, userSession, ctx) {
             return say(sock, jid, `❌ No entendí eso. Elige *${n}* ${n > 1 ? 'sabores' : 'sabor'} con códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
         }
         case HELADO_TOPPINGS:
-            return say(sock, jid, `❌ No entendí. Escribe los códigos de toppings (ej: *t1 t5*) o *sin* para continuar.`, ctx);
+            return say(sock, jid, `❌ No entendí. Escribe los nombres de los toppings (ej: *oreo y arándano*), *"lista"* para ver las opciones o *"no"* para continuar.`, ctx);
         case HELADO_QUANTITY:
             return say(sock, jid, `❌ Ingresa una cantidad válida (entre 1 y 100).`, ctx);
         case HELADO_POST_ADD:
