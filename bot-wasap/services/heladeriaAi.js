@@ -370,6 +370,7 @@ Mensaje del cliente: "${text}"
 Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni después):
 {
   "producto": "nombre exacto de un producto del menú o null",
+  "bebidas": ["nombres exactos de bebidas detectadas o []"],
   "sabores": ["nombres exactos de sabores detectados o []"],
   "toppings": ["nombres exactos de toppings detectados o []"],
   "cantidad": número entero >= 1 o null,
@@ -379,6 +380,7 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni 
 
 Reglas:
 - Usa SIEMPRE nombres exactos de las listas. Haz fuzzy match (acentos, mayúsculas, typos).
+- "bebidas": si el cliente menciona una bebida del catálogo junto a un producto o sola (ej: "con limonada", "una capricho mío con limonada natural", "y un jugo"), pon el nombre EXACTO de la bebida del catálogo aquí. Las bebidas del catálogo tienen códigos que empiezan con "B-" (ej: Limonada Natural, Limonada Cereza, Limonada de Coco). No inventes bebidas que no estén en el catálogo. NO pongas aquí toppings ni sabores.
 - Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
 - cantidad solo si indica unidades ("una" → 1, "dos" → 2, "un litro" → null).
 - direccion: solo si el cliente escribe algo como "para la cra 23", "la dirección es...", "calle/carrera/diagonal/avenida/cll/cra".
@@ -397,12 +399,13 @@ Reglas:
     try {
         const parsed = JSON.parse(cleaned);
         if (!parsed.producto) parsed.producto = null;
+        if (!Array.isArray(parsed.bebidas)) parsed.bebidas = [];
         if (!Array.isArray(parsed.sabores)) parsed.sabores = [];
         if (!Array.isArray(parsed.toppings)) parsed.toppings = [];
         if (parsed.cantidad === undefined || parsed.cantidad === null) parsed.cantidad = null;
         if (!parsed.direccion) parsed.direccion = null;
         if (!parsed.duda) parsed.duda = null;
-        logger.info(`heladeriaAi interpretOrderText (${step}): producto=${parsed.producto} sabores=${parsed.sabores.length} toppings=${parsed.toppings.length} cant=${parsed.cantidad} duda=${!!parsed.duda}`);
+        logger.info(`heladeriaAi interpretOrderText (${step}): producto=${parsed.producto} bebidas=${parsed.bebidas.length} sabores=${parsed.sabores.length} toppings=${parsed.toppings.length} cant=${parsed.cantidad} duda=${!!parsed.duda}`);
         return parsed;
     } catch (e) {
         logger.warn(`heladeriaAi interpretOrderText: JSON inválido del modelo: ${e.message}`);

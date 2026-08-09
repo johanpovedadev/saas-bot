@@ -225,6 +225,8 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
 async function handle(sock, jid, text, userSession, ctx) {
     const normalized = stripAccents(text.toLowerCase().trim());
 
+    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
+
     if (/^(menu|volver|atras|inicio|salir|cancelar|terminar|finalizar)$/.test(normalized)) {
         logger.info(`[${jid}] -> Salida del flujo de helados detectada: "${text}"`);
         clearCarrito(userSession);
@@ -656,16 +658,9 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
         case 'help':
             await menuHandler.sendMainMenu(sock, jid, ctx);
             return;
-        case 'human': {
-            userSession.phase = PHASE.WAITING_HUMAN;
-            const notificationService = require('../../services/notificationService');
-            try {
-                await notificationService.notifySystemAlert(sock, ctx, '💬', 'CLIENTE PIDE ATENCIÓN HUMANA',
-                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
-            } catch (e) { /* ignore */ }
-            await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🍦', ctx);
+        case 'human':
+            await handleHumanRequest(sock, jid, text, userSession, ctx);
             return;
-        }
         case 'chat':
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
             return;
@@ -923,6 +918,23 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
 }
 
 /**
+ * Detección determinista de bebidas mencionadas por su nombre completo en el
+ * texto (complemento del campo "bebidas" del clasificador, por si Gemini las
+ * omite). Filtra por categoría Bebidas del catálogo.
+ */
+function detectBebidaNamesInText(text, ctx) {
+    const dbFields = getDbFields();
+    const t = stripAccents(String(text || '').toLowerCase());
+    const out = [];
+    for (const p of getProducts(ctx)) {
+        if (String(p.Categoria || '').toLowerCase() !== 'bebidas') continue;
+        const name = stripAccents(String(p[dbFields.productName] || '').toLowerCase());
+        if (name.length >= 3 && t.includes(name) && !out.includes(name)) out.push(name);
+    }
+    return out;
+}
+
+/**
  * Núcleo del clasificador: aplica el JSON estructurado devuelto por la IA
  * avanzando el flujo paso a paso (sabores → toppings → cantidad → checkout).
  * Retorna true si envió una respuesta útil; false si no hay nada aplicable
@@ -965,6 +977,34 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         acted = true;
     }
 
+    // 2b) Bebidas mencionadas junto al pedido (ej: "con limonada", "y un jugo")
+    //     → ítem independiente del carrito, sin bloquear el flujo del producto.
+    const bebidaNames = [];
+    for (const n of (Array.isArray(result.bebidas) ? result.bebidas : [])) {
+        const norm = stripAccents(String(n || '').toLowerCase());
+        if (norm && !bebidaNames.includes(norm)) bebidaNames.push(norm);
+    }
+    for (const n of detectBebidaNamesInText(text, ctx)) {
+        if (!bebidaNames.includes(n)) bebidaNames.push(n);
+    }
+    if (bebidaNames.length > 0) {
+        const targetCode = targetProduct ? (targetProduct[dbFields.productCode] || '') : '';
+        const bebidas = resolveProducts(bebidaNames.map(nombre => ({ nombre })), ctx)
+            .filter(b => !targetCode || (b.product[dbFields.productCode] || '') !== targetCode);
+        if (bebidas.length > 0) {
+            for (const b of bebidas) addPlainToCarrito(userSession, b);
+            const lineas = bebidas.map(b => `• ${b.cantidad}x ${getProductName(b.product)} - *${money(b.precio * b.cantidad)}*`).join('\n');
+            await say(sock, jid, `🍋 ¡Claro! Agregué a tu pedido:\n\n${lineas}`, ctx);
+            acted = true;
+            if (!userSession.heladoFlow && !targetProduct) {
+                userSession.pendingVoiceGuided = null;
+                userSession.phase = HELADO_POST_ADD;
+                userSession.awaitingField = null;
+                userSession.errorCount = 0;
+                await sendPostAddOptions(sock, jid, ctx);
+            }
+        }
+    }
 
     // 3) Aplicar sabores si es el turno (re-jugada con códigos S<n> seguros)
     if (userSession.heladoFlow && userSession.phase === HELADO_SABORES && result.sabores && result.sabores.length > 0) {
@@ -1200,6 +1240,38 @@ async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
 }
 
 /**
+ * Detecta una petición EXPLÍCITA de atención humana en el mensaje del cliente
+ * ("páseme una persona", "con un asesor", "un humano", "hablar con alguien").
+ * Requiere palabras de escalamiento (asesor/humano/agente) o un verbo de
+ * transferencia + persona, para no escalar por preguntas casuales
+ * (ej: "¿cuánto cuesta para una persona?").
+ */
+function isHumanRequest(text) {
+    const t = stripAccents(String(text || '').toLowerCase());
+    if (/\b(asesores?|humano|agente|representante)\b/.test(t)) return true;
+    return /\b(pas(e|a)me\b|me pas\w* con\b|conect\w* me\b|me conect\w*|hablar con (un|una|alguien)|alguien (real|del equipo)|atencion humana|que me atienda\w*)\b/.test(t);
+}
+
+/**
+ * Escala el chat a atención humana (fase WAITING_HUMAN) y notifica al equipo.
+ * Retorna true si el mensaje era una petición humana y ya se respondió.
+ * Reutilizado por routeIntent (audio), handle (flujo guiado) y
+ * handleNotUnderstood (texto en cualquier fase, incluido checkout).
+ */
+async function handleHumanRequest(sock, jid, text, userSession, ctx) {
+    if (!isHumanRequest(text)) return false;
+    logger.info(`[${jid}] -> Cliente pide atención humana: "${text}"`);
+    userSession.phase = PHASE.WAITING_HUMAN;
+    const notificationService = require('../../services/notificationService');
+    try {
+        await notificationService.notifySystemAlert(sock, ctx, '💬', 'CLIENTE PIDE ATENCIÓN HUMANA',
+            `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
+    } catch (e) { /* ignore */ }
+    await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🍦', ctx);
+    return true;
+}
+
+/**
  * ROUTER DE RESPALDO (Clasificador híbrido): se invoca desde los handlers
  * genéricos (menu/products/selection/parser/checkout/handler.js) JUSTO ANTES
  * de mostrar el mensaje de "no entendí". Interpreta el mensaje con Gemini y
@@ -1208,6 +1280,8 @@ async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
  */
 async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
+
+    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
 
     if (CHECKOUT_PHASES.includes(userSession.phase)) {
         if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
