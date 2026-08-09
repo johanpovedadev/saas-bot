@@ -11,8 +11,8 @@ const envConfig = require('../config/env.loader');
  */
 
 const MODELS = {
-    intent: 'models/gemini-flash-latest',
-    audio: 'models/gemini-flash-latest'
+    intent: 'models/gemini-3.1-flash-lite',
+    audio: 'models/gemini-3.1-flash-lite'
 };
 
 function hasValidKey() {

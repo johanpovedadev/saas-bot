@@ -82,7 +82,7 @@ async function runHeartbeat() {
     await checkDjango();
 
     // 4. Chequear WhatsApp
-    checkWhatsApp();
+    await checkWhatsApp();
 
     // 5. Log del heartbeat
     const snapshot = {
@@ -197,7 +197,9 @@ async function checkDjango() {
     });
 }
 
-function checkWhatsApp() {
+let _waNonConnectedStreak = 0;
+
+async function checkWhatsApp() {
     if (!_sock || !_sock.info) {
         const wasOk = STATE.whatsapp.status === 'OK';
         STATE.whatsapp = { status: 'DOWN', lastCheck: new Date().toISOString(), lastError: 'No conectado' };
@@ -206,6 +208,36 @@ function checkWhatsApp() {
         }
         return;
     }
+
+    // Verificar el estado real del WebSocket de WhatsApp (detecta "muerte silenciosa":
+    // la pagina de Chrome sigue viva pero el socket ya no entrega mensajes).
+    // whatsapp-web.js trata OPENING/TIMEOUT como estados aceptados y NO emite
+    // "disconnected", asi que una sesion atascada ahi queda sorda sin deteccion.
+    try {
+        if (typeof _sock.getState === 'function') {
+            const state = await _sock.getState();
+            if (state === 'CONNECTED') {
+                _waNonConnectedStreak = 0;
+                STATE.whatsapp = { status: 'OK', lastCheck: new Date().toISOString(), lastError: null };
+                return;
+            }
+            _waNonConnectedStreak++;
+            STATE.whatsapp = {
+                status: 'WARNING',
+                lastCheck: new Date().toISOString(),
+                lastError: `Estado WebSocket: ${state}`
+            };
+            logger.warn(`[Heartbeat] Estado WebSocket WhatsApp: ${state} (chequeo ${_waNonConnectedStreak})`);
+            if (_waNonConnectedStreak >= 2) {
+                logger.error(`[Heartbeat] WebSocket WhatsApp no conectado tras ${_waNonConnectedStreak} chequeos (${state}) - reiniciando`);
+                process.exit(0);
+            }
+            return;
+        }
+    } catch (e) {
+        // Si el estado no se puede leer (pagina detachada, etc.), caer al chequeo basico
+    }
+
     STATE.whatsapp = { status: 'OK', lastCheck: new Date().toISOString(), lastError: null };
 }
 

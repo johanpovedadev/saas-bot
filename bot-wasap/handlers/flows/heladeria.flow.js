@@ -702,6 +702,17 @@ async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSessi
 }
 
 /**
+ * Lectura de imagen (usado por handler.js en el bloque de media).
+ * Devuelve una descripción corta que luego se enruta por el flujo.
+ */
+async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg') {
+    const text = await heladeriaAi.interpretImage(imageBase64, userSession, mimeType);
+    if (!text) return null;
+    logger.info(`heladeria.flow transcribeImage: "${text.substring(0, 80)}"`);
+    return text;
+}
+
+/**
  * Bienvenida con PERSONA (heladería 🍦). NO pide el nombre en el saludo:
  * el nombre solo se solicita en el envío (checkout). Texto estático
  * (0 calls de IA).
@@ -1182,7 +1193,7 @@ module.exports = {
             currency: 'COP'
         },
         bot: {
-            ai: { enabled: true, model: 'gemini-flash-latest' },
+            ai: { enabled: true, model: 'gemini-3.1-flash-lite' },
             phases: { enableAIAssistant: false }
         }
     },
@@ -1190,6 +1201,7 @@ module.exports = {
     handle,
     routeIntent,
     processAudio,
+    transcribeImage,
     showWelcome,
     handleNotUnderstood,
     getInitialPhase: () => PHASE.SELECCION_OPCION,

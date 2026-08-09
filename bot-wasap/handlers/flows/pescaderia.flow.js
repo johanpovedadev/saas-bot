@@ -320,7 +320,7 @@ module.exports = {
             currency: 'COP'
         },
         bot: {
-            ai: { enabled: true, model: 'gemini-flash-latest' },
+            ai: { enabled: true, model: 'gemini-3.1-flash-lite' },
             phases: { enableAIAssistant: true }
         }
     },

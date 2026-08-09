@@ -20,8 +20,8 @@ const { logger } = require('../utils/logger');
 const envConfig = require('../config/env.loader');
 
 const MODELS = {
-    intent: 'models/gemini-flash-latest',
-    audio: 'models/gemini-flash-latest'
+    intent: 'models/gemini-3.1-flash-lite',
+    audio: 'models/gemini-3.1-flash-lite'
 };
 
 function hasValidKey() {
@@ -386,4 +386,38 @@ Responde SOLO con el texto de la respuesta, sin comillas ni prefijos.`;
     return answer;
 }
 
-module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt };
+/**
+ * Lectura de imagen para el flujo de heladería. Devuelve una descripción
+ * corta en español o null si falla. Usa el mismo modelo multimodal económico.
+ */
+async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
+    if (!hasValidKey()) {
+        logger.warn('heladeriaAi: Gemini key no disponible para imagen');
+        return null;
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: MODELS.audio });
+
+    const prompt = `Eres ISA, dueña de una heladería en Riohacha (Mundo Helados). Un cliente te envió una imagen. Describe brevemente qué muestra para poder ayudarle. Si es una foto de un producto/plato de la heladería, identifícalo. Responde en una línea corta en español, cálido y con un emoji.`;
+
+    try {
+        const imagePart = {
+            inlineData: { mimeType: mimeType, data: imageBase64 }
+        };
+        const result = await Promise.race([
+            model.generateContent([prompt, imagePart]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+        ]);
+        const response = await result.response;
+        const text = response.text().trim();
+        if (!text) return null;
+        logger.info(`heladeriaAi interpretImage lectura: "${text.substring(0, 80)}"`);
+        return text;
+    } catch (e) {
+        logger.error(`heladeriaAi interpretImage: ${e.message}`);
+        return null;
+    }
+}
+
+module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage };
