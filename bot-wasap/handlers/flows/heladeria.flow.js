@@ -776,8 +776,12 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
             return;
         case 'query_menu':
+            // Menú visual SOLO con las imágenes del catálogo (sin la lista de
+            // texto de productos y precios, que ya vienen en los posters).
+            userSession.phase = PHASE.SELECCION_OPCION;
+            userSession.errorCount = 0;
             await sendMenuImages(sock, jid, ctx);
-            await menuHandler.handleVerMenuOption(sock, jid, userSession, ctx);
+            await say(sock, jid, '📋 ¡Aquí está nuestro menú! 🍦\n_Escribe el nombre del producto que quieras (ej: "copa osito") y te ayudo a armarlo._', ctx);
             return;
         case 'query_product': {
             const resolved = resolveProducts(result.products, ctx);
