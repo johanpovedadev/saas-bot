@@ -21,7 +21,7 @@ const envConfig = require('../config/env.loader');
 
 const MODELS = {
     intent: 'models/gemini-3.1-flash-lite',
-    audio: 'models/gemini-3.1-flash-lite'
+    audio: 'models/gemini-flash-latest'
 };
 
 function hasValidKey() {
@@ -158,8 +158,10 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
         generationConfig: { responseMimeType: 'application/json' }
     });
 
+    const lastBotReply = (userSession && userSession.lastBotReply) ? userSession.lastBotReply.slice(0, 300) : '(no hay)';
+    const currentPhase = (userSession && userSession.phase) ? userSession.phase : '(ninguna)';
     const combinedPrompt = buildSystemPrompt(userSession) +
-        `\n\nEl usuario envió un mensaje de voz. Primero transcríbelo EXACTAMENTE al español (incluye cantidades y nombres de productos tal cual) en el campo "transcription". Luego clasifica la intención con las reglas de intents indicadas arriba. Devuelve EXCLUSIVAMENTE un JSON válido con: intent, products (códigos y nombres exactos del menú si aplica), transcription y response. No agregues texto antes ni después del JSON.`;
+        `\n\nCONTEXTO DE LA CONVERSACIÓN (lo último que el bot le dijo al usuario): "${lastBotReply}" (fase actual del pedido: ${currentPhase}). El usuario envió un mensaje de voz JUSTO DESPUÉS de eso. Primero transcríbelo EXACTAMENTE al español (incluye cantidades y nombres de productos tal cual) en el campo "transcription". Luego clasifica la intención con las reglas de intents indicadas arriba, teniendo en cuenta que el audio es una RESPUESTA a lo que el bot preguntó. Devuelve EXCLUSIVAMENTE un JSON válido con: intent, products (códigos y nombres exactos del menú si aplica), transcription y response. No agregues texto antes ni después del JSON.`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
 
@@ -179,7 +181,7 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.products)) parsed.products = [];
-            logger.info(`heladeriaAi interpretAudioIntent: intent=${parsed.intent}, transcripción/parsing OK`);
+            logger.info(`heladeriaAi interpretAudioIntent: intent=${parsed.intent}, transcripción="${(parsed.transcription || '').substring(0, 120)}"`);
             return parsed;
         } catch (e) {
             logger.warn(`heladeriaAi interpretAudioIntent intento ${attempt}: ${e.message}`);

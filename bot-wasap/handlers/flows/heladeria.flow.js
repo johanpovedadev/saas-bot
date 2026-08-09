@@ -680,6 +680,9 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
  */
 async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
+    if (ctx.lastSent && ctx.lastSent[jid]) {
+        userSession.lastBotReply = String(ctx.lastSent[jid]).slice(0, 300);
+    }
 
     const guidedPhases = [HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY];
     if (userSession.heladoFlow && guidedPhases.includes(userSession.phase)) {

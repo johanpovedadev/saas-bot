@@ -214,6 +214,9 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
  */
 async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
+    if (ctx.lastSent && ctx.lastSent[jid]) {
+        userSession.lastBotReply = String(ctx.lastSent[jid]).slice(0, 300);
+    }
     const recentOrders = restaurantStore.getRecentOrders(jid, 3);
 
     const result = await restaurantAi.interpretAudioIntent(audioBase64, userSession, recentOrders, mimeType || 'audio/ogg; codecs=opus');
