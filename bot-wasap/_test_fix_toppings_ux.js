@@ -185,6 +185,73 @@ async function handle(text, userSession) {
         `TOPP-plural: "arándanos" resuelve perlas e. arandano (${tops11.join(', ')})`);
     check(s11.phase === 'HELADO_QUANTITY', `TOPP-plural: avanza a cantidad (fase: ${s11.phase})`);
 
+    // ---- Varias unidades: validar misma personalización o diferente ----
+    const saboresOrdenados = (ctx.productsCache || [])
+        .filter(p => String(p.Categoria || '').toLowerCase() === 'sabores_helado')
+        .sort((a, b) => String(a.CodigoProducto || '').localeCompare(String(b.CodigoProducto || '')));
+
+    function makeQtyReady() {
+        const s = makeQuantitySession();
+        s.heladoFlow.saboresSeleccionados = [saboresOrdenados[0], saboresOrdenados[1]];
+        s.heladoFlow.toppingsSeleccionados = [
+            (ctx.productsCache || []).find(p => /oreo/i.test(String(p.NombreProducto || '')))
+        ];
+        return s;
+    }
+
+    const s12 = makeQuantitySession();
+    const r12 = await handle('2', s12);
+    check(s12.phase === 'HELADO_UNITS_MODE', `UNITS: qty=2 pregunta personalización (fase: ${s12.phase})`);
+    check(/Todas iguales/.test(r12) && /Cada una diferente/.test(r12),
+        'UNITS: ofrece "todas iguales" y "cada una diferente"');
+
+    // 1) Todas iguales → un ítem con cantidad 2 y la misma personalización
+    const s13 = makeQtyReady();
+    await handle('2', s13);
+    const r13 = await handle('1', s13);
+    check(s13.carrito.length === 1 && s13.carrito[0].cantidad === 2,
+        `UNITS-same: un solo ítem con cantidad 2 (${s13.carrito.length} ítem, qty=${s13.carrito[0] && s13.carrito[0].cantidad})`);
+    check((s13.carrito[0].sabores || []).length === 2 && /oreo/i.test(s13.carrito[0].toppings[0]),
+        `UNITS-same: conserva sabores (${(s13.carrito[0].sabores || []).join(', ')}) y topping (${(s13.carrito[0].toppings || []).join(', ')})`);
+    check(s13.phase === 'HELADO_POST_ADD', `UNITS-same: llega a post-add (fase: ${s13.phase})`);
+
+    // 2) Cada una diferente → recorre unidad por unidad
+    const s14 = makeQtyReady();
+    await handle('2', s14);
+    const r14a = await handle('2', s14);
+    check(s14.phase === 'HELADO_PER_UNIT_SABORES', `UNITS-each: pide sabores unidad 1/2 (fase: ${s14.phase})`);
+    check(/Unidad \*1\/2\*/.test(r14a), 'UNITS-each: muestra "Unidad 1/2"');
+
+    await handle('s1 s3', s14);
+    check(s14.phase === 'HELADO_PER_UNIT_TOPPINGS', `UNITS-each: sabores unidad 1 ok → toppings (fase: ${s14.phase})`);
+
+    await handle('no', s14);
+    check(s14.phase === 'HELADO_PER_UNIT_SABORES', `UNITS-each: pasa a sabores unidad 2/2 (fase: ${s14.phase})`);
+
+    await handle('s2 s5', s14);
+    check(s14.phase === 'HELADO_PER_UNIT_TOPPINGS', `UNITS-each: sabores unidad 2 ok → toppings (fase: ${s14.phase})`);
+
+    const r14c = await handle('oreo', s14);
+    const items14 = s14.carrito;
+    check(Array.isArray(items14) && items14.length === 2,
+        `UNITS-each: crea 2 ítems en el carrito (${items14.length})`);
+    check(items14.every(it => it.cantidad === 1), 'UNITS-each: cada ítem con cantidad 1');
+    const s1n = (items14[0].sabores || []).join(',');
+    const s2n = (items14[1].sabores || []).join(',');
+    check(s1n !== s2n, `UNITS-each: sabores distintos por unidad (${s1n} vs ${s2n})`);
+    check((items14[1].toppings || []).length === 1 && /oreo/i.test(items14[1].toppings[0]),
+        'UNITS-each: unidad 2 lleva oreo');
+    check(s14.phase === 'HELADO_POST_ADD', `UNITS-each: llega a post-add (fase: ${s14.phase})`);
+    check((r14c.match(/1x \*Copa Osito\*/g) || []).length === 2,
+        'UNITS-each: confirma las 2 unidades (una línea por unidad)');
+
+    // 3) Sin opciones personalizables (sabores=0, toppings=0) → NO pregunta
+    const s15 = makeQuantitySession();
+    s15.heladoFlow.counts = { sabores: 0, toppings: 0 };
+    const r15 = await handle('3', s15);
+    check(s15.phase === 'HELADO_POST_ADD' && s15.carrito.length === 1 && s15.carrito[0].cantidad === 3,
+        `UNITS-noOpts: producto sin sabores/toppings no pregunta (fase: ${s15.phase}, qty=${s15.carrito[0] && s15.carrito[0].cantidad})`);
+
     heladeriaAi.interpretOrderText = origInterpret;
     console.log('\n' + (failures === 0 ? '✅ TODO OK' : `❌ ${failures} FALLOS`));
     process.exit(failures === 0 ? 0 : 1);

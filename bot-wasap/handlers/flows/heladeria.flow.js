@@ -7,7 +7,9 @@
  * genéricos existentes. Este flow solo interviene cuando se selecciona un
  * producto que requiere personalización (Numero_de_Sabores / Numero_de_Toppings),
  * guiando la conversación sabores → toppings → cantidad mediante fases propias
- * (HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY), 100% aisladas del tenant.
+ * (HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY, y si hay varias unidades:
+ * HELADO_UNITS_MODE, HELADO_PER_UNIT_SABORES, HELADO_PER_UNIT_TOPPINGS),
+ * 100% aisladas del tenant.
  *
  * La lista de sabores/toppings se construye desde el cache de productos
  * filtrando por categoría (en la hoja Inventario, los sabores y toppings son
@@ -43,6 +45,11 @@ const HELADO_SABORES = 'HELADO_SABORES';
 const HELADO_TOPPINGS = 'HELADO_TOPPINGS';
 const HELADO_QUANTITY = 'HELADO_QUANTITY';
 const HELADO_POST_ADD = PHASE.HELADO_POST_ADD;
+// Varias unidades del mismo producto: validar si TODAS llevan la misma
+// personalización (sabores/toppings) o cada una diferente.
+const HELADO_UNITS_MODE = 'HELADO_UNITS_MODE';
+const HELADO_PER_UNIT_SABORES = 'HELADO_PER_UNIT_SABORES';
+const HELADO_PER_UNIT_TOPPINGS = 'HELADO_PER_UNIT_TOPPINGS';
 
 // Fases que el flow considera propias del negocio (para greeting y routing)
 const HELADERIA_PHASES = [
@@ -67,7 +74,10 @@ const HELADERIA_PHASES = [
     HELADO_SABORES,
     HELADO_TOPPINGS,
     HELADO_QUANTITY,
-    HELADO_POST_ADD
+    HELADO_POST_ADD,
+    HELADO_UNITS_MODE,
+    HELADO_PER_UNIT_SABORES,
+    HELADO_PER_UNIT_TOPPINGS
 ];
 
 const CATEGORIA_SABORES = 'Sabores_Helado';
@@ -296,6 +306,15 @@ async function handle(sock, jid, text, userSession, ctx) {
             break;
         case HELADO_QUANTITY:
             await handleQuantity(sock, jid, text, userSession, ctx);
+            break;
+        case HELADO_UNITS_MODE:
+            await handleUnitsMode(sock, jid, text, normalized, userSession, ctx);
+            break;
+        case HELADO_PER_UNIT_SABORES:
+            await handlePerUnitSabores(sock, jid, text, userSession, ctx);
+            break;
+        case HELADO_PER_UNIT_TOPPINGS:
+            await handlePerUnitToppings(sock, jid, text, userSession, ctx);
             break;
         default:
             await handleSabores(sock, jid, text, userSession, ctx);
@@ -614,7 +633,7 @@ function isToppingsRequest(text, ctx) {
  * Paso 3: cantidad → agrega al carrito (con sabores/toppings/observaciones)
  * y continúa con las opciones de post-compra.
  */
-async function handleQuantity(sock, jid, text, userSession, ctx) {
+async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuestion) {
     const flow = userSession.heladoFlow;
     const dbFields = getDbFields();
     const parts = text.trim().split(/\s+/);
@@ -637,6 +656,29 @@ async function handleQuantity(sock, jid, text, userSession, ctx) {
 
     const product = flow.product;
     const nombre = getProductName(product);
+
+    // Varias unidades de un producto personalizable (sabores/toppings):
+    // validar si TODAS llevan la misma personalización o cada una diferente.
+    // La cascada de pedido completo (classifyOrderInput) pasa skipUnitsQuestion
+    // = true: ahí la misma personalización se asume para todas las unidades.
+    const hasOptions = (flow.counts.sabores > 0 || flow.counts.toppings > 0);
+    if (qty > 1 && hasOptions && !skipUnitsQuestion) {
+        flow.customization = {
+            qty,
+            mode: null,
+            units: [],
+            currentUnit: 0,
+            currentSabores: [],
+            currentToppings: [],
+            currentObs: ''
+        };
+        userSession.phase = HELADO_UNITS_MODE;
+        await say(sock, jid,
+            `🔄 Vas a pedir *${qty} unidades* de *${nombre}*. ¿Quieres que TODAS lleven los *mismos sabores y toppings* que elegiste, o *sabores/toppings diferentes* para cada una?\n\n` +
+            `*1)* Todas iguales\n*2)* Cada una diferente\n\n_Escribe el número de la opción._`, ctx);
+        return;
+    }
+
     // Precios en formato COP pueden venir como string "4.000" o número 4000.
     // Eliminar separadores de miles antes de parsear (parseFloat("4.000") === 4, bug).
     const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
@@ -672,6 +714,329 @@ async function handleQuantity(sock, jid, text, userSession, ctx) {
     const obsText = observacionesFinal ? ` · Obs: ${observacionesFinal}` : '';
     await say(sock, jid,
         `✅ ${qty}x *${nombre}*${saboresText}${toppingsText}${obsText} - *${money(precio * qty)}*`, ctx);
+    await sendPostAddOptions(sock, jid, ctx);
+}
+
+/**
+ * Paso 3b (fase HELADO_UNITS_MODE): el cliente pidió varias unidades de un
+ * producto personalizable. Preguntó el bot si TODAS llevan los mismos
+ * sabores/toppings o cada una diferente.
+ *  - "1" (todas iguales) → un solo ítem con cantidad = qty y la misma
+ *    personalización ya elegida.
+ *  - "2" (cada una diferente) → se recorre unidad por unidad (sabores →
+ *    toppings) y se crea un ítem de carrito por unidad.
+ */
+async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    if (/^(1|igual|iguales|igualitas|las mismas|los mismos|mismos|todas iguales|todos iguales|lo mismo|misma combinacion|igual para todos)$/.test(normalized)) {
+        customization.mode = 'same';
+        await finalizeSameCustomization(sock, jid, userSession, ctx);
+        return;
+    }
+    if (/^(2|diferente|diferentes|cada una|cada unidad|cada uno|distintos|distintas|variados|variadas)$/.test(normalized)) {
+        customization.mode = 'each';
+        customization.units = [];
+        customization.currentUnit = 0;
+        customization.currentSabores = [];
+        customization.currentToppings = [];
+        customization.currentObs = '';
+        await askPerUnitSabores(sock, jid, userSession, ctx);
+        return;
+    }
+    await say(sock, jid,
+        `🔄 ¿Quieres que las *${customization.qty} unidades* lleven los *mismos sabores y toppings* o *diferentes* para cada una?\n\n` +
+        `*1)* Todas iguales\n*2)* Cada una diferente\n\n_Escribe el número de la opción._`, ctx);
+}
+
+/**
+ * Pide los sabores de la unidad actual (unidad N de qty). Si el producto no
+ * tiene sabores obligatorios, salta directo a los toppings.
+ */
+async function askPerUnitSabores(sock, jid, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    const qty = customization.qty;
+    const unitNum = customization.currentUnit + 1;
+    if (flow.counts.sabores > 0) {
+        userSession.phase = HELADO_PER_UNIT_SABORES;
+        const lista = formatList(buildOptionLists(ctx).sabores, 'S', getDbFields());
+        const palabra = flow.counts.sabores > 1 ? 'sabores' : 'sabor';
+        await say(sock, jid,
+            `🍦 Unidad *${unitNum}/${qty}* — elige *${flow.counts.sabores} ${palabra}*:\n\n` +
+            `${lista || '_No hay sabores disponibles._'}\n\n` +
+            `_Ejemplo: s1 s2 s3_`, ctx);
+    } else {
+        await askPerUnitToppings(sock, jid, userSession, ctx);
+    }
+}
+
+/**
+ * Paso 1 de la personalización por unidad: recolección de sabores obligatorios
+ * de la unidad actual (misma lógica que handleSabores, guardando en
+ * flow.customization.currentSabores).
+ */
+async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    const dbFields = getDbFields();
+    const saboresList = buildOptionLists(ctx).sabores;
+    const input = stripAccents(text.toLowerCase().trim());
+    const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
+
+    if (noKeywordsRegex.test(input)) {
+        await say(sock, jid,
+            `❌ Para este producto los sabores son obligatorios. Elige *${flow.counts.sabores}* ${flow.counts.sabores > 1 ? 'sabores' : 'sabor'} (ej: *s1 s2 s3*).`, ctx);
+        return;
+    }
+
+    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    for (const tok of tokens) {
+        if (customization.currentSabores.length >= flow.counts.sabores) break;
+        const m = tok.match(/^s(\d+)$/i);
+        let sabor = null;
+        if (m) {
+            const idx = parseInt(m[1], 10) - 1;
+            sabor = saboresList[idx] || null;
+            if (!sabor) {
+                await say(sock, jid, `❌ No encontré el sabor *${tok.toUpperCase()}*. Usa un código entre S1 y S${saboresList.length}.`, ctx);
+                return;
+            }
+        } else {
+            sabor = saboresList.find(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase().includes(tok)) || null;
+        }
+        if (!sabor) {
+            if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+            await say(sock, jid, `❌ No reconocí "${tok}". Escribe códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
+            return;
+        }
+        const yaElegido = customization.currentSabores.find(x => (x.CodigoProducto || x) === (sabor.CodigoProducto || sabor));
+        if (yaElegido) {
+            await say(sock, jid, `😊 *${sabor[dbFields.productName] || sabor}* ya lo elegiste. Elige otro sabor.`, ctx);
+            return;
+        }
+        customization.currentSabores.push(sabor);
+    }
+
+    const sel = customization.currentSabores;
+    const nombres = sel.map(s => s[dbFields.productName] || s).join(', ');
+
+    if (sel.length < flow.counts.sabores) {
+        const falta = flow.counts.sabores - sel.length;
+        const faltan = falta > 1 ? `Te faltan *${falta}* sabores más` : `Te falta *1* sabor más`;
+        await say(sock, jid,
+            `✅ ${nombres ? `Sabores hasta ahora: *${nombres}*.` : ''} ${faltan}.\n\n_Ejemplo: s2 s5_`, ctx);
+        return;
+    }
+
+    // Sabores de la unidad completos → toppings opcionales
+    if (flow.counts.toppings > 0) {
+        userSession.phase = HELADO_PER_UNIT_TOPPINGS;
+        await say(sock, jid,
+            `✅ Sabores unidad *${customization.currentUnit + 1}*: *${nombres}*.\n\n` +
+            `📍 *Toppings (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
+            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
+    } else {
+        await pushPerUnit(sock, jid, userSession, ctx);
+    }
+}
+
+/**
+ * Paso 2 de la personalización por unidad: toppings opcionales de la unidad
+ * actual (misma lógica que handleToppings, guardando en
+ * flow.customization.currentToppings). Al terminar pasa a la siguiente unidad
+ * o finaliza el pedido.
+ */
+async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    const dbFields = getDbFields();
+    const toppingsList = buildOptionLists(ctx).toppings;
+    const input = stripAccents(text.toLowerCase().trim());
+    const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
+
+    if (noKeywordsRegex.test(input)) {
+        await pushPerUnit(sock, jid, userSession, ctx);
+        return;
+    }
+
+    if (/lista|listame|listeme|liste|opciones|cuales|que hay|que toppings|mostrame|muestrame|dame la lista/.test(input)) {
+        const lista = formatToppingsGrouped(ctx) || '_No hay toppings disponibles._';
+        await say(sock, jid,
+            `📍 *Toppings disponibles (unidad ${customization.currentUnit + 1}):*\n\n${lista}\n\n` +
+            `_Escribe los nombres que quieras (ej: "oreo y arándano") o "no" para continuar._`, ctx);
+        return;
+    }
+
+    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+        for (const t of toppingsList) {
+            if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
+                customization.currentToppings.push(t);
+            }
+        }
+        await pushPerUnit(sock, jid, userSession, ctx);
+        return;
+    }
+
+    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    const meaningful = tokens.filter(t => !TOPPING_STOPWORDS.has(t) && t.length >= 2);
+
+    if (meaningful.length === 0) {
+        if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+        await say(sock, jid, `❌ No reconocí esos toppings. Escribe *"lista"* para ver las opciones, o *"no"* para continuar.`, ctx);
+        return;
+    }
+
+    const added = [];
+    const observaciones = [];
+    let matchedSomething = false;
+
+    const joinedPhrase = meaningful.join(' ');
+    const wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    if (wholeMatch) {
+        matchedSomething = true;
+        if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (wholeMatch.CodigoProducto || wholeMatch))) {
+            customization.currentToppings.push(wholeMatch);
+            added.push(wholeMatch);
+        }
+    } else {
+        for (const tok of meaningful) {
+            const m = tok.match(/^t(\d+)$/i);
+            let top = null;
+            if (m) {
+                top = toppingsList[parseInt(m[1], 10) - 1] || null;
+                if (!top) {
+                    await say(sock, jid, `❌ No encontré el topping *${tok.toUpperCase()}*. Escribe el nombre o *"lista"* para ver las opciones.`, ctx);
+                    return;
+                }
+            } else {
+                top = findBestTopping(stripAccents(String(tok).toLowerCase()), toppingsList, dbFields);
+            }
+            if (top) {
+                matchedSomething = true;
+                if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (top.CodigoProducto || top))) {
+                    customization.currentToppings.push(top);
+                    added.push(top);
+                }
+            } else if (!/^\d+$/.test(tok)) {
+                observaciones.push(tok);
+            }
+        }
+    }
+
+    if (!matchedSomething && observaciones.length === 0 && meaningful.length > 0) {
+        if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
+        await say(sock, jid, `❌ No reconocí esos toppings. Escribe *"lista"* para ver las opciones, o *"no"* para continuar.`, ctx);
+        return;
+    }
+
+    customization.currentObs = [customization.currentObs, observaciones.join(', ')].filter(Boolean).join(', ');
+    await pushPerUnit(sock, jid, userSession, ctx);
+}
+
+/**
+ * Guarda la personalización de la unidad actual en flow.customization.units.
+ * Si quedan unidades por personalizar, pide los sabores de la siguiente;
+ * si no, finaliza el pedido creando un ítem de carrito por unidad.
+ */
+async function pushPerUnit(sock, jid, userSession, ctx) {
+    const customization = userSession.heladoFlow.customization;
+    customization.units.push({
+        sabores: [...customization.currentSabores],
+        toppings: [...customization.currentToppings],
+        observaciones: customization.currentObs
+    });
+    customization.currentUnit += 1;
+    customization.currentSabores = [];
+    customization.currentToppings = [];
+    customization.currentObs = '';
+    if (customization.currentUnit < customization.qty) {
+        await askPerUnitSabores(sock, jid, userSession, ctx);
+    } else {
+        await finalizeEachCustomization(sock, jid, userSession, ctx);
+    }
+}
+
+/**
+ * Modo "todas iguales": un solo ítem de carrito con cantidad = qty y la misma
+ * personalización (sabores/toppings/observaciones) ya elegida en el flujo.
+ */
+async function finalizeSameCustomization(sock, jid, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    const qty = customization.qty;
+    const product = flow.product;
+    const dbFields = getDbFields();
+    const nombre = getProductName(product);
+    const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+
+    const cartItem = {
+        codigo: product[dbFields.productCode] || product.CodigoProducto || `TEMP-${Date.now()}`,
+        nombre,
+        precio,
+        cantidad: qty,
+        observaciones: flow.observaciones || '',
+        sabores: flow.saboresSeleccionados.map(s => s[dbFields.productName] || s),
+        toppings: flow.toppingsSeleccionados.map(t => t[dbFields.productName] || t),
+        subtotal: precio * qty
+    };
+    ensureCarrito(userSession).push(cartItem);
+    await afterAddToCarrito(sock, jid, userSession, ctx, [cartItem]);
+}
+
+/**
+ * Modo "cada una diferente": un ítem de carrito por unidad, cada uno con sus
+ * propios sabores/toppings/observaciones.
+ */
+async function finalizeEachCustomization(sock, jid, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    const product = flow.product;
+    const dbFields = getDbFields();
+    const nombre = getProductName(product);
+    const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const baseCodigo = product[dbFields.productCode] || product.CodigoProducto || 'TEMP';
+
+    const cartItems = customization.units.map((unit, i) => ({
+        codigo: `${baseCodigo}-${i + 1}`,
+        nombre,
+        precio,
+        cantidad: 1,
+        observaciones: unit.observaciones || '',
+        sabores: (unit.sabores || []).map(s => s[dbFields.productName] || s),
+        toppings: (unit.toppings || []).map(t => t[dbFields.productName] || t),
+        subtotal: precio
+    }));
+    ensureCarrito(userSession).push(...cartItems);
+    await afterAddToCarrito(sock, jid, userSession, ctx, cartItems);
+}
+
+/**
+ * Cierre común después de agregar ítems al carrito (producto guiado ya
+ * personalizado): limpia el estado, confirma con el resumen de cada ítem y
+ * muestra las opciones de post-compra.
+ */
+async function afterAddToCarrito(sock, jid, userSession, ctx, cartItems) {
+    resetGuidedState(userSession);
+    userSession.errorCount = 0;
+
+    // Continuar con el siguiente producto guiado pedido por voz, si quedó en cola
+    if (Array.isArray(userSession.pendingVoiceGuided) && userSession.pendingVoiceGuided.length > 0) {
+        const next = userSession.pendingVoiceGuided.shift();
+        await handleProductOptions(sock, jid, next.product, userSession, ctx);
+        return;
+    }
+    userSession.pendingVoiceGuided = null;
+    userSession.phase = HELADO_POST_ADD;
+    userSession.awaitingField = null;
+
+    const lines = cartItems.map(it => {
+        const saboresText = it.sabores.length ? ` · Sabores: ${it.sabores.join(', ')}` : '';
+        const toppingsText = it.toppings.length ? ` · Toppings: ${it.toppings.join(', ')}` : '';
+        const obsText = it.observaciones ? ` · Obs: ${it.observaciones}` : '';
+        return `✅ ${it.cantidad}x *${it.nombre}*${saboresText}${toppingsText}${obsText} - *${money(it.precio * it.cantidad)}*`;
+    }).join('\n');
+    await say(sock, jid, lines, ctx);
     await sendPostAddOptions(sock, jid, ctx);
 }
 
@@ -853,7 +1218,7 @@ async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSessi
         userSession.lastBotReply = String(ctx.lastSent[jid]).slice(0, 300);
     }
 
-    const guidedPhases = [HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY];
+    const guidedPhases = [HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY, HELADO_UNITS_MODE, HELADO_PER_UNIT_SABORES, HELADO_PER_UNIT_TOPPINGS];
     if (userSession.heladoFlow && guidedPhases.includes(userSession.phase)) {
         const transcript = await heladeriaAi.transcribeAudio(audioBase64, mimeType || 'audio/ogg; codecs=opus');
         if (!transcript) {
@@ -1012,6 +1377,15 @@ function buildClassifierContext(userSession, ctx) {
         } else if (phase === HELADO_QUANTITY) {
             step = 'esperando_cantidad';
             stepDesc = 'El cliente debe indicar cuántas unidades quiere de este producto.';
+        } else if (phase === HELADO_UNITS_MODE) {
+            step = 'esperando_personalizacion';
+            stepDesc = `El cliente pidió ${flow.customization.qty} unidades del mismo producto y debe elegir entre "todas iguales" (1) o "cada una diferente" (2).`;
+        } else if (phase === HELADO_PER_UNIT_SABORES) {
+            step = 'esperando_sabores_por_unidad';
+            stepDesc = `Sabores de la unidad ${flow.customization.currentUnit + 1}/${flow.customization.qty} (obligatorios, ${flow.counts.sabores}).`;
+        } else if (phase === HELADO_PER_UNIT_TOPPINGS) {
+            step = 'esperando_toppings_por_unidad';
+            stepDesc = `Toppings (opcional) de la unidad ${flow.customization.currentUnit + 1}/${flow.customization.qty}.`;
         }
     } else if (phase === HELADO_POST_ADD) {
         step = 'post_add';
@@ -1071,6 +1445,21 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
         case HELADO_QUANTITY:
             await say(sock, jid, `¿Cuántas unidades deseas?\n\n_Ejemplo: "1" o "2"_`, ctx);
             return;
+        case HELADO_UNITS_MODE:
+            await say(sock, jid,
+                `🔄 ¿Quieres que las *${flow.customization.qty} unidades* lleven los *mismos sabores y toppings* o *diferentes* para cada una?\n\n` +
+                `*1)* Todas iguales\n*2)* Cada una diferente\n\n_Escribe el número de la opción._`, ctx);
+            return;
+        case HELADO_PER_UNIT_SABORES:
+            await askPerUnitSabores(sock, jid, userSession, ctx);
+            return;
+        case HELADO_PER_UNIT_TOPPINGS: {
+            const lista = formatToppingsGrouped(ctx) || '_No hay toppings disponibles._';
+            await say(sock, jid,
+                `📍 *Toppings (opcional) unidad ${flow.customization.currentUnit + 1}:*\n\n${lista}\n\n` +
+                `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
+            return;
+        }
         case HELADO_POST_ADD:
             await sendPostAddOptions(sock, jid, ctx);
             return;
@@ -1169,10 +1558,14 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     }
 
     // 3) Aplicar sabores si es el turno (re-jugada con códigos S<n> seguros)
-    if (userSession.heladoFlow && userSession.phase === HELADO_SABORES && result.sabores && result.sabores.length > 0) {
+    if (userSession.heladoFlow && (userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES) && result.sabores && result.sabores.length > 0) {
         const codes = mapNamesToCodes(result.sabores, saboresList, 'S');
         if (codes.length > 0) {
-            await handleSabores(sock, jid, codes.join(' '), userSession, ctx);
+            if (userSession.phase === HELADO_PER_UNIT_SABORES) {
+                await handlePerUnitSabores(sock, jid, codes.join(' '), userSession, ctx);
+            } else {
+                await handleSabores(sock, jid, codes.join(' '), userSession, ctx);
+            }
             acted = true;
         }
     }
@@ -1182,23 +1575,33 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    toppings" explícitamente (en un pedido completo), avanzar con "sin"
     //    para no bloquear la cascada sabores → toppings → cantidad → dirección.
     const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
-    if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY)) {
+    if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
         if (result.toppings && result.toppings.length > 0) {
             const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
             if (codes.length > 0) {
-                await handleToppings(sock, jid, codes.join(' '), userSession, ctx);
+                if (userSession.phase === HELADO_PER_UNIT_TOPPINGS) {
+                    await handlePerUnitToppings(sock, jid, codes.join(' '), userSession, ctx);
+                } else {
+                    await handleToppings(sock, jid, codes.join(' '), userSession, ctx);
+                }
                 acted = true;
             }
-        } else if (sinToppings && userSession.phase === HELADO_TOPPINGS) {
-            await handleToppings(sock, jid, 'sin', userSession, ctx);
+        } else if (sinToppings && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
+            if (userSession.phase === HELADO_PER_UNIT_TOPPINGS) {
+                await handlePerUnitToppings(sock, jid, 'sin', userSession, ctx);
+            } else {
+                await handleToppings(sock, jid, 'sin', userSession, ctx);
+            }
             acted = true;
         }
     }
 
-    // 5) Aplicar cantidad si es el turno (flujo guiado)
+    // 5) Aplicar cantidad si es el turno (flujo guiado). En la cascada de
+    //    pedido completo se asume la MISMA personalización para todas las
+    //    unidades (skipUnitsQuestion), sin interrumpir con la pregunta 1/2.
     const cant = Number(result.cantidad);
     if (userSession.heladoFlow && userSession.phase === HELADO_QUANTITY && cant >= 1 && cant <= 100) {
-        await handleQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx);
+        await handleQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx, true);
         acted = true;
     }
 
@@ -1235,6 +1638,16 @@ function genericGuidedError(sock, jid, userSession, ctx) {
             return say(sock, jid, `❌ No entendí. Escribe los nombres de los toppings (ej: *oreo y arándano*), *"lista"* para ver las opciones o *"no"* para continuar.`, ctx);
         case HELADO_QUANTITY:
             return say(sock, jid, `❌ Ingresa una cantidad válida (entre 1 y 100).`, ctx);
+        case HELADO_UNITS_MODE:
+            return say(sock, jid,
+                `❌ Elige *1)* Todas iguales o *2)* Cada una diferente.`, ctx);
+        case HELADO_PER_UNIT_SABORES: {
+            const flow = userSession.heladoFlow;
+            const n = flow ? flow.counts.sabores : 1;
+            return say(sock, jid, `❌ No entendí eso. Elige *${n}* ${n > 1 ? 'sabores' : 'sabor'} para esta unidad con códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
+        }
+        case HELADO_PER_UNIT_TOPPINGS:
+            return say(sock, jid, `❌ No entendí. Escribe los nombres de los toppings para esta unidad (ej: *oreo y arándano*), *"lista"* para ver las opciones o *"no"* para continuar.`, ctx);
         case HELADO_POST_ADD:
             return sendPostAddOptions(sock, jid, ctx);
         default:
