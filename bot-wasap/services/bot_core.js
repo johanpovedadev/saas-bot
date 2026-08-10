@@ -301,7 +301,14 @@ async function askGemini(ctx, question) {
     const businessName = envConfig.business.name || 'Mundo Helados';
     const businessType = envConfig.business.type || 'heladería';
     const assistantName = envConfig.bot.assistantName || 'MIA';
-    
+
+    // FAQs editables del negocio (pestaña "Preguntas_Frecuentes" del Sheet).
+    // Solo aplica al tenant heladería; para el resto quedan vacías.
+    const editableFaqs = (ctx && Array.isArray(ctx.editableFaqs)) ? ctx.editableFaqs : [];
+    const editableFaqLines = editableFaqs
+        .map(f => `-   **${f.Pregunta || f.pregunta || ''}:** "${f.Respuesta || f.respuesta || ''}"`)
+        .join('\n');
+
     const prompt = `
    Eres "${assistantName}", el asistente experto de ${businessType} "${businessName}". Tu única tarea es analizar la petición de un cliente y devolver SIEMPRE un objeto JSON.
 
@@ -319,6 +326,7 @@ async function askGemini(ctx, question) {
         -   **Métodos de pago:** "Por el momento solo aceptamos pagos en Efectivo o por Transferencia (Nequi) 😊."
         -   **Tiempo del domicilio:** "Ya te confirmaran de acuerdo a tu producto"
         -   **Charla casual (Gracias, Ok, Hola):** Responde amigablemente y sugiere ver el menú. Ejemplo: "¡Con gusto! 😊 ¿Te puedo ayudar con algo más o te gustaría ver el menú?"
+        ${editableFaqLines ? `\n        ## BASE DE CONOCIMIENTO EDITABLE (FAQs del negocio, PRIORITARIAS sobre las anteriores):\n        ${editableFaqLines}` : ''}
         ---
         Petición del cliente: "${question}"
 

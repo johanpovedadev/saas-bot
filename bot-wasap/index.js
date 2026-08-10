@@ -26,6 +26,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { say, loadAllProductsCache } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
 const notificationService = require('./services/notificationService');
+const editableConfig = require('./services/editableConfig');
 
 const { logger } = require('./utils/logger');
 const { execSync } = require('child_process');
@@ -426,6 +427,10 @@ const startBot = async () => {
     } catch (e) {
         console.warn('Warning: no se pudieron cargar productos en cache, continuando de todos modos:', e && e.message ? e.message : e);
     }
+
+    // Config editable del negocio (pestañas "Configuración" y
+    // "Preguntas_Frecuentes" del Sheet). No-op para tenants sin esas hojas.
+    editableConfig.startEditableConfigRefresher(ctx);
 
     if (ctx.geminiKey) {
         try {

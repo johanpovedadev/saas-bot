@@ -80,6 +80,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
+        PYTHONIOENCODING: 'utf-8',
         BUSINESS_KEY: 'heladeria',
         DJANGO_PORT: '8000'
       }

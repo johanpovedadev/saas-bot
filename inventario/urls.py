@@ -11,5 +11,7 @@ urlpatterns = [
     path('consultar_categorias_genericas/', views.consultar_categorias_genericas, name='consultar_categorias_genericas'),
     path('registrar_confirmacion/', views.registrar_confirmacion, name='registrar_confirmacion'),
     path('obtener_todos_los_productos/', views.obtener_todos_los_productos, name='obtener_todos_los_productos'),
+    path('configuracion/', views.consultar_configuracion, name='configuracion'),
+    path('preguntas_frecuentes/', views.consultar_preguntas_frecuentes, name='preguntas_frecuentes'),
     path('health/', views.health_check, name='health_check'),
 ]

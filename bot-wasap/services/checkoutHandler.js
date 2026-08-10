@@ -10,6 +10,7 @@ const { money } = require('../utils/util');
 const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const envConfig = require('../config/env.loader');
+const editableConfig = require('./editableConfig');
 const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
 
 // Resolve admin JIDs robustly (prefers env, then secrets, then config)
@@ -268,7 +269,13 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         if (fs.existsSync(qrPath)) {
             await sendImage(sock, jid, qrPath, 'Escanea el siguiente código QR para realizar el pago. Recuerda enviarnos la imagen del pago por favor.', ctx);
         } else {
-            await say(sock, jid, 'Realiza el pago a Nequi 313 6939663. Recuerda enviarnos el comprobante.', ctx);
+            const nequiNumber = editableConfig.getEditableConfig(ctx, 'Cuenta Nequi/Daviplata', '');
+            const nequiOwner = editableConfig.getEditableConfig(ctx, 'Titular Nequi', '');
+            if (nequiNumber) {
+                await say(sock, jid, `Realiza el pago a Nequi *${nequiNumber}*${nequiOwner ? ` (${nequiOwner})` : ''}. Recuerda enviarnos el comprobante.`, ctx);
+            } else {
+                await say(sock, jid, 'Realiza el pago a Nequi 313 6939663. Recuerda enviarnos el comprobante.', ctx);
+            }
         }
     }
 
@@ -373,7 +380,8 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
                 }
             }
 
-            await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
+            const closeMsg = editableConfig.getEditableConfig(ctx, 'Mensaje de cierre de pedido', '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵');
+            await say(sock, jid, closeMsg, ctx);
 
             resetChat(jid, ctx);
             userSession.phase = PHASE.SELECCION_OPCION;

@@ -30,6 +30,7 @@ const menuHandler = require('../modules/menu.handler');
 const checkoutHandler = require('../checkoutHandler');
 const reservationsHandler = require('../modules/reservations.handler');
 const heladeriaAi = require('../../services/heladeriaAi');
+const editableConfig = require('../../services/editableConfig');
 const { money } = require('../../utils/util');
 
 const FLOW_TYPE = 'ICE_CREAM';
@@ -1232,7 +1233,7 @@ async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSessi
         return;
     }
 
-    const result = await heladeriaAi.interpretAudioIntent(audioBase64, userSession, mimeType || 'audio/ogg; codecs=opus');
+    const result = await heladeriaAi.interpretAudioIntent(audioBase64, userSession, mimeType || 'audio/ogg; codecs=opus', ctx);
     if (!result) {
         await say(sock, jid, '🎙️ No pude entender el contenido del audio. Inténtalo de nuevo o escríbelo como texto. 😊', ctx);
         return;
@@ -1266,13 +1267,14 @@ async function showWelcome(sock, jid, ctx) {
         userSession.errorCount = 0;
     }
 
-    const greeting = `Holiii ☺️
+    const fallbackGreeting = `Holiii ☺️
 
 *1)* 🛍️ Ver nuestro menú y hacer un pedido
 *2)* 📦 Pedidos por encargo (litros, eventos y grandes cantidades)
 *3)* 📍 Dirección y horarios
 
 _Escribe el número de la opción (1, 2 o 3)._`;
+    const greeting = editableConfig.getEditableConfig(ctx, 'Saludo de bienvenida', fallbackGreeting);
     await say(sock, jid, greeting, ctx);
     await sendMenuImages(sock, jid, ctx);
 }
@@ -1403,7 +1405,10 @@ function buildClassifierContext(userSession, ctx) {
         toppings: mapList(lists.toppings),
         saboresElegidos,
         lastMentioned: userSession.lastMentionedProducts || [],
-        lastBotReply: userSession.lastBotReply || ''
+        lastBotReply: userSession.lastBotReply || '',
+        tone: editableConfig.getEditableConfig(ctx, 'Tono del bot', ''),
+        noFiar: editableConfig.getEditableConfig(ctx, 'Regla — no fiamos', ''),
+        faqs: editableConfig.getEditableFaqs(ctx)
     };
 }
 

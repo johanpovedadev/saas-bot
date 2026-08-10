@@ -18,6 +18,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const envConfig = require('../config/env.loader');
+const editableConfig = require('./editableConfig');
 
 const MODELS = {
     intent: 'models/gemini-3.1-flash-lite',
@@ -48,10 +49,31 @@ function isDailyQuotaError(e) {
 }
 
 /**
+ * Sección editable del prompt (pestaña "Configuración" del Sheet): tono del bot,
+ * nombre del negocio y regla de fiado, definidos por la dueña. PRIMA sobre
+ * cualquier regla hardcodeada anterior. Devuelve '' si no hay config editable.
+ */
+function buildEditablePromptSection(ctx) {
+    if (!ctx || !ctx.editableConfig) return '';
+    const cfg = ctx.editableConfig;
+    const get = (k) => (typeof cfg[k] === 'string' && String(cfg[k]).trim()) ? String(cfg[k]).trim() : '';
+    const lines = [];
+    const name = get('Nombre del negocio');
+    const tone = get('Tono del bot');
+    const noFiar = get('Regla — no fiamos');
+    if (name) lines.push(`- Nombre del negocio: ${name}`);
+    if (tone) lines.push(`- Tono del bot: ${tone}`);
+    if (noFiar) lines.push(`- Regla sobre fiado/crédito: ${noFiar}`);
+    if (!lines.length) return '';
+    return `\n\nAJUSTES EDITABLES DEL NEGOCIO (definidos por la dueña — PRIMAN sobre cualquier regla anterior que los contradiga):\n${lines.join('\n')}`;
+}
+
+/**
  * Construye el system prompt con PERSONAJE de heladería, menú real del cache.
  * @param {Object} userSession - Sesión del usuario (con productsCache)
+ * @param {Object} [ctx] - Contexto global (para config editable del negocio)
  */
-function buildSystemPrompt(userSession) {
+function buildSystemPrompt(userSession, ctx) {
     const products = (userSession && userSession.productsCache) || [];
     const dbFields = envConfig.backend.fields;
     const categoryList = [...new Set(products.map(p => p[dbFields.productCategory] || '').filter(Boolean))];
@@ -179,7 +201,8 @@ Reglas:
 2. Los precios están en pesos colombianos (COP).
 3. Si el usuario menciona un producto por nombre incompleto o con error, haz "fuzzy match" contra el menú.
 4. needs_confirmation NO aplica aquí; el flow confirmará al usuario después.
-5. Sé cálido, cercano, con emojis 🍦🍨🧇`;
+5. Sé cálido, cercano, con emojis 🍦🍨🧇` +
+        buildEditablePromptSection(ctx);
 }
 
 /**
@@ -187,7 +210,7 @@ Reglas:
  * (consumo 1 call/audio en lugar de 2: transcribir + interpret).
  * Devuelve { intent, products, transcription, response } o null si falla/transcribe vacío.
  */
-async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/ogg; codecs=opus') {
+async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/ogg; codecs=opus', ctx) {
     if (!hasValidKey()) {
         logger.warn('heladeriaAi: Gemini key no disponible para audio-intent');
         return null;
@@ -197,7 +220,7 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
 
     const lastBotReply = (userSession && userSession.lastBotReply) ? userSession.lastBotReply.slice(0, 300) : '(no hay)';
     const currentPhase = (userSession && userSession.phase) ? userSession.phase : '(ninguna)';
-    const combinedPrompt = buildSystemPrompt(userSession) +
+    const combinedPrompt = buildSystemPrompt(userSession, ctx) +
         `\n\nCONTEXTO DE LA CONVERSACIÓN (lo último que el bot le dijo al usuario): "${lastBotReply}" (fase actual del pedido: ${currentPhase}). El usuario envió un mensaje de voz JUSTO DESPUÉS de eso. Primero transcríbelo EXACTAMENTE al español (incluye cantidades y nombres de productos tal cual) en el campo "transcription". Luego clasifica la intención con las reglas de intents indicadas arriba, teniendo en cuenta que el audio es una RESPUESTA a lo que el bot preguntó. Devuelve EXCLUSIVAMENTE un JSON válido con: intent, products (códigos y nombres exactos del menú si aplica), transcription y response. No agregues texto antes ni después del JSON.`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
@@ -345,8 +368,10 @@ async function interpretOrderText(text, contextInfo = {}) {
     const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
     const lastMentioned = (contextInfo.lastMentioned || []).join(', ') || '(ninguno)';
     const lastBotReply = (contextInfo.lastBotReply || '').trim() || '(no hay)';
+    const tone = (contextInfo.tone || '').trim();
 
-    const systemInstruction = `Eres un clasificador de pedidos de *${businessName}* (heladería). Recibes el mensaje del cliente y el paso actual del flujo. Tu ÚNICA tarea es extraer datos del pedido en JSON. NO respondas al cliente, NO converses, NO hagas preguntas.`;
+    const systemInstruction = `Eres un clasificador de pedidos de *${businessName}* (heladería). Recibes el mensaje del cliente y el paso actual del flujo. Tu ÚNICA tarea es extraer datos del pedido en JSON. NO respondas al cliente, NO converses, NO hagas preguntas.` +
+        (tone ? ` Tono del bot definido por el negocio: ${tone}` : '');
 
     const prompt = `Paso actual: ${step}${stepDesc ? `\nContexto del paso: ${stepDesc}` : ''}
 
@@ -414,21 +439,60 @@ Reglas:
 }
 
 /**
+ * Busca la duda en las FAQs editables del negocio (pestaña
+ * 'Preguntas_Frecuentes'). Si coincide por texto (con o sin acentos), devuelve
+ * la respuesta EXACTA de la tabla ANTES de dejar que Gemini invente. null si no.
+ */
+function matchFaq(doubt, faqs) {
+    if (!Array.isArray(faqs) || faqs.length === 0 || !doubt) return null;
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const target = norm(doubt);
+    if (!target) return null;
+    for (const f of faqs) {
+        const q = norm(f && (f.Pregunta || f.pregunta));
+        if (!q) continue;
+        if (q === target || target.includes(q) || q.includes(target)) {
+            const ans = String((f && (f.Respuesta || f.respuesta)) || '').trim();
+            if (ans) return ans;
+        }
+    }
+    return null;
+}
+
+/**
  * Responde una duda del cliente (campo "duda" del clasificador) en lenguaje
  * natural. Llama a Gemini de nuevo SOLO cuando el clasificador detectó una duda,
  * para no quemar cuota en el flujo feliz.
  */
 async function answerDoubt(doubt, contextInfo = {}) {
-    if (!hasValidKey() || !doubt) return null;
+    if (!doubt) return null;
+
+    // 1) Prioridad: respuesta EXACTA desde las FAQs editables del Sheet.
+    //    No requiere clave de IA (es un lookup local sobre datos del negocio).
+    const faqAnswer = matchFaq(doubt, contextInfo.faqs);
+    if (faqAnswer) {
+        logger.info(`heladeriaAi answerDoubt: respondido desde FAQ editable`);
+        return faqAnswer;
+    }
+
+    if (!hasValidKey()) {
+        logger.warn('heladeriaAi: Gemini key no disponible para responder duda');
+        return null;
+    }
 
     const businessName = envConfig.business.name || 'Mundo Helados';
     const products = (contextInfo.products || []).join('\n') || '(catálogo no disponible)';
     const lastMentioned = (contextInfo.lastMentioned || []).join(', ') || '';
+    const tone = (contextInfo.tone || '').trim();
+    const faqs = Array.isArray(contextInfo.faqs) ? contextInfo.faqs : [];
+    const faqLines = faqs.map(f => `Q: ${f.Pregunta || f.pregunta || ''}\nA: ${f.Respuesta || f.respuesta || ''}`).join('\n');
 
-    const systemInstruction = `Sos la voz real de *${businessName}* (heladería en Riohacha), con calidez costeña genuina y rol de VENDEDORA CERRADORA: respondé la duda de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje y los tratamientos ("nena", "amiga", "migo") para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si la duda es elegir entre productos ya mencionados, prioriza LOS "Productos mencionados recientemente". Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona. Si la duda es por tiempos de entrega, NUNCA des una cifra exacta — respondé "En lo que demoramos en preparar 😋🥰 y el domi en llegar 🛵" y si insiste más de una vez, escalá a un humano. Si pide crédito/fiado, respondé con firmeza "No fiamos 🙏". Si pregunta pero no avanza, empujá suavemente a la decisión ("¿Cuál te provoca? 😋", "¿Te lo armo ya?").`;
+    const systemInstruction = `Sos la voz real de *${businessName}* (heladería en Riohacha), con calidez costeña genuina y rol de VENDEDORA CERRADORA: respondé la duda de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje y los tratamientos ("nena", "amiga", "migo") para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si la duda es elegir entre productos ya mencionados, prioriza LOS "Productos mencionados recientemente". Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona. Si la duda es por tiempos de entrega, NUNCA des una cifra exacta — respondé "En lo que demoramos en preparar 😋🥰 y el domi en llegar 🛵" y si insiste más de una vez, escalá a un humano. Si pide crédito/fiado, respondé con firmeza "No fiamos 🙏". Si pregunta pero no avanza, empujá suavemente a la decisión ("¿Cuál te provoca? 😋", "¿Te lo armo ya?").` +
+        (tone ? ` Tono del bot definido por el negocio: ${tone}` : '');
     const prompt = `Menú (código | nombre | precio | ingredientes/descripción):
 ${products}
 ${lastMentioned ? `\nProductos mencionados recientemente (priorízalos si la duda es elegir/ordenar):\n${lastMentioned}` : ''}
+${faqLines ? `\nPREGUNTAS FRECUENTES DEL NEGOCIO (si la duda coincide con alguna, respondé con la respuesta EXACTA):\n${faqLines}` : ''}
 
 Duda del cliente: "${doubt}"
 

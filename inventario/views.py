@@ -138,6 +138,41 @@ PRODUCTS_WORKSHEET_NAME = _env_or('SHEET_NAME_PRODUCTS', 'Inventario')  # Hoja c
 DELIVERIES_WORKSHEET_NAME = _env_or('SHEET_TAB_DOMICILIOS', 'Domicilios')  # Hoja con pedidos/entregas
 LEADS_WORKSHEET_NAME = 'LEADS'  # Hoja con leads de seguros
 
+# Hoja "Configuración" (Campo/Valor): tono, saludo, cuentas y mensajes editables
+# por el dueño del negocio SIN tocar código. Se leen dinámicamente para que un
+# cambio de .env.<BUSINESS_KEY> se aplique sin reiniciar el backend.
+def get_config_worksheet_name():
+    return _env_or('SHEET_NAME_CONFIG', 'Configuración')
+
+def get_faq_worksheet_name():
+    return _env_or('SHEET_NAME_FAQ', 'Preguntas_Frecuentes')
+
+def _get_config_map():
+    """Devuelve {campo: valor} desde la hoja 'Configuración' del Sheet del tenant."""
+    data = _get_sheet_data(get_spreadsheet_id(), get_config_worksheet_name())
+    if not data:
+        return {}
+    out = {}
+    for row in data:
+        campo = str(row.get('Campo', '') or '').strip()
+        valor = row.get('Valor', '') or ''
+        if campo:
+            out[campo] = valor
+    return out
+
+def _get_faqs():
+    """Devuelve [{Pregunta, Respuesta}] desde la hoja 'Preguntas_Frecuentes' del tenant."""
+    data = _get_sheet_data(get_spreadsheet_id(), get_faq_worksheet_name())
+    if not data:
+        return []
+    faqs = []
+    for row in data:
+        pregunta = str(row.get('Pregunta', '') or '').strip()
+        if not pregunta:
+            continue
+        faqs.append({'Pregunta': pregunta, 'Respuesta': row.get('Respuesta', '') or ''})
+    return faqs
+
 # ---------- Helpers de normalización ----------
 def _strip_accents(s: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFD', (s or '')) if unicodedata.category(c) != 'Mn')
@@ -572,6 +607,46 @@ def obtener_todos_los_productos(request):
     if not inv_raw:
         return JsonResponse({'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
     return JsonResponse({'matches': inv_raw})
+
+@csrf_exempt
+def consultar_configuracion(request):
+    """Config editable del negocio (pestaña 'Configuración' del Sheet).
+    Devuelve {'config': {campo: valor}}. La usa el bot para tono, saludo,
+    cuentas bancarias y mensajes sin reiniciar código."""
+    request_biz_id = request.GET.get('biz_id') or request.GET.get('business_id')
+    env_biz_id = os.environ.get('BIZ_ID') or os.environ.get('BUSINESS_ID')
+    if request_biz_id and env_biz_id and request_biz_id != env_biz_id:
+        return JsonResponse({
+            'error': f'BIZ_ID mismatch: request={request_biz_id}, env={env_biz_id}'
+        }, status=403)
+
+    config_map = _get_config_map()
+    if not config_map:
+        return JsonResponse({
+            'config': {},
+            'error': 'No se encontraron datos en la hoja de Configuración.'
+        }, status=500)
+    return JsonResponse({'config': config_map})
+
+@csrf_exempt
+def consultar_preguntas_frecuentes(request):
+    """Preguntas frecuentes del negocio (pestaña 'Preguntas_Frecuentes').
+    Devuelve {'faqs': [{Pregunta, Respuesta}]}. La usa el bot como base de
+    conocimiento antes de dejar que la IA invente respuestas."""
+    request_biz_id = request.GET.get('biz_id') or request.GET.get('business_id')
+    env_biz_id = os.environ.get('BIZ_ID') or os.environ.get('BUSINESS_ID')
+    if request_biz_id and env_biz_id and request_biz_id != env_biz_id:
+        return JsonResponse({
+            'error': f'BIZ_ID mismatch: request={request_biz_id}, env={env_biz_id}'
+        }, status=403)
+
+    faqs = _get_faqs()
+    if not faqs:
+        return JsonResponse({
+            'faqs': [],
+            'error': 'No se encontraron datos en la hoja de Preguntas Frecuentes.'
+        }, status=500)
+    return JsonResponse({'faqs': faqs})
 
 # ISSUE #33 - Health Check Django
 @require_GET
