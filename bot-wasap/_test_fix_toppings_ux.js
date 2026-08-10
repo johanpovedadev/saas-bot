@@ -252,6 +252,33 @@ async function handle(text, userSession) {
     check(s15.phase === 'HELADO_POST_ADD' && s15.carrito.length === 1 && s15.carrito[0].cantidad === 3,
         `UNITS-noOpts: producto sin sabores/toppings no pregunta (fase: ${s15.phase}, qty=${s15.carrito[0] && s15.carrito[0].cantidad})`);
 
+    // ---- Audio con intención humana que NO cumple el regex → DEBE responder (fix) ----
+    const s16 = {
+        phase: PHASE.SELECCION_OPCION, errorCount: 0, carrito: [],
+        heladoFlow: null, pendingVoiceGuided: null, awaitingField: null,
+        lastMentionedProducts: [], lastBotReply: ''
+    };
+    sent.length = 0;
+    ctx.sessions[JID] = s16;
+    await heladeriaFlow.routeIntent(sock, JID,
+        { intent: 'human', transcription: 'Pero es que lo necesito rápido, muy rápido' },
+        'Pero es que lo necesito rápido, muy rápido', s16, ctx);
+    const r16 = sent.join('\n');
+    check(/asesor humano/.test(r16), 'HUMAN-voice: IA=human sin regex → responde con atención humana');
+    check(s16.phase === PHASE.WAITING_HUMAN, `HUMAN-voice: deja la fase en waiting_human (fase: ${s16.phase})`);
+
+    // El mismo texto por ruta de TEXTO (handleNotUnderstood) sigue re-validando con el
+    // regex → NO entra a human directamente (comportamiento pre-existente, se documenta)
+    const s17 = {
+        phase: PHASE.SELECCION_OPCION, errorCount: 0, carrito: [],
+        heladoFlow: null, pendingVoiceGuided: null, awaitingField: null,
+        lastMentionedProducts: [], lastBotReply: ''
+    };
+    sent.length = 0;
+    ctx.sessions[JID] = s17;
+    await heladeriaFlow.handleNotUnderstood(sock, JID, 'lo necesito rápido, muy rápido', s17, ctx);
+    check(s17.phase !== PHASE.WAITING_HUMAN, `HUMAN-text: por texto NO fuerza human (fase: ${s17.phase})`);
+
     heladeriaAi.interpretOrderText = origInterpret;
     console.log('\n' + (failures === 0 ? '✅ TODO OK' : `❌ ${failures} FALLOS`));
     process.exit(failures === 0 ? 0 : 1);

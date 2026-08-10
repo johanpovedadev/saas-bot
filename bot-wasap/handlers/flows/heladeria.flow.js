@@ -1187,7 +1187,10 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             await menuHandler.sendMainMenu(sock, jid, ctx);
             return;
         case 'human':
-            await handleHumanRequest(sock, jid, text, userSession, ctx);
+            // La IA ya clasificó la intención como humana → NO re-validar con el
+            // regex determinista (isHumanRequest): frases como "lo necesito rápido,
+            // muy rápido" no lo cumplen y dejaban el audio sin respuesta.
+            await handleHumanRequest(sock, jid, text, userSession, ctx, true);
             return;
         case 'chat':
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
@@ -1834,8 +1837,8 @@ function isHumanRequest(text) {
  * Reutilizado por routeIntent (audio), handle (flujo guiado) y
  * handleNotUnderstood (texto en cualquier fase, incluido checkout).
  */
-async function handleHumanRequest(sock, jid, text, userSession, ctx) {
-    if (!isHumanRequest(text)) return false;
+async function handleHumanRequest(sock, jid, text, userSession, ctx, force = false) {
+    if (!force && !isHumanRequest(text)) return false;
     logger.info(`[${jid}] -> Cliente pide atención humana: "${text}"`);
     userSession.phase = PHASE.WAITING_HUMAN;
     const notificationService = require('../../services/notificationService');

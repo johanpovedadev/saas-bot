@@ -670,8 +670,17 @@ function setupSocketHandlers(sock, ctx) {
         if (ctx._processedMsgIds.size > 1000) ctx._processedMsgIds.clear();
     }, 60000);
 
+    // Cola por chat: los mensajes de UN MISMO usuario se procesan en orden
+    // (uno tras otro) para evitar carreras sobre la MISMA sesión cuando llegan
+    // varios mensajes seguidos (ej: texto + audio en ráfaga). Chats distintos
+    // siguen procesándose en paralelo: 20 usuarios a la vez no se bloquean
+    // entre sí.
+    if (!ctx._chatQueues) {
+        ctx._chatQueues = new Map();
+    }
+
     // Handler de mensajes entrantes
-    sock.on('message', async (msg) => {
+    sock.on('message', (msg) => {
         try {
             if (msg.id && ctx._processedMsgIds.has(msg.id._serialized || msg.id.id || msg.id)) {
                 logger.debug(`Mensaje duplicado ignorado: ${msg.id._serialized || msg.id}`);
@@ -681,115 +690,130 @@ function setupSocketHandlers(sock, ctx) {
                 ctx._processedMsgIds.add(msg.id._serialized || msg.id.id || msg.id);
             }
 
-            // Extraer datos del mensaje usando el módulo existente
-            const messageData = messageHandler.extractMessageData(msg);
+            const preliminary = messageHandler.extractMessageData(msg);
+            if (!preliminary.from) return;
 
-            // WhatsApp migró a JIDs @lid (privacidad): los mensajes entrantes de contactos
-            // sin conversación previa llegan como "xxx@lid". Enviar de vuelta al @lid suele
-            // fallar silenciosamente, así que resolvemos el teléfono real (@c.us) con la API
-            // oficial de whatsapp-web.js (getContactLidAndPhone) y respondemos a ese JID.
-            if (messageData.from && messageData.from.endsWith('@lid') && typeof sock.getContactLidAndPhone === 'function') {
-                try {
-                    const lidResults = await sock.getContactLidAndPhone([messageData.from]);
-                    const resolved = Array.isArray(lidResults) ? lidResults[0] : null;
-                    if (resolved && resolved.pn) {
-                        logger.info(`[${messageData.from}] LID resuelto a ${resolved.pn}`);
-                        messageData.from = resolved.pn;
-                    }
-                } catch (lidErr) {
-                    logger.warn(`No se pudo resolver LID ${messageData.from}: ${lidErr.message}`);
-                }
-            }
-
-            // Handle audio/image messages BEFORE text validation (media may have no caption)
-            if (messageData.mediaType === 'audio' || messageData.mediaType === 'image') {
-                // Ignorar media de grupos/estados/boletines y propios (igual que shouldProcessMessage)
-                if (!messageData.from ||
-                    messageData.from.includes('@g.us') ||
-                    messageData.from.includes('status@broadcast') ||
-                    messageData.from.includes('@newsletter') ||
-                    messageData.fromMe) {
-                    logger.debug(`[${messageData.from}] Media de grupo/estado/propio ignorado`);
-                    return;
-                }
-                logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
-                const userSession = initializeUserSession(messageData.from, ctx);
-                const currentFlow = getCurrentFlow();
-                const isAudio = messageData.mediaType === 'audio';
-                // Resolver función de transcripción: método del flow (pescaderia) o financeAi (retro-compat finance)
-                let transcribeFn = currentFlow ? (isAudio ? currentFlow.transcribeAudio : currentFlow.transcribeImage) : null;
-                if (!transcribeFn && process.env.BUSINESS_KEY === 'finance') {
-                    const financeAi = require('../services/financeAi');
-                    transcribeFn = async (data, sess, mime) => {
-                        return isAudio ? financeAi.interpretAudio(data, sess) : financeAi.interpretImage(data, sess, mime || 'image/jpeg');
-                    };
-                }
-                if (transcribeFn || (currentFlow && currentFlow.processAudio)) {
-                    try {
-                        logger.info(`[${messageData.from}] media: descargando...`);
-                        const media = await downloadMediaWithRetry(msg, messageData.from);
-                        logger.info(`[${messageData.from}] media: descarga terminó: ${media ? 'con datos' : 'null'}`);
-                        if (!media || !media.data) {
-                            await sock.sendMessage(messageData.from, 'No pude recibir el archivo. Intenta de nuevo.');
-                            return;
-                        }
-                        if (isAudio) {
-                            await sock.sendMessage(messageData.from, '🎙️ Procesando tu nota de voz...');
-                        } else {
-                            await sock.sendMessage(messageData.from, '🖼️ Leyendo tu imagen...');
-                        }
-                        // Ruta combinada (1 solo call IA): transcribe + clasifica intención en un solo request.
-                        const processMedia = currentFlow && isAudio ? currentFlow.processAudio : null;
-                        if (processMedia) {
-                            await processMedia(sock, messageData.from, media.data, media.mimetype || 'audio/ogg', isAudio, userSession, ctx);
-                            return;
-                        }
-                        logger.info(`[${messageData.from}] media: transcribiendo (mime=${media.mimetype})...`);
-                        const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg');
-                        logger.info(`[${messageData.from}] media: transcripción terminó: ${transcribed ? JSON.stringify(transcribed.substring(0, 60)) : 'null'}`);
-                        if (!transcribed) {
-                            await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');
-                            return;
-                        }
-                        // Enrutar el texto transcrito a través del flow
-                        await currentFlow.handle(sock, messageData.from, transcribed, userSession, ctx);
-                        return;
-                    } catch (mediaErr) {
-                        const errDesc = mediaErr instanceof Error
-                            ? `${mediaErr.name}: ${mediaErr.message}\n${(mediaErr.stack || '').split('\n').slice(0, 8).join('\n')}`
-                            : `[valor: ${typeof mediaErr}] ${JSON.stringify(mediaErr, Object.getOwnPropertyNames(mediaErr || {}))}`;
-                        logger.error(`Error procesando media (detalle):\n${errDesc}`);
-                            try {
-                                await sock.sendMessage(messageData.from, 'Hubo un error procesando tu archivo. Intenta de nuevo.');
-                            } catch (e2) {
-                            logger.error(`Además, falló enviar el aviso de error: ${e2?.message || e2}`);
-                        }
-                        return;
-                    }
-                }
-                // Sin flow con transcripción: ignorar media silenciosamente
-                logger.debug(`[${messageData.from}] Media ignorado (no hay flow con transcripción)`);
-                return;
-            }
-
-            // Validar mensaje (text-only from here)
-            if (!messageHandler.isValidMessage(messageData)) {
-                logger.debug(`Mensaje inválido o vacío, ignorando`);
-                return;
-            }
-
-            // Procesar mensaje (fire-and-forget con manejo de errores)
-            processIncomingMessage(sock, messageData, ctx).catch(err => {
-                logger.error('Error critico al procesar mensaje:', err?.stack || err);
-                messageHandler.handleProcessingError(sock, messageData.from, err, ctx);
-            });
-
+            // Serializar por chat: encadenar detrás del mensaje anterior del
+            // mismo usuario (si lo hay) para preservar orden y estado.
+            const prev = ctx._chatQueues.get(preliminary.from) || Promise.resolve();
+            const next = prev
+                .then(() => processSocketMessage(sock, msg, preliminary, ctx))
+                .catch((err) => {
+                    logger.error('Error critico al procesar mensaje:', err?.stack || err);
+                    messageHandler.handleProcessingError(sock, preliminary.from, err, ctx);
+                });
+            ctx._chatQueues.set(preliminary.from, next);
         } catch (error) {
             logger.error('message handler failed:', error?.message || error);
         }
     });
 
     logger.info('Event handlers de whatsapp-web.js configurados correctamente');
+}
+
+/**
+ * Procesa un mensaje individual dentro de la cola por chat (setupSocketHandlers).
+ * Resuelve LID (@lid -> @c.us), maneja media (audio/imagen) y delega el texto a
+ * processIncomingMessage. Se AWAITED dentro de la cadena por chat, de modo que
+ * cada mensaje del mismo usuario espera al anterior.
+ */
+async function processSocketMessage(sock, msg, messageData, ctx) {
+    // WhatsApp migró a JIDs @lid (privacidad): los mensajes entrantes de contactos
+    // sin conversación previa llegan como "xxx@lid". Enviar de vuelta al @lid suele
+    // fallar silenciosamente, así que resolvemos el teléfono real (@c.us) con la API
+    // oficial de whatsapp-web.js (getContactLidAndPhone) y respondemos a ese JID.
+    if (messageData.from && messageData.from.endsWith('@lid') && typeof sock.getContactLidAndPhone === 'function') {
+        try {
+            const lidResults = await sock.getContactLidAndPhone([messageData.from]);
+            const resolved = Array.isArray(lidResults) ? lidResults[0] : null;
+            if (resolved && resolved.pn) {
+                logger.info(`[${messageData.from}] LID resuelto a ${resolved.pn}`);
+                messageData.from = resolved.pn;
+            }
+        } catch (lidErr) {
+            logger.warn(`No se pudo resolver LID ${messageData.from}: ${lidErr.message}`);
+        }
+    }
+
+    // Handle audio/image messages BEFORE text validation (media may have no caption)
+    if (messageData.mediaType === 'audio' || messageData.mediaType === 'image') {
+        // Ignorar media de grupos/estados/boletines y propios (igual que shouldProcessMessage)
+        if (!messageData.from ||
+            messageData.from.includes('@g.us') ||
+            messageData.from.includes('status@broadcast') ||
+            messageData.from.includes('@newsletter') ||
+            messageData.fromMe) {
+            logger.debug(`[${messageData.from}] Media de grupo/estado/propio ignorado`);
+            return;
+        }
+        logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
+        const userSession = initializeUserSession(messageData.from, ctx);
+        const currentFlow = getCurrentFlow();
+        const isAudio = messageData.mediaType === 'audio';
+        // Resolver función de transcripción: método del flow (pescaderia) o financeAi (retro-compat finance)
+        let transcribeFn = currentFlow ? (isAudio ? currentFlow.transcribeAudio : currentFlow.transcribeImage) : null;
+        if (!transcribeFn && process.env.BUSINESS_KEY === 'finance') {
+            const financeAi = require('../services/financeAi');
+            transcribeFn = async (data, sess, mime) => {
+                return isAudio ? financeAi.interpretAudio(data, sess) : financeAi.interpretImage(data, sess, mime || 'image/jpeg');
+            };
+        }
+        if (transcribeFn || (currentFlow && currentFlow.processAudio)) {
+            try {
+                logger.info(`[${messageData.from}] media: descargando...`);
+                const media = await downloadMediaWithRetry(msg, messageData.from);
+                logger.info(`[${messageData.from}] media: descarga terminó: ${media ? 'con datos' : 'null'}`);
+                if (!media || !media.data) {
+                    await sock.sendMessage(messageData.from, 'No pude recibir el archivo. Intenta de nuevo.');
+                    return;
+                }
+                if (isAudio) {
+                    await sock.sendMessage(messageData.from, '🎙️ Procesando tu nota de voz...');
+                } else {
+                    await sock.sendMessage(messageData.from, '🖼️ Leyendo tu imagen...');
+                }
+                // Ruta combinada (1 solo call IA): transcribe + clasifica intención en un solo request.
+                const processMedia = currentFlow && isAudio ? currentFlow.processAudio : null;
+                if (processMedia) {
+                    await processMedia(sock, messageData.from, media.data, media.mimetype || 'audio/ogg', isAudio, userSession, ctx);
+                    return;
+                }
+                logger.info(`[${messageData.from}] media: transcribiendo (mime=${media.mimetype})...`);
+                const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg');
+                logger.info(`[${messageData.from}] media: transcripción terminó: ${transcribed ? JSON.stringify(transcribed.substring(0, 60)) : 'null'}`);
+                if (!transcribed) {
+                    await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');
+                    return;
+                }
+                // Enrutar el texto transcrito a través del flow
+                await currentFlow.handle(sock, messageData.from, transcribed, userSession, ctx);
+                return;
+            } catch (mediaErr) {
+                const errDesc = mediaErr instanceof Error
+                    ? `${mediaErr.name}: ${mediaErr.message}\n${(mediaErr.stack || '').split('\n').slice(0, 8).join('\n')}`
+                    : `[valor: ${typeof mediaErr}] ${JSON.stringify(mediaErr, Object.getOwnPropertyNames(mediaErr || {}))}`;
+                logger.error(`Error procesando media (detalle):\n${errDesc}`);
+                try {
+                    await sock.sendMessage(messageData.from, 'Hubo un error procesando tu archivo. Intenta de nuevo.');
+                } catch (e2) {
+                    logger.error(`Además, falló enviar el aviso de error: ${e2?.message || e2}`);
+                }
+                return;
+            }
+        }
+        // Sin flow con transcripción: ignorar media silenciosamente
+        logger.debug(`[${messageData.from}] Media ignorado (no hay flow con transcripción)`);
+        return;
+    }
+
+    // Validar mensaje (text-only from here)
+    if (!messageHandler.isValidMessage(messageData)) {
+        logger.debug(`Mensaje inválido o vacío, ignorando`);
+        return;
+    }
+
+    // Procesar mensaje (await: la cola por chat serializa por usuario)
+    await processIncomingMessage(sock, messageData, ctx);
 }
 
 // ===================================
