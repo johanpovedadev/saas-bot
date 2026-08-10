@@ -1504,10 +1504,18 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     const result = await heladeriaAi.interpretOrderText(text, contextInfo);
     if (!result) return false;
 
-    // 1) Duda → responder con Gemini y re-mostrar el paso SIN perder progreso
+    // 1) Duda → responder (FAQ editable o Gemini) y re-mostrar el paso SIN
+    //    perder progreso. Si la IA NO supo responder ("no tengo el dato" o
+    //    falló), escalar al admin para que continúe la conversación.
     if (result.duda) {
         const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
-        const reply = answer || '¡Claro! ¿En qué más te ayudo?';
+        if (!answer || heladeriaAi.isUnknownAnswer(answer)) {
+            logger.info(`[${jid}] -> El bot no supo responder "${result.duda}", escalando al admin`);
+            userSession.lastBotReply = '';
+            await handleHumanRequest(sock, jid, result.duda, userSession, ctx, true);
+            return true;
+        }
+        const reply = answer;
         userSession.lastMentionedProducts = extractMentionedProducts(reply, ctx);
         userSession.lastBotReply = reply.slice(0, 300);
         await say(sock, jid, `😊 ${reply}`, ctx);

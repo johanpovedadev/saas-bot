@@ -439,6 +439,23 @@ Reglas:
 }
 
 /**
+ * Detecta si la respuesta de la IA es un "no sé / no tengo el dato" (el bot
+ * no supo responder). En ese caso el flujo escala al admin para que continúe.
+ * Evita falsos positivos con "no se puede", "no se hace", etc.
+ */
+function isUnknownAnswer(text) {
+    if (!text) return false;
+    const t = String(text).toLowerCase();
+    return (
+        /(^|\b)no\s+(tengo|tenemos|conozco|manejo|dispongo|cuento|traigo|encontr[eé]|encuentro)\b/.test(t) ||
+        /no\s+tenemos?\s+(esa|el|la|ese|ning[uú]n)\s+(informaci[oó]n|dato|precio|producto|registro|idea)/.test(t) ||
+        /no\s+estoy\s+(muy\s+)?(segur|segura|clara)\b/.test(t) ||
+        /\bno\s+(lo\s+)?s[é]/.test(t) ||
+        /conectarl?[oa]\w*\s+(con\s+)?(una\s+persona|alguien)/.test(t)
+    );
+}
+
+/**
  * Busca la duda en las FAQs editables del negocio (pestaña
  * 'Preguntas_Frecuentes'). Si coincide por texto (con o sin acentos), devuelve
  * la respuesta EXACTA de la tabla ANTES de dejar que Gemini invente. null si no.
@@ -536,4 +553,4 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     }
 }
 
-module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage };
+module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage, isUnknownAnswer };
