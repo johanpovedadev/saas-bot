@@ -146,6 +146,45 @@ async function handle(text, userSession) {
         `TOPP-qty: "cereal flips" resuelve cereal flips (${tops9.join(', ')})`);
     check(s9.phase === 'HELADO_QUANTITY', `TOPP-qty: "cereal flips" se queda en cantidad (fase: ${s9.phase})`);
 
+    // ---- "2" desde HELADO_POST_ADD → ir a pagar (caso del chat real) ----
+    const s10 = {
+        phase: 'HELADO_POST_ADD', errorCount: 0, heladoFlow: null, currentProduct: null,
+        awaitingField: null, pendingVoiceGuided: null, lastMentionedProducts: [], lastBotReply: '',
+        carrito: [
+            { codigo: 'X1', nombre: 'Copa Osito', precio: 12000, cantidad: 1, sabores: ['Lulo Maracuya'], toppings: [], observaciones: '' },
+            { codigo: 'X2', nombre: 'Limonada', precio: 4000, cantidad: 2, sabores: [], toppings: [], observaciones: '' }
+        ],
+        order: { items: [] }
+    };
+    const r10 = await handle('2', s10);
+    check(/Resumen de tu pedido/.test(r10), 'PAGAR-2: muestra el resumen del pedido');
+    check(/Copa Osito/.test(r10) && /Limonada/.test(r10),
+        'PAGAR-2: el resumen muestra TODOS los productos (Copa Osito + Limonada)');
+    check(/Total/.test(r10), 'PAGAR-2: muestra el total');
+    check(Array.isArray(s10.order.items) && s10.order.items.length === 2,
+        `PAGAR-2: carrito sincronizado a order.items (${(s10.order.items || []).length})`);
+    check(s10.phase === PHASE.CONFIRM_ORDER, `PAGAR-2: llega a confirmar pedido (fase: ${s10.phase})`);
+    check(!/elige una opción del menú|Ver menú principal/.test(r10),
+        'PAGAR-2: NO es botado al menú principal');
+
+    const s10b = {
+        phase: 'HELADO_POST_ADD', errorCount: 0, heladoFlow: null, currentProduct: null,
+        awaitingField: null, pendingVoiceGuided: null, lastMentionedProducts: [], lastBotReply: '',
+        carrito: [{ codigo: 'X1', nombre: 'Copa Osito', precio: 12000, cantidad: 1, sabores: [], toppings: [], observaciones: '' }],
+        order: { items: [] }
+    };
+    const r10b = await handle('pagar', s10b);
+    check(/Resumen de tu pedido/.test(r10b) && s10b.phase === PHASE.CONFIRM_ORDER,
+        `PAGAR-palabra: "pagar" también lleva al resumen (fase: ${s10b.phase})`);
+
+    // ---- Topping en PLURAL ("arándanos" → "perlas e. arandano") ----
+    const s11 = makeToppingsSession();
+    const r11 = await handle('arándanos', s11);
+    const tops11 = (s11.heladoFlow.toppingsSeleccionados || []).map(t => t.NombreProducto || t);
+    check(tops11.length === 1 && /perlas e\. arandano/i.test(tops11[0]),
+        `TOPP-plural: "arándanos" resuelve perlas e. arandano (${tops11.join(', ')})`);
+    check(s11.phase === 'HELADO_QUANTITY', `TOPP-plural: avanza a cantidad (fase: ${s11.phase})`);
+
     heladeriaAi.interpretOrderText = origInterpret;
     console.log('\n' + (failures === 0 ? '✅ TODO OK' : `❌ ${failures} FALLOS`));
     process.exit(failures === 0 ? 0 : 1);

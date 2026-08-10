@@ -305,15 +305,15 @@ async function handle(sock, jid, text, userSession, ctx) {
 
 /**
  * Opciones post-compra del flujo guiado (fase HELADO_POST_ADD):
- *  - "seguir comprando" (1 / 2 / seguir / más) → vuelve al menú principal SIN
+ *  - "seguir comprando" (1 / seguir / más) → vuelve al menú principal SIN
  *    vaciar el carrito y SIN avanzar a la dirección de entrega.
- *  - "pagar / carrito / checkout" → sincroniza session.carrito a order.items
- *    y muestra el resumen del pedido (handleCartSummary).
+ *  - "pagar" (2 / pagar / carrito / checkout) → sincroniza session.carrito a
+ *    order.items y muestra el resumen del pedido (handleCartSummary).
  *  - "menú principal" (3) → vacía el carrito y vuelve al menú.
  *  - Nombre de otro producto → agrega directamente otro ítem.
  */
 async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
-    if (/^(1|2|seguir|seguir comprando|continuar|mas|más|agregar|otro|otra)$/.test(normalized)) {
+    if (/^(1|seguir|seguir comprando|continuar|mas|más|agregar|otro|otra)$/.test(normalized)) {
         logger.info(`[${jid}] -> HELADO_POST_ADD: seguir comprando ("${text}")`);
         userSession.pendingVoiceGuided = null;
         resetGuidedState(userSession);
@@ -324,7 +324,7 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
 
-    if (/^(pagar|carrito|checkout|confirmar|ir a pagar|finalizar)$/.test(normalized)) {
+    if (/^(2|pagar|carrito|checkout|confirmar|ir a pagar|finalizar)$/.test(normalized)) {
         logger.info(`[${jid}] -> HELADO_POST_ADD: ir a pagar ("${text}")`);
         userSession.pendingVoiceGuided = null;
         resetGuidedState(userSession);
@@ -450,19 +450,25 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
  *  1) nombre exacto,
  *  2) el nombre MÁS CORTO que contiene a `target` ("wafer" → "galletas wafer",
  *     no "chocolatina wafer jet"),
- *  3) si `target` contiene el nombre completo (variante corta).
+ *  3) variante en singular ("arándanos" → "perlas e. arandano"),
+ *  4) si `target` contiene el nombre completo (variante corta).
  * Para tokens muy cortos (< 3) solo se usan coincidencias exactas o
  * "target incluye el nombre", evitando falsos positivos como "y" → "chantilly".
  */
 function findBestTopping(target, list, dbFields) {
     const norm = (p) => stripAccents(String(p[dbFields.productName] || '').toLowerCase());
-    const exact = list.find(p => norm(p) === target);
-    if (exact) return exact;
-    if (target.length < 3) return list.find(p => target.includes(norm(p))) || null;
-    const candidates = list
-        .filter(p => norm(p).includes(target))
-        .sort((a, b) => norm(a).length - norm(b).length);
-    if (candidates.length) return candidates[0];
+    const forms = [target];
+    if (target.endsWith('es') && target.length > 4) forms.push(target.slice(0, -2));
+    if (target.endsWith('s') && target.length > 3 && target.slice(0, -1) !== target) forms.push(target.slice(0, -1));
+    for (const form of forms) {
+        const exact = list.find(p => norm(p) === form);
+        if (exact) return exact;
+        if (form.length < 3) continue;
+        const candidates = list
+            .filter(p => norm(p).includes(form))
+            .sort((a, b) => norm(a).length - norm(b).length);
+        if (candidates.length) return candidates[0];
+    }
     return list.find(p => target.includes(norm(p))) || null;
 }
 
