@@ -122,9 +122,45 @@ function getTelegramLabel(userSession, jid) {
     return String(jid).split('@')[0];
 }
 
+async function sendTelegramViaJarvis(chatId, text) {
+    const token = process.env.HERMES_BOT_TOKEN;
+    if (!token) return false;
+    try {
+        // Escape de caracteres Markdown v1 que rompen el parseo cuando vienen de
+        // valores dinámicos (JIDs/IDs con "_", por ejemplo). Los templates solo
+        // usan * para negrita balanceada, así que escapamos el resto.
+        const safeText = String(text).replace(/[_`[]/g, (c) => (c === '[' ? '\\[' : `\\${c}`));
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: String(chatId),
+                text: safeText,
+                parse_mode: 'Markdown'
+            })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+            logger.error(`[sendTelegramViaJarvis] API: ${data.description}`);
+            return false;
+        }
+        return true;
+    } catch (e) {
+        logger.error(`[sendTelegramViaJarvis] ${e.message}`);
+        return false;
+    }
+}
+
 async function notifyAdmin(sock, ctx, text) {
     for (const adminJid of getAdminJids()) {
         try {
+            // Admins de Telegram: notificar desde @JarvisLeonAI_bot (HERMES_BOT_TOKEN)
+            // vía HTTP para que el mensaje llegue en el chat de Jarvis y no desde Leo.
+            if (String(adminJid).endsWith('@telegram')) {
+                const chatId = String(adminJid).split('@')[0];
+                const sent = await sendTelegramViaJarvis(chatId, text);
+                if (sent) continue;
+            }
             await say(sock, adminJid, text, ctx);
         } catch (e) {
             logger.error(`[notifyAdmin] Error notificando a ${adminJid}: ${e.message}`);
