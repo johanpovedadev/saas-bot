@@ -145,6 +145,8 @@ class TelegramAdapter extends EventEmitter {
             hasMedia: !!mediaInfo,
             chatId: tgMsg.chat && tgMsg.chat.id,
             timestamp: tgMsg.date,
+            username: tgMsg.from && tgMsg.from.username ? `@${tgMsg.from.username}` : null,
+            firstName: tgMsg.from && tgMsg.from.first_name ? tgMsg.from.first_name : null,
             _tg: tgMsg
         };
 

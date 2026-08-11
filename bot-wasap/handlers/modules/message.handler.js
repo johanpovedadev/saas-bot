@@ -64,7 +64,12 @@ function extractMessageData(msg) {
         // whatsapp-web.js expone fromMe directamente en el mensaje
         const fromMe = msg.fromMe === true || key.fromMe === true;
 
-        return { from, text, key, fromMe, mediaType, _rawMsg: msg };
+        // Datos opcionales del transporte (Telegram expone username/first_name);
+        // WhatsApp no los trae (undefined -> null). Solo informativos.
+        const username = msg.username || null;
+        const firstName = msg.firstName || null;
+
+        return { from, text, key, fromMe, mediaType, username, firstName, _rawMsg: msg };
     } catch (error) {
         logger.error('Error extracting message data:', error.message);
         return { from: null, text: null, key: {}, fromMe: false, mediaType: null, _rawMsg: null };

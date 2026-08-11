@@ -214,6 +214,9 @@ async function processIncomingMessage(sock, messageData, ctx) {
             return;
         }        // 3. Inicializar sesión del usuario
         const userSession = initializeUserSession(jid, ctx);
+        // Datos del transporte (Telegram) para el flow de finanzas (registro de usuarios)
+        if (messageData.username) userSession.telegramUsername = messageData.username;
+        if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
         const currentFlow = getCurrentFlow();
@@ -748,7 +751,28 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
         }
         logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
         const userSession = initializeUserSession(messageData.from, ctx);
+        if (messageData.username) userSession.telegramUsername = messageData.username;
+        if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
         const currentFlow = getCurrentFlow();
+
+        // Gate premium (capability opcional del flow): bloquear la transcripción
+        // con IA (audio/imagen) de usuarios fuera de la prueba sin tocar la IA.
+        // Solo aplica si el flow del tenant expone isPremiumBlocked; el resto de
+        // tenants siguen igual.
+        if (currentFlow && typeof currentFlow.isPremiumBlocked === 'function' && currentFlow.isPremiumBlocked(messageData.from)) {
+            logger.info(`[${messageData.from}] 📎 Media bloqueado por gate premium`);
+            try {
+                if (typeof currentFlow.onPremiumBlocked === 'function') {
+                    await currentFlow.onPremiumBlocked(sock, messageData.from, ctx);
+                } else {
+                    await sock.sendMessage(messageData.from, '🔒 Esta función requiere Premium. Escribí "Actualizar a Pro" para ver cómo activarlo. 🦁');
+                }
+            } catch (gateErr) {
+                logger.error(`[${messageData.from}] Error en gate premium de media: ${gateErr.message}`);
+            }
+            return;
+        }
+
         const isAudio = messageData.mediaType === 'audio';
         // Resolver función de transcripción: método del flow (pescaderia) o financeAi (retro-compat finance)
         let transcribeFn = currentFlow ? (isAudio ? currentFlow.transcribeAudio : currentFlow.transcribeImage) : null;

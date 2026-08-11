@@ -8,6 +8,7 @@ const financeStore = require('../../services/financeStore');
 const financeScore = require('../../services/financeScore');
 const { generateCard, getNewMilestones, getGoalType } = require('../../services/financeCard');
 const financeReferral = require('../../services/financeReferral');
+const financeAdmin = require('../../services/financeAdmin');
 
 const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
 
@@ -60,6 +61,246 @@ function daysSince(start) {
     return Math.floor((Date.now() - start) / 86400000);
 }
 
+// ============================================================================
+// CONTROL DE USUARIOS, PREMIUM Y ADMIN (multi-transporte)
+// ============================================================================
+
+function getAdminJids() {
+    const jids = [];
+    const cfg = (module.exports.config && module.exports.config.admin && module.exports.config.admin.jids) || [];
+    for (const j of cfg) {
+        if (j && !jids.includes(j)) jids.push(j);
+    }
+    const tg = process.env.ADMIN_TELEGRAM_ID;
+    if (tg && String(tg).trim()) {
+        const tgId = String(tg).trim().replace(/[^0-9]/g, '');
+        if (tgId) {
+            const tgJid = `${tgId}@telegram`;
+            if (!jids.includes(tgJid)) jids.push(tgJid);
+        }
+    }
+    return jids;
+}
+
+function isAdminJid(jid) {
+    return !!jid && getAdminJids().includes(jid);
+}
+
+function isFinPremium(fin) {
+    return !!(fin && (fin.isPremium || (fin.premiumUntil && Date.now() < fin.premiumUntil)));
+}
+
+function isTrialExpired(fin) {
+    return !!(fin && fin.trialStart && daysSince(fin.trialStart) >= 30);
+}
+
+/**
+ * Normaliza el target de un comando admin: acepta "3138777115", "8846262191",
+ * "xxx@telegram", "xxx@c.us" o "xxx@s.whatsapp.net". El sufijo por defecto
+ * coincide con el transporte del admin que ejecuta el comando.
+ */
+function toCanonicalJid(raw, senderJid) {
+    if (!raw) return null;
+    let s = String(raw).trim();
+    if (!s) return null;
+    if (s.includes('@')) {
+        if (s.endsWith('@telegram') || s.endsWith('@c.us') || s.endsWith('@s.whatsapp.net')) {
+            return s.replace(/@s\.whatsapp\.net$/, '@c.us');
+        }
+        s = s.split('@')[0];
+    }
+    const digits = s.replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    const suffix = String(senderJid || '').endsWith('@telegram') ? '@telegram' : '@c.us';
+    return `${digits}${suffix}`;
+}
+
+function getTelegramLabel(userSession, jid) {
+    if (userSession && (userSession.telegramUsername || userSession.telegramFirstName)) {
+        return userSession.telegramUsername || userSession.telegramFirstName;
+    }
+    return String(jid).split('@')[0];
+}
+
+async function notifyAdmin(sock, ctx, text) {
+    for (const adminJid of getAdminJids()) {
+        try {
+            await say(sock, adminJid, text, ctx);
+        } catch (e) {
+            logger.error(`[notifyAdmin] Error notificando a ${adminJid}: ${e.message}`);
+        }
+    }
+}
+
+async function notifyNewUser(sock, jid, userSession, ctx) {
+    const label = getTelegramLabel(userSession, jid);
+    await notifyAdmin(sock, ctx,
+        `🆕 *Nuevo usuario en Leo Financiero* 🦁\n\n` +
+        `👤 Usuario: ${label}\n` +
+        `🆔 ID: ${String(jid).split('@')[0]}\n` +
+        `🕐 Fecha: ${new Date().toLocaleString('es-CO')}\n\n` +
+        `Para activarle Premium: /activar_premium ${String(jid).split('@')[0]} 30`);
+}
+
+async function showPremiumRequired(sock, jid, ctx) {
+    const payment = financeAdmin.getPaymentInfo();
+    await say(sock, jid,
+        `🦁 *Tu prueba gratuita de 30 días terminó.*\n\n` +
+        `Para seguir registrando con IA y desbloquear todo Leo, actualizá a *Premium*:\n\n` +
+        `💰 $${payment.price.toLocaleString('es-CO')} COP/mes\n\n` +
+        `📲 *Cómo pagar:*\n` +
+        `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
+        (payment.bancolombia ? `2️⃣ Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : `2️⃣ Bancolombia: (configurar)\n`) +
+        `3️⃣ Enviá la *captura del pago* por este chat.\n` +
+        `4️⃣ Te activamos Premium en minutos. 🦁\n\n` +
+        `_Escribí "Actualizar a Pro" cuando hayas pagado._`, ctx);
+}
+
+/**
+ * Comandos de administrador (solo el admin del tenant):
+ *   /activar_premium <user_id> <días>   -> activa/ extiende premium
+ *   /stats                              -> total de usuarios, nuevos hoy, premium activos
+ */
+async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
+    if (!isAdminJid(jid)) return false;
+    const t = (text || '').trim();
+
+    const actMatch = t.match(/^\/?(activar_premium|premium)\s+(\S+)\s+(\d+)\s*$/i);
+    if (actMatch) {
+        const targetJid = toCanonicalJid(actMatch[2], jid);
+        const days = parseInt(actMatch[3], 10);
+        if (!targetJid || !(days > 0)) {
+            await say(sock, jid, `❌ Uso: /activar_premium <user_id> <días>\nEj: /activar_premium 8846262191 30`, ctx);
+            return true;
+        }
+        const res = financeAdmin.activatePremium(targetJid, days);
+        if (res.success) {
+            // Sincronizar premium en la sesión en memoria y en financeStore
+            const targetSession = ctx?.sessions?.[targetJid];
+            if (targetSession?.finance) {
+                targetSession.finance.isPremium = true;
+                targetSession.finance.premiumUntil = res.premiumUntil;
+                financeStore.saveFinance(targetJid, targetSession.finance);
+            } else {
+                const persisted = financeStore.loadFinance(targetJid);
+                if (persisted) {
+                    persisted.isPremium = true;
+                    persisted.premiumUntil = res.premiumUntil;
+                    financeStore.saveFinance(targetJid, persisted);
+                }
+            }
+            const untilLabel = new Date(res.premiumUntil).toLocaleDateString('es-CO');
+            await say(sock, jid, `✅ Premium activado para *${String(targetJid).split('@')[0]}* por ${days} días.\n📅 Vence: ${untilLabel}`, ctx);
+            if (ctx?.sessions?.[targetJid]) {
+                try {
+                    await say(sock, targetJid,
+                        `🎉 *¡Premium activado!* 🦁\n\n` +
+                        `Ya tenés Leo completo hasta el *${untilLabel}*. ¡Bienvenido al nivel Pro! 🔥`,
+                        ctx);
+                } catch (e) {
+                    logger.error(`[admin] Error avisando al usuario premium ${targetJid}: ${e.message}`);
+                }
+            }
+        } else {
+            await say(sock, jid, `❌ ${res.message || 'No se pudo activar premium.'}`, ctx);
+        }
+        return true;
+    }
+
+    if (/^\/?stats$/i.test(t)) {
+        const s = financeAdmin.getStats();
+        await say(sock, jid,
+            `📊 *Estadísticas Leo Financiero*\n\n` +
+            `👥 Usuarios registrados: *${s.total}*\n` +
+            `🆕 Nuevos hoy: *${s.newToday}*\n` +
+            `👑 Premium activos: *${s.premiumActive}*`,
+            ctx);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Solicitud de upgrade (comando/ botón visible en la versión gratuita):
+ * muestra precio + datos de pago y notifica al admin que espera captura.
+ */
+async function handleUpgradeRequest(sock, jid, text, userSession, ctx, fin) {
+    const t = (text || '').toLowerCase().trim();
+    const direct =
+        /^(pro|premium|upgrade|actualizar|actualizame|suscripcion|suscribirme|\/pro|\/premium|\/upgrade|\/pago)$/i.test(t) ||
+        /^(actualizar a pro|actualizar a premium|pasar a pro|pasar a premium|actualizame a pro|actualizame a premium)$/i.test(t) ||
+        /quiero (ser|actualizar a|pasar a) (premium|pro)/i.test(t);
+    if (!direct) return false;
+
+    if (isFinPremium(fin)) {
+        const until = fin.premiumUntil
+            ? `hasta el *${new Date(fin.premiumUntil).toLocaleDateString('es-CO')}*`
+            : 'activo';
+        await say(sock, jid, `🦁 Ya sos *Premium* (${until}). ¡Gracias por acompañarme! 🔥`, ctx);
+        return true;
+    }
+
+    const payment = financeAdmin.getPaymentInfo();
+    await say(sock, jid,
+        `🦁 *Premium Leo — $${payment.price.toLocaleString('es-CO')} COP/mes*\n\n` +
+        `Con Premium desbloqueás:\n` +
+        `• ✨ IA sin límites: registros, fotos de facturas y notas de voz\n` +
+        `• 📊 Score de salud financiera\n` +
+        `• 🎯 Metas y rachas avanzadas\n\n` +
+        `📲 *Pasá tu pago a:*\n` +
+        `🟢 Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
+        (payment.bancolombia ? `🏦 Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : '') +
+        `\nLuego *enviá la captura del pago* por este chat y te activamos Premium en minutos. 🦁`, ctx);
+
+    const label = getTelegramLabel(userSession, jid);
+    await notifyAdmin(sock, ctx,
+        `💰 *Solicitud de upgrade — Leo*\n\n` +
+        `👤 Usuario: ${label}\n` +
+        `🆔 ID: ${String(jid).split('@')[0]}\n` +
+        `📛 Nombre: ${fin.name || '—'}\n\n` +
+        `Esperando captura de pago. Cuando llegue, activá con:\n` +
+        `/activar_premium ${String(jid).split('@')[0]} 30`);
+    return true;
+}
+
+/**
+ * Sincroniza el estado premium desde la tabla admin (fuente de verdad) hacia
+ * el objeto finance en memoria + persistencia, para que el gate y la IA
+ * siempre vean el mismo estado.
+ */
+function syncPremiumFromAdmin(jid, fin) {
+    if (!fin) return;
+    if (financeAdmin.isPremium(jid) && !isFinPremium(fin)) {
+        const adminUser = financeAdmin.getUser(jid);
+        fin.isPremium = true;
+        if (adminUser && adminUser.premium_until) fin.premiumUntil = adminUser.premium_until;
+        financeStore.saveFinance(jid, fin);
+    }
+}
+
+/**
+ * Gate de premium para el bloqueo de media en handlers/handler.js (lee la DB,
+ * NO depende de la sesión en memoria). Devuelve true si el usuario NO debe
+ * consumir funciones de IA (audio/imagen) por estar fuera de la prueba.
+ */
+function isPremiumBlocked(jid) {
+    try {
+        const persisted = financeStore.loadFinance(jid);
+        if (!persisted) return false;
+        if (isFinPremium(persisted)) return false;
+        if (financeAdmin.isPremium(jid)) return false;
+        return isTrialExpired(persisted);
+    } catch (e) {
+        logger.error(`[isPremiumBlocked] ${jid}: ${e.message}`);
+        return false;
+    }
+}
+
+async function onPremiumBlocked(sock, jid, ctx) {
+    await showPremiumRequired(sock, jid, ctx);
+}
+
 async function handle(sock, jid, text, userSession, ctx) {
     // Load persisted data from SQLite if available
     const persisted = financeStore.loadFinance(jid);
@@ -80,6 +321,38 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (!t) return;
 
     logger.info(`[${jid}] Finance | Msg: "${t.substring(0, 80)}" | Phase: ${userSession.phase}`);
+
+    // Registro del usuario (INSERT OR IGNORE) + notificación al admin en el primer contacto
+    const reg = financeAdmin.registerUser(jid, getTelegramLabel(userSession, jid));
+    if (reg.registered) {
+        await notifyNewUser(sock, jid, userSession, ctx);
+    }
+    syncPremiumFromAdmin(jid, fin);
+
+    // Comandos de navegación
+    if (t === '/start' || t === '/menu' || t === '/inicio') {
+        return await showWelcome(sock, jid, ctx);
+    }
+    if (t === '/help') {
+        return await say(sock, jid,
+            `😊 Podés decirme cosas como:\n\n` +
+            `💸 *"Compré 18 mil en almuerzo"*\n` +
+            `💰 *"Recibí 2 millones de sueldo"*\n` +
+            `📊 *"¿Cuánto tengo?"*\n` +
+            `📷 *[foto de factura]*\n` +
+            `💎 *"Actualizar a Pro"* para ver el plan Premium\n\n` +
+            `¿Qué necesitás? 🦁`, ctx);
+    }
+
+    // Comandos de administrador (solo el admin del tenant)
+    if (await handleAdminCommand(sock, jid, t, userSession, ctx, fin)) {
+        return;
+    }
+
+    // Solicitud de upgrade (visible en versión gratuita)
+    if (await handleUpgradeRequest(sock, jid, t, userSession, ctx, fin)) {
+        return;
+    }
 
     // Pending confirmation
     if (fin.pendingConfirm) {
@@ -114,6 +387,14 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Onboarding
     if (!fin.name || userSession.phase === PHASE.FIN_ONBOARDING) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Gate premium: bloquear la conversación IA (texto) cuando la prueba
+    // terminó y el usuario no es premium. El gate de audio/imagen se hace en
+    // handler.js vía isPremiumBlocked/onPremiumBlocked.
+    if (userSession.phase === PHASE.FIN_MAIN && isTrialExpired(fin) && !isFinPremium(fin)) {
+        await showPremiumRequired(sock, jid, ctx);
+        return;
     }
 
     // Conversational AI
@@ -336,9 +617,12 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'query':
         case 'chat':
         case 'help':
-        case 'upgrade':
         case 'goal_query':
             await say(sock, jid, result.response, ctx);
+            break;
+
+        case 'upgrade':
+            await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
             break;
 
         case 'health_score':
@@ -529,6 +813,12 @@ async function showWelcome(sock, jid, ctx) {
         if (persisted) userSession.finance = persisted;
     }
     const fin = userSession.finance;
+    // Registro del usuario (primer contacto vía /start o saludo) + sync premium
+    const reg = financeAdmin.registerUser(jid, getTelegramLabel(userSession, jid));
+    if (reg.registered) {
+        await notifyNewUser(sock, jid, userSession, ctx);
+    }
+    syncPremiumFromAdmin(jid, fin);
     if (fin?.name) {
         // Check-in every 48h
         const lastCheck = fin.lastCheckinDate;
@@ -575,8 +865,17 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
         if (persisted) userSession.finance = persisted;
     }
     const fin = initFinance(userSession);
+    const reg = financeAdmin.registerUser(jid, getTelegramLabel(userSession, jid));
+    if (reg.registered) {
+        await notifyNewUser(sock, jid, userSession, ctx);
+    }
+    syncPremiumFromAdmin(jid, fin);
     if (fin.name) {
         userSession.phase = PHASE.FIN_MAIN;
+        if (isTrialExpired(fin) && !isFinPremium(fin)) {
+            await showPremiumRequired(sock, jid, ctx);
+            return;
+        }
         await handleConversation(sock, jid, text, userSession, ctx, fin);
     } else {
         userSession.phase = PHASE.FIN_ONBOARDING;
@@ -730,6 +1029,8 @@ module.exports = {
     showWelcome,
     generateNightReport,
     startNightReporter,
+    isPremiumBlocked,
+    onPremiumBlocked,
     getInitialPhase: () => PHASE.FIN_ONBOARDING,
     isFlowPhase: (phase) => typeof phase === 'string' && phase.toLowerCase().startsWith('fin_'),
     getPhases: () => FIN_PHASES
