@@ -29,6 +29,7 @@ function initFinance(userSession) {
             transactions: [],
             trialStart: Date.now(),
             isPremium: false,
+            tier: 'free',
             pendingConfirm: null,
             lastResetDate: new Date().toDateString(),
             streak: 0,
@@ -90,8 +91,30 @@ function isFinPremium(fin) {
     return !!(fin && (fin.isPremium || (fin.premiumUntil && Date.now() < fin.premiumUntil)));
 }
 
-function isTrialExpired(fin) {
-    return !!(fin && fin.trialStart && daysSince(fin.trialStart) >= 30);
+/**
+ * Plan actual de un usuario desde la DB de admin (fuente de verdad).
+ */
+function getUserTier(jid) {
+    try {
+        const t = financeAdmin.getTier(jid);
+        return (t && t.tier) || 'free';
+    } catch (e) {
+        logger.error(`[getUserTier] ${jid}: ${e.message}`);
+        return 'free';
+    }
+}
+
+/**
+ * Gate principal de IA (texto y media): free siempre bloqueado, basic con
+ * cupo mensual y vigencia, master ilimitado mientras esté vigente.
+ */
+function canUseAi(jid) {
+    try {
+        return financeAdmin.canConsumeAi(jid);
+    } catch (e) {
+        logger.error(`[canUseAi] ${jid}: ${e.message}`);
+        return false;
+    }
 }
 
 /**
@@ -175,31 +198,90 @@ async function notifyNewUser(sock, jid, userSession, ctx) {
         `👤 Usuario: ${label}\n` +
         `🆔 ID: ${String(jid).split('@')[0]}\n` +
         `🕐 Fecha: ${new Date().toLocaleString('es-CO')}\n\n` +
-        `Para activarle Premium: /activar_premium ${String(jid).split('@')[0]} 30`);
+        `Para asignarle un plan: /set_tier ${String(jid).split('@')[0]} basic 30`);
 }
 
 async function showPremiumRequired(sock, jid, ctx) {
     const payment = financeAdmin.getPaymentInfo();
     await say(sock, jid,
-        `🦁 *Tu prueba gratuita de 30 días terminó.*\n\n` +
-        `Para seguir registrando con IA y desbloquear todo Leo, actualizá a *Premium*:\n\n` +
-        `💰 $${payment.price.toLocaleString('es-CO')} COP/mes\n\n` +
+        `🦁 *Tu plan Gratis no incluye IA.*\n\n` +
+        `Para registrar con IA (texto, fotos de facturas y notas de voz), elegí un plan:\n\n` +
+        `✨ *Basic* — $${payment.basicPrice.toLocaleString('es-CO')} COP/mes\n` +
+        `• ${payment.limitBasic} interacciones de IA al mes\n` +
+        `• Registros, resumen y metas\n\n` +
+        `👑 *Master* — $${payment.masterPrice.toLocaleString('es-CO')} COP/mes\n` +
+        `• IA sin límites\n` +
+        `• Todo lo de Basic, sin tope\n\n` +
         `📲 *Cómo pagar:*\n` +
         `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
         (payment.bancolombia ? `2️⃣ Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : `2️⃣ Bancolombia: (configurar)\n`) +
         `3️⃣ Enviá la *captura del pago* por este chat.\n` +
-        `4️⃣ Te activamos Premium en minutos. 🦁\n\n` +
+        `4️⃣ Te activamos tu plan en minutos. 🦁\n\n` +
         `_Escribí "Actualizar a Pro" cuando hayas pagado._`, ctx);
 }
 
 /**
+ * Sincroniza el plan asignado por el admin hacia la sesión en memoria y
+ * financeStore, para que el gate y los mensajes vean el mismo estado.
+ */
+function syncPlanToSession(ctx, targetJid, res) {
+    const targetSession = ctx?.sessions?.[targetJid];
+    const target = targetSession?.finance || financeStore.loadFinance(targetJid);
+    if (!target) return;
+    target.isPremium = res.tier !== 'free';
+    target.premiumUntil = res.premiumUntil || 0;
+    target.tier = res.tier;
+    if (targetSession) targetSession.finance = target;
+    financeStore.saveFinance(targetJid, target);
+}
+
+/**
  * Comandos de administrador (solo el admin del tenant):
- *   /activar_premium <user_id> <días>   -> activa/ extiende premium
- *   /stats                              -> total de usuarios, nuevos hoy, premium activos
+ *   /set_tier <user_id> <basic|master|free> [días] -> asigna/cambia el plan
+ *   /activar_premium <user_id> <días>              -> alias de set_tier master
+ *   /set_precio <basic|master> <monto>             -> edita precio del plan
+ *   /stats                                         -> usuarios, nuevos, planes activos
  */
 async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
     if (!isAdminJid(jid)) return false;
     const t = (text || '').trim();
+
+    const tierMatch = t.match(/^\/?set_tier\s+(\S+)\s+(basic|master|free)\s*(\d*)\s*$/i);
+    if (tierMatch) {
+        const targetJid = toCanonicalJid(tierMatch[1], jid);
+        const tier = tierMatch[2].toLowerCase();
+        const days = tierMatch[3] ? parseInt(tierMatch[3], 10) : 30;
+        if (!targetJid) {
+            await say(sock, jid, `❌ Uso: /set_tier <user_id> <basic|master|free> [días]\nEj: /set_tier 8846262191 basic 30`, ctx);
+            return true;
+        }
+        const res = financeAdmin.setTier(targetJid, tier, days);
+        if (res.success) {
+            syncPlanToSession(ctx, targetJid, res);
+            const tierLabel = { free: 'Gratis', basic: 'Basic', master: 'Master' }[res.tier] || res.tier;
+            await say(sock, jid,
+                `✅ Plan *${tierLabel}* asignado a *${String(targetJid).split('@')[0]}*` +
+                (res.tier !== 'free' ? ` por ${days} días.\n📅 Vence: ${new Date(res.premiumUntil).toLocaleDateString('es-CO')}` : '.'),
+                ctx);
+            if (ctx?.sessions?.[targetJid]) {
+                try {
+                    if (res.tier === 'free') {
+                        await say(sock, targetJid, `🦁 Tu plan ahora es *Gratis*. Cuando quieras volver a la IA, escribí "Actualizar a Pro" para ver los planes.`, ctx);
+                    } else {
+                        await say(sock, targetJid,
+                            `🎉 *¡Tu plan ${tierLabel} está activo!* 🦁\n\n` +
+                            `Ya tenés Leo con IA ${res.tier === 'master' ? 'sin límites' : `(${financeAdmin.getPaymentInfo().limitBasic} interacciones al mes)`} hasta el *${new Date(res.premiumUntil).toLocaleDateString('es-CO')}*. 🔥`,
+                            ctx);
+                    }
+                } catch (e) {
+                    logger.error(`[admin] Error avisando al usuario ${targetJid}: ${e.message}`);
+                }
+            }
+        } else {
+            await say(sock, jid, `❌ ${res.message || 'No se pudo actualizar el plan.'}`, ctx);
+        }
+        return true;
+    }
 
     const actMatch = t.match(/^\/?(activar_premium|premium)\s+(\S+)\s+(\d+)\s*$/i);
     if (actMatch) {
@@ -211,27 +293,14 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
         }
         const res = financeAdmin.activatePremium(targetJid, days);
         if (res.success) {
-            // Sincronizar premium en la sesión en memoria y en financeStore
-            const targetSession = ctx?.sessions?.[targetJid];
-            if (targetSession?.finance) {
-                targetSession.finance.isPremium = true;
-                targetSession.finance.premiumUntil = res.premiumUntil;
-                financeStore.saveFinance(targetJid, targetSession.finance);
-            } else {
-                const persisted = financeStore.loadFinance(targetJid);
-                if (persisted) {
-                    persisted.isPremium = true;
-                    persisted.premiumUntil = res.premiumUntil;
-                    financeStore.saveFinance(targetJid, persisted);
-                }
-            }
+            syncPlanToSession(ctx, targetJid, { ...res, tier: 'master' });
             const untilLabel = new Date(res.premiumUntil).toLocaleDateString('es-CO');
             await say(sock, jid, `✅ Premium activado para *${String(targetJid).split('@')[0]}* por ${days} días.\n📅 Vence: ${untilLabel}`, ctx);
             if (ctx?.sessions?.[targetJid]) {
                 try {
                     await say(sock, targetJid,
-                        `🎉 *¡Premium activado!* 🦁\n\n` +
-                        `Ya tenés Leo completo hasta el *${untilLabel}*. ¡Bienvenido al nivel Pro! 🔥`,
+                        `🎉 *¡Master activado!* 🦁\n\n` +
+                        `Ya tenés Leo con IA sin límites hasta el *${untilLabel}*. ¡Bienvenido al nivel Pro! 🔥`,
                         ctx);
                 } catch (e) {
                     logger.error(`[admin] Error avisando al usuario premium ${targetJid}: ${e.message}`);
@@ -243,13 +312,28 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
         return true;
     }
 
+    const priceMatch = t.match(/^\/?set_precio\s+(basic|master)\s+(\d[\d.]*)\s*$/i);
+    if (priceMatch) {
+        const target = priceMatch[1].toLowerCase();
+        const value = parseInt(priceMatch[2].replace(/\./g, ''), 10);
+        if (!(value > 0)) {
+            await say(sock, jid, `❌ Uso: /set_precio <basic|master> <monto>\nEj: /set_precio master 35000`, ctx);
+            return true;
+        }
+        const key = target === 'basic' ? 'precio_basic' : 'precio_master';
+        financeAdmin.setConfig(key, String(value));
+        await say(sock, jid, `✅ Precio *${target === 'basic' ? 'Basic' : 'Master'}* actualizado a *$${value.toLocaleString('es-CO')} COP/mes*.`, ctx);
+        return true;
+    }
+
     if (/^\/?stats$/i.test(t)) {
         const s = financeAdmin.getStats();
         await say(sock, jid,
             `📊 *Estadísticas Leo Financiero*\n\n` +
             `👥 Usuarios registrados: *${s.total}*\n` +
             `🆕 Nuevos hoy: *${s.newToday}*\n` +
-            `👑 Premium activos: *${s.premiumActive}*`,
+            `✨ Basic activos: *${s.basicActive}*\n` +
+            `👑 Master activos: *${s.masterActive}*`,
             ctx);
         return true;
     }
@@ -259,35 +343,38 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
 
 /**
  * Solicitud de upgrade (comando/ botón visible en la versión gratuita):
- * muestra precio + datos de pago y notifica al admin que espera captura.
+ * muestra planes + datos de pago y notifica al admin que espera captura.
+ * Si el usuario ya tiene plan activo, le informa su estado y cómo subir de plan.
  */
 async function handleUpgradeRequest(sock, jid, text, userSession, ctx, fin) {
     const t = (text || '').toLowerCase().trim();
     const direct =
-        /^(pro|premium|upgrade|actualizar|actualizame|suscripcion|suscribirme|\/pro|\/premium|\/upgrade|\/pago)$/i.test(t) ||
-        /^(actualizar a pro|actualizar a premium|pasar a pro|pasar a premium|actualizame a pro|actualizame a premium)$/i.test(t) ||
-        /quiero (ser|actualizar a|pasar a) (premium|pro)/i.test(t);
+        /^(pro|premium|master|upgrade|actualizar|actualizame|suscripcion|suscribirme|\/pro|\/premium|\/master|\/upgrade|\/pago)$/i.test(t) ||
+        /^(actualizar a (pro|premium|master)|pasar a (pro|premium|master)|actualizame a (pro|premium|master))$/i.test(t) ||
+        /quiero (ser|actualizar a|pasar a) (pro|premium|master)/i.test(t);
     if (!direct) return false;
 
-    if (isFinPremium(fin)) {
-        const until = fin.premiumUntil
-            ? `hasta el *${new Date(fin.premiumUntil).toLocaleDateString('es-CO')}*`
-            : 'activo';
-        await say(sock, jid, `🦁 Ya sos *Premium* (${until}). ¡Gracias por acompañarme! 🔥`, ctx);
+    const tierInfo = financeAdmin.getTier(jid);
+    const tier = tierInfo.tier;
+    const active = tier !== 'free' && tierInfo.premiumUntil > Date.now();
+
+    if (active) {
+        const until = tierInfo.premiumUntil
+            ? ` hasta el *${new Date(tierInfo.premiumUntil).toLocaleDateString('es-CO')}*`
+            : '';
+        if (tier === 'master') {
+            await say(sock, jid, `🦁 Ya sos *Master* (${until}). ¡Gracias por acompañarme! 🔥`, ctx);
+        } else {
+            const usage = financeAdmin.getAiUsage(jid);
+            await say(sock, jid,
+                `🦁 Ya sos *Basic*${until}.\n\n` +
+                `📊 IA este mes: *${usage.used}/${usage.limit}* interacciones.\n\n` +
+                `Para IA *sin límites*, pasá a *Master*: escribí "Actualizar a Master" 🦁`, ctx);
+        }
         return true;
     }
 
-    const payment = financeAdmin.getPaymentInfo();
-    await say(sock, jid,
-        `🦁 *Premium Leo — $${payment.price.toLocaleString('es-CO')} COP/mes*\n\n` +
-        `Con Premium desbloqueás:\n` +
-        `• ✨ IA sin límites: registros, fotos de facturas y notas de voz\n` +
-        `• 📊 Score de salud financiera\n` +
-        `• 🎯 Metas y rachas avanzadas\n\n` +
-        `📲 *Pasá tu pago a:*\n` +
-        `🟢 Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
-        (payment.bancolombia ? `🏦 Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : '') +
-        `\nLuego *enviá la captura del pago* por este chat y te activamos Premium en minutos. 🦁`, ctx);
+    await showPremiumRequired(sock, jid, ctx);
 
     const label = getTelegramLabel(userSession, jid);
     await notifyAdmin(sock, ctx,
@@ -295,22 +382,29 @@ async function handleUpgradeRequest(sock, jid, text, userSession, ctx, fin) {
         `👤 Usuario: ${label}\n` +
         `🆔 ID: ${String(jid).split('@')[0]}\n` +
         `📛 Nombre: ${fin.name || '—'}\n\n` +
-        `Esperando captura de pago. Cuando llegue, activá con:\n` +
-        `/activar_premium ${String(jid).split('@')[0]} 30`);
+        `Esperando captura de pago. Cuando llegue, asigná el plan con:\n` +
+        `/set_tier ${String(jid).split('@')[0]} basic 30\n` +
+        `o /set_tier ${String(jid).split('@')[0]} master 30`);
     return true;
 }
 
 /**
- * Sincroniza el estado premium desde la tabla admin (fuente de verdad) hacia
- * el objeto finance en memoria + persistencia, para que el gate y la IA
- * siempre vean el mismo estado.
+ * Sincroniza el plan desde la tabla admin (fuente de verdad) hacia el objeto
+ * finance en memoria + persistencia, para que el gate y la IA siempre vean el
+ * mismo estado. No revoca recompensas en memoria (ej. referidos) que la DB aún
+ * no conoce; el reward de referido también escribe en la DB admin.
  */
 function syncPremiumFromAdmin(jid, fin) {
     if (!fin) return;
-    if (financeAdmin.isPremium(jid) && !isFinPremium(fin)) {
-        const adminUser = financeAdmin.getUser(jid);
+    const tierInfo = financeAdmin.getTier(jid);
+    const paid = tierInfo.tier !== 'free' && tierInfo.premiumUntil > Date.now();
+    if (paid) {
         fin.isPremium = true;
-        if (adminUser && adminUser.premium_until) fin.premiumUntil = adminUser.premium_until;
+        fin.premiumUntil = tierInfo.premiumUntil;
+        fin.tier = tierInfo.tier;
+        financeStore.saveFinance(jid, fin);
+    } else if (tierInfo.tier === 'free' && fin.tier !== 'free') {
+        fin.tier = 'free';
         financeStore.saveFinance(jid, fin);
     }
 }
@@ -318,15 +412,13 @@ function syncPremiumFromAdmin(jid, fin) {
 /**
  * Gate de premium para el bloqueo de media en handlers/handler.js (lee la DB,
  * NO depende de la sesión en memoria). Devuelve true si el usuario NO debe
- * consumir funciones de IA (audio/imagen) por estar fuera de la prueba.
+ * consumir funciones de IA (audio/imagen) por no tener plan con IA activo.
  */
 function isPremiumBlocked(jid) {
     try {
         const persisted = financeStore.loadFinance(jid);
         if (!persisted) return false;
-        if (isFinPremium(persisted)) return false;
-        if (financeAdmin.isPremium(jid)) return false;
-        return isTrialExpired(persisted);
+        return !canUseAi(jid);
     } catch (e) {
         logger.error(`[isPremiumBlocked] ${jid}: ${e.message}`);
         return false;
@@ -376,7 +468,7 @@ async function handle(sock, jid, text, userSession, ctx) {
             `💰 *"Recibí 2 millones de sueldo"*\n` +
             `📊 *"¿Cuánto tengo?"*\n` +
             `📷 *[foto de factura]*\n` +
-            `💎 *"Actualizar a Pro"* para ver el plan Premium\n\n` +
+            `💎 *"Actualizar a Pro"* para ver los planes Basic / Master\n\n` +
             `¿Qué necesitás? 🦁`, ctx);
     }
 
@@ -425,10 +517,10 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
     }
 
-    // Gate premium: bloquear la conversación IA (texto) cuando la prueba
-    // terminó y el usuario no es premium. El gate de audio/imagen se hace en
-    // handler.js vía isPremiumBlocked/onPremiumBlocked.
-    if (userSession.phase === PHASE.FIN_MAIN && isTrialExpired(fin) && !isFinPremium(fin)) {
+    // Gate de plan: bloquear la conversación IA (texto) cuando el usuario no
+    // tiene un plan con IA activo (free siempre, basic sin cupo/vencido). El
+    // gate de audio/imagen se hace en handler.js vía isPremiumBlocked/onPremiumBlocked.
+    if (userSession.phase === PHASE.FIN_MAIN && !canUseAi(jid)) {
         await showPremiumRequired(sock, jid, ctx);
         return;
     }
@@ -606,6 +698,14 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
 }
 
 async function handleConversation(sock, jid, text, userSession, ctx, fin) {
+    // Consume cupo de IA (Basic). Master ilimitado; free nunca llega aquí por el
+    // gate. Si el cupo se agotó (p.ej. media de una llamada previa), bloquea.
+    const consumption = financeAdmin.consumeAiUsage(jid);
+    if (!consumption.allowed) {
+        await showPremiumRequired(sock, jid, ctx);
+        return;
+    }
+
     const result = await financeAi.interpret(text, userSession);
 
     if (!result) {
@@ -738,7 +838,6 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         fin.balance += amount;
     }
 
-    const trialDaysLeft = 30 - daysSince(fin.trialStart);
     const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
 
     // #8 — racha
@@ -761,10 +860,10 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const streakMsg = fin.streak >= 2 ? `🔥 ${fin.streak} días seguidos\n` : '';
     const milestoneMsg = fin.streak === 5 ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 ? `🏆 10 días! Imparable.\n` : '';
 
-    // #5 — oferta solo 1 vez al día o si quedan ≤5 días
-    const trialLine = fin.isPremium ? ''
-        : (daysSince(fin.trialLastShown || 0) >= 1 || trialDaysLeft <= 5)
-            ? `📅 ${trialDaysLeft} días de prueba.\n`
+    // #5 — oferta solo 1 vez al día para usuarios sin plan con IA
+    const planLine = isFinPremium(fin) ? ''
+        : (daysSince(fin.trialLastShown || 0) >= 1)
+            ? `💎 Plan *Gratis* — escribí "Actualizar a Pro" para desbloquear la IA 🦁\n`
             : '';
 
     await say(sock, jid,
@@ -776,38 +875,42 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         todayMsg +
         streakMsg +
         milestoneMsg +
-        trialLine +
+        planLine +
         (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
         `\n¿Algo más? 🦁`,
         ctx);
 
     fin.trialLastShown = Date.now();
 
-    // Referral reward: first real transaction triggers +15 days Premium for both
+    // Referral reward: first real transaction triggers +15 days Master for both
     if (!prevFin.firstTransactionDone && fin.invitedBy) {
         const reward = financeReferral.checkAndReward(jid);
         if (reward.rewarded) {
             const now = Date.now();
+            financeAdmin.setTier(jid, 'master', 15);
             fin.premiumUntil = Math.max(fin.premiumUntil || 0, now) + 15 * 86400000;
             fin.isPremium = true;
+            fin.tier = 'master';
             // Reward inviter too
+            financeAdmin.setTier(reward.inviterJid, 'master', 15);
             const inviterFin = ctx?.sessions?.[reward.inviterJid]?.finance;
             if (inviterFin) {
                 inviterFin.premiumUntil = Math.max(inviterFin.premiumUntil || 0, now) + 15 * 86400000;
                 inviterFin.isPremium = true;
+                inviterFin.tier = 'master';
                 financeStore.saveFinance(reward.inviterJid, inviterFin);
             }
             await say(sock, jid,
                 `🎉 *¡GRAN NOTICIA!* 🎉\n\n` +
                 `Completaste tu primer movimiento y activaste la recompensa por invitación.\n\n` +
-                `Tanto vos como *quien te invitó* ganan +15 DÍAS PREMIUM cada une. 🦁🔥`,
+                `Tanto vos como *quien te invitó* ganan +15 DÍAS DE MASTER (IA sin límites) cada une. 🦁🔥`,
                 ctx);
             // Notify inviter if online
             if (ctx?.sessions?.[reward.inviterJid]) {
                 await say(sock, reward.inviterJid,
                     `🎉 *¡Alguien usó tu código!* 🎉\n\n` +
                     `Una persona que invitaste acaba de registrar su primer movimiento.\n` +
-                    `¡Ganaste +15 DÍAS PREMIUM! 🦁🔥`,
+                    `¡Ganaste +15 DÍAS DE MASTER (IA sin límites)! 🦁🔥`,
                     ctx);
             }
         }
@@ -908,7 +1011,7 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     syncPremiumFromAdmin(jid, fin);
     if (fin.name) {
         userSession.phase = PHASE.FIN_MAIN;
-        if (isTrialExpired(fin) && !isFinPremium(fin)) {
+        if (!canUseAi(jid)) {
             await showPremiumRequired(sock, jid, ctx);
             return;
         }
@@ -965,9 +1068,9 @@ async function handleReferralInfo(sock, jid, fin, ctx) {
     const rewardedCount = financeReferral.getRewardedCount(jid);
     await say(sock, jid,
         `🦁 *Tu código de invitación:* ${code}\n\n` +
-        `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 DÍAS PREMIUM*! 🎉\n\n` +
+        `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 DÍAS DE MASTER* (IA sin límites)! 🎉\n\n` +
         `📊 Personas invitadas: ${inviteeCount}\n` +
-        `🏆 Días premium ganados: ${rewardedCount * 15}\n\n` +
+        `🏆 Días Master ganados: ${rewardedCount * 15}\n\n` +
         `Para invitar, decile a un amigue que escriba tu código en Leo 🦁`,
         ctx);
 }
@@ -984,7 +1087,7 @@ async function handleReferralConfirmation(sock, jid, text, userSession, ctx, fin
             fin.invitedBy = ref.code;
             financeStore.saveFinance(jid, fin);
             await say(sock, jid,
-                `🦁 ¡Excelente! Ahora cuando registres tu primer movimiento, tanto vos como quien te invitó ganan +15 DÍAS PREMIUM. 🎉`,
+                `🦁 ¡Excelente! Ahora cuando registres tu primer movimiento, tanto vos como quien te invitó ganan +15 DÍAS DE MASTER (IA sin límites). 🎉`,
                 ctx);
         } else {
             await say(sock, jid, `🦁 ${result.message}`, ctx);

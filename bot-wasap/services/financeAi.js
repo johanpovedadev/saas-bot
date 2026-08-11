@@ -5,13 +5,17 @@ const { logger } = require('../utils/logger');
 
 function buildFinanceContext(userSession) {
     const fin = userSession.finance || {};
+    const tier = fin.tier || 'free';
     return {
         name: fin.name || '',
         balance: fin.balance || 0,
         todaySpending: fin.todaySpending || 0,
         totalTransactions: (fin.transactions || []).length,
-        trialDaysLeft: fin.trialStart ? Math.max(0, 30 - Math.floor((Date.now() - fin.trialStart) / 86400000)) : 30,
         isPremium: !!fin.isPremium,
+        tier,
+        tierLabel: tier === 'master' ? 'Master (IA sin límites)'
+            : tier === 'basic' ? 'Basic (60 interacciones de IA al mes)'
+                : 'Gratis (sin IA)',
         recentTransactions: (fin.transactions || []).slice(-5).map(t => ({
             type: t.type,
             amount: t.amount,
@@ -31,7 +35,7 @@ Contexto del usuario:
 - Saldo actual: $${c.balance.toLocaleString('es-CO')}
 - Compras hoy: $${c.todaySpending.toLocaleString('es-CO')}
 - Total transacciones: ${c.totalTransactions}
-- Días de prueba gratis: ${c.trialDaysLeft}
+- Plan: ${c.tierLabel}
 - Premium: ${c.isPremium ? 'SI' : 'NO'}
 
 Últimas transacciones: ${JSON.stringify(c.recentTransactions)}
@@ -72,8 +76,8 @@ Reglas de personalidad:
 
 Reglas de negocio:
 - Los montos vienen en COP. El usuario puede decir "18k", "18 mil" = 18000
-- El usuario tiene ${c.trialDaysLeft} días de prueba gratis de ${30} días.
-- Premium cuesta $30.000 COP/mes. No lo promociones agresivamente.
+- El usuario tiene el plan ${c.tierLabel}. No lo promociones agresivamente.
+- Planes de referencia: Basic $15.000 COP/mes (60 interacciones IA), Master $30.000 COP/mes (IA ilimitada).
 - needs_confirmation debe ser TRUE para registros de compras/ingresos.`;
 }
 

@@ -1,10 +1,11 @@
 'use strict';
 /**
- * Test manual para "Control de usuarios, premium manual y solicitudes de upgrade".
- * Cubre: registro de usuarios (nuevo/repetido), activación de premium manual,
- * estadísticas, config de pagos (Nequi/Bancolombia), comandos admin (/stats y
- * /activar_premium), solicitud de upgrade con notificación al admin, y el gate
- * premium (bloqueo de IA cuando la prueba venció y el usuario no es premium).
+ * Test manual para "Control de usuarios, planes Free/Basic/Master y upgrades".
+ * Cubre: registro de usuarios (nuevo/repetido), asignación de planes manual
+ * (/set_tier y /activar_premium alias a Master), cupo mensual de IA (Basic),
+ * estadísticas, config de precios, comandos admin (/stats, /set_precio),
+ * solicitud de upgrade con notificación al admin, y el gate por plan (free
+ * siempre sin IA).
  * Uso: node _test_finance_admin.js
  */
 process.env.BUSINESS_KEY = 'finance';
@@ -68,6 +69,7 @@ function makeFin(overrides) {
         transactions: [],
         trialStart: Date.now(),
         isPremium: false,
+        tier: 'free',
         premiumUntil: 0,
         lastResetDate: new Date().toDateString(),
         streak: 0,
@@ -84,16 +86,19 @@ function testRegister() {
     check(financeAdmin.registerUser(jid, '@test').registered === false, 'registerUser repetido -> registered=false');
     const u = financeAdmin.getUser(jid);
     check(u && u.jid === jid && u.es_premium === 0, 'getUser devuelve fila sin premium');
-    check(financeAdmin.isPremium(jid) === false, 'isPremium=false sin premium');
+    check(financeAdmin.getTier(jid).tier === 'free', 'tier por defecto = free');
+    check(financeAdmin.isPremium(jid) === false, 'isPremium=false sin plan');
+    check(financeAdmin.canConsumeAi(jid) === false, 'canConsumeAi=false (free)');
 }
 
 // ---------------------------------------------------------------------------
-// 2) Activación manual de premium
+// 2) Asignación manual de planes (activatePremium = alias de Master)
 // ---------------------------------------------------------------------------
 function testActivatePremium() {
     const jid = '_t_admin_a@telegram';
     const res = financeAdmin.activatePremium(jid, 30);
     check(res.success === true && res.premiumUntil > Date.now(), 'activatePremium(jid,30) éxito y vence en el futuro');
+    check(financeAdmin.getTier(jid).tier === 'master', 'activatePremium asigna Master');
     check(financeAdmin.isPremium(jid) === true, 'isPremium=true tras activar');
     check(financeAdmin.activatePremium(jid, -5).success === false, 'días inválidos rechazados');
     check(financeAdmin.activatePremium(jid, 999999).success === false, 'días excesivos rechazados');
@@ -106,52 +111,97 @@ function testActivatePremium() {
 }
 
 // ---------------------------------------------------------------------------
-// 3) Estadísticas
+// 3) Tiers: Basic con cupo mensual, Master ilimitado, Free sin IA
+// ---------------------------------------------------------------------------
+function testTiers() {
+    const jid = '_t_tier@telegram';
+    financeAdmin.setConfig('limite_basic', '3');
+
+    check(financeAdmin.setTier(jid, 'basico', 30).success === true, 'setTier basic (alias) éxito');
+    check(financeAdmin.getTier(jid).tier === 'basic', 'getTier -> basic');
+    check(financeAdmin.isPremium(jid) === true, 'isPremium=true (basic activo)');
+    check(financeAdmin.canConsumeAi(jid) === true, 'canConsumeAi=true (basic con cupo)');
+    check(financeAdmin.consumeAiUsage(jid).allowed === true, 'consume 1 OK');
+    check(financeAdmin.consumeAiUsage(jid).allowed === true, 'consume 2 OK');
+    check(financeAdmin.consumeAiUsage(jid).allowed === true, 'consume 3 OK');
+    check(financeAdmin.canConsumeAi(jid) === false, 'canConsumeAi=false (cupo agotado)');
+    check(financeAdmin.consumeAiUsage(jid).allowed === false, 'consume rechazado con cupo agotado');
+    check(financeAdmin.getAiUsage(jid).used === 3, 'uso registrado = 3');
+    check(financeAdmin.setTier(jid, 'basic', 30).success === true, 'setTier basic sobre cupo agotado ok');
+    check(financeAdmin.consumeAiUsage(jid).used > 0 || financeAdmin.getAiUsage(jid).used >= 0, 'uso mensual se conserva al extender');
+
+    check(financeAdmin.setTier(jid, 'master', 30).success === true, 'setTier master éxito');
+    check(financeAdmin.canConsumeAi(jid) === true, 'canConsumeAi=true (master)');
+    const m1 = financeAdmin.consumeAiUsage(jid);
+    const m2 = financeAdmin.consumeAiUsage(jid);
+    check(m1.allowed === true && m2.allowed === true, 'master consume siempre OK');
+    check(m1.remaining === Infinity, 'master sin tope (remaining Infinity)');
+
+    check(financeAdmin.setTier(jid, 'free').success === true, 'setTier free éxito');
+    check(financeAdmin.isPremium(jid) === false, 'isPremium=false (free)');
+    check(financeAdmin.canConsumeAi(jid) === false, 'canConsumeAi=false (free)');
+    check(financeAdmin.consumeAiUsage(jid).allowed === false, 'consume rechazado (free)');
+
+    financeAdmin.setConfig('limite_basic', '60');
+}
+
+// ---------------------------------------------------------------------------
+// 4) Estadísticas
 // ---------------------------------------------------------------------------
 function testStats() {
     financeAdmin.registerUser('_t_admin_b@telegram', 'b');
     financeAdmin.registerUser('_t_admin_c@telegram', 'c');
     financeAdmin.activatePremium('_t_admin_b@telegram', 10);
+    financeAdmin.setTier('_t_admin_c@telegram', 'basic', 10);
     const s = financeAdmin.getStats();
-    check(typeof s.total === 'number' && s.total >= 4, `stats.total >= 4 (${s.total})`);
-    check(typeof s.newToday === 'number' && s.newToday >= 4, `stats.newToday >= 4 (${s.newToday})`);
-    check(typeof s.premiumActive === 'number' && s.premiumActive >= 2, `stats.premiumActive >= 2 (${s.premiumActive})`);
+    check(typeof s.total === 'number' && s.total >= 5, `stats.total >= 5 (${s.total})`);
+    check(typeof s.newToday === 'number' && s.newToday >= 5, `stats.newToday >= 5 (${s.newToday})`);
+    check(typeof s.basicActive === 'number' && s.basicActive >= 1, `stats.basicActive >= 1 (${s.basicActive})`);
+    check(typeof s.masterActive === 'number' && s.masterActive >= 2, `stats.masterActive >= 2 (${s.masterActive})`);
+    check(s.premiumActive >= 3, `stats.premiumActive >= 3 (${s.premiumActive})`);
 }
 
 // ---------------------------------------------------------------------------
-// 4) Config de pagos (editables en admin_config)
+// 5) Config de pagos (editables en admin_config)
 // ---------------------------------------------------------------------------
 function testPaymentConfig() {
     check(financeAdmin.getPaymentInfo().nequi === '3138777115', 'getPaymentInfo default Nequi 3138777115');
-    check(financeAdmin.getPaymentInfo().price === 30000, 'getPaymentInfo default precio 30000');
+    check(financeAdmin.getPaymentInfo().basicPrice === 15000, 'getPaymentInfo default precio Basic 15000');
+    check(financeAdmin.getPaymentInfo().masterPrice === 30000, 'getPaymentInfo default precio Master 30000');
+    check(financeAdmin.getPaymentInfo().limitBasic === 60, 'getPaymentInfo default límite Basic 60');
     financeAdmin.setConfig('pago_nequi', '3112223333');
     check(financeAdmin.getPaymentInfo().nequi === '3112223333', 'setConfig pago_nequi se refleja');
-    financeAdmin.setConfig('precio_premium', '45000');
-    check(financeAdmin.getPaymentInfo().price === 45000, 'setConfig precio_premium se refleja');
+    financeAdmin.setConfig('precio_basic', '20000');
+    check(financeAdmin.getPaymentInfo().basicPrice === 20000, 'setConfig precio_basic se refleja');
+    financeAdmin.setConfig('precio_master', '40000');
+    check(financeAdmin.getPaymentInfo().masterPrice === 40000, 'setConfig precio_master se refleja');
     financeAdmin.setConfig('pago_nequi', '3138777115');
-    financeAdmin.setConfig('precio_premium', '30000');
+    financeAdmin.setConfig('precio_basic', '15000');
+    financeAdmin.setConfig('precio_master', '30000');
 }
 
 // ---------------------------------------------------------------------------
-// 5) Gate premium (isPremiumBlocked) sobre la DB
+// 6) Gate por plan (isPremiumBlocked) sobre la DB
 // ---------------------------------------------------------------------------
 function testPremiumGate() {
-    const expiredJid = '_t_expired@telegram';
-    financeStore.saveFinance(expiredJid, makeFin({ name: 'Vencido', trialStart: Date.now() - 31 * 86400000 }));
-    check(financeFlow.isPremiumBlocked(expiredJid) === true, 'isPremiumBlocked=true (prueba vencida, free)');
+    const freeJid = '_t_free@telegram';
+    financeStore.saveFinance(freeJid, makeFin({ name: 'Gratis' }));
+    financeAdmin.registerUser(freeJid, 'gratis');
+    check(financeFlow.isPremiumBlocked(freeJid) === true, 'isPremiumBlocked=true (free siempre, sin IA)');
 
-    financeAdmin.activatePremium(expiredJid, 30);
-    check(financeFlow.isPremiumBlocked(expiredJid) === false, 'isPremiumBlocked=false tras activar premium (admin table)');
+    financeAdmin.setTier(freeJid, 'basic', 30);
+    check(financeFlow.isPremiumBlocked(freeJid) === false, 'isPremiumBlocked=false (basic activo)');
 
-    const activeJid = '_t_active@telegram';
-    financeStore.saveFinance(activeJid, makeFin({ name: 'Vigente', trialStart: Date.now() }));
-    check(financeFlow.isPremiumBlocked(activeJid) === false, 'isPremiumBlocked=false (trial vigente)');
+    const masterJid = '_t_master@telegram';
+    financeStore.saveFinance(masterJid, makeFin({ name: 'Master' }));
+    financeAdmin.setTier(masterJid, 'master', 30);
+    check(financeFlow.isPremiumBlocked(masterJid) === false, 'isPremiumBlocked=false (master activo)');
 
     check(financeFlow.isPremiumBlocked('_t_nodata@telegram') === false, 'isPremiumBlocked=false sin datos');
 }
 
 // ---------------------------------------------------------------------------
-// 6) Flow: comandos admin, upgrade y gate en handle()
+// 7) Flow: comandos admin, upgrade y gate en handle()
 // ---------------------------------------------------------------------------
 async function testFlow() {
     const sock = makeSock();
@@ -183,34 +233,58 @@ async function testFlow() {
     const actMsg = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Premium activado'));
     check(!!actMsg, '/activar_premium responde al admin');
     check(!!financeAdmin.getUser('5557778888@telegram'), 'target se normalizó a @telegram (toCanonicalJid)');
-    check(financeAdmin.isPremium('5557778888@telegram') === true, 'target quedó premium');
+    check(financeAdmin.isPremium('5557778888@telegram') === true, 'target quedó premium (master)');
 
-    // Solicitud de upgrade de un usuario free: muestra pago + notifica al admin
+    // /set_tier <user_id> basic 15
+    sock.sent.length = 0;
+    await financeFlow.handle(sock, ADMIN_JID, '/set_tier 5557778888 basic 15', makeSession(null, 'fin_main'), ctx);
+    const tierMsg = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Basic') && m.text.includes('asignado'));
+    check(!!tierMsg, '/set_tier basic responde al admin');
+    const t555 = financeAdmin.getTier('5557778888@telegram');
+    check(t555.tier === 'basic', 'target quedó en Basic');
+    check(t555.premiumUntil > Date.now(), 'Basic con vigencia');
+
+    // /set_tier <user_id> free (downgrade)
+    sock.sent.length = 0;
+    await financeFlow.handle(sock, ADMIN_JID, '/set_tier 5557778888 free', makeSession(null, 'fin_main'), ctx);
+    const freeMsg = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Gratis') && m.text.includes('asignado'));
+    check(!!freeMsg, '/set_tier free responde al admin');
+    check(financeAdmin.getTier('5557778888@telegram').tier === 'free', 'target volvió a Free');
+    check(financeAdmin.isPremium('5557778888@telegram') === false, 'target ya no es premium');
+
+    // /set_precio master <monto>
+    sock.sent.length = 0;
+    await financeFlow.handle(sock, ADMIN_JID, '/set_precio master 40000', makeSession(null, 'fin_main'), ctx);
+    check(financeAdmin.getPaymentInfo().masterPrice === 40000, '/set_precio master cambia el precio');
+    financeAdmin.setConfig('precio_master', '30000');
+
+    // Solicitud de upgrade de un usuario free: muestra planes + notifica al admin
     sock.sent.length = 0;
     const upgradeJid = '_t_upgrade@telegram';
     financeStore.saveFinance(upgradeJid, makeFin({ name: 'Nuevo', trialStart: Date.now() }));
     await financeFlow.handle(sock, upgradeJid, 'Actualizar a Pro', makeSession(null, 'fin_main'), ctx);
     const upMsg = sock.sent.find(m => m.jid === upgradeJid && m.text && m.text.includes('Nequi'));
     check(!!upMsg, '"Actualizar a Pro" muestra datos de pago (Nequi)');
+    const upPlans = sock.sent.find(m => m.jid === upgradeJid && m.text && m.text.includes('Basic'));
+    check(!!upPlans, 'mensaje de planes incluye Basic');
     const adminNotif = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Solicitud de upgrade'));
     check(!!adminNotif, 'solicitud de upgrade notifica al admin');
 
-    // Gate en handle(): free con prueba vencida -> bloquea la conversación IA
+    // Gate en handle(): free -> bloquea la conversación IA
     sock.sent.length = 0;
     const blockedJid = '_t_blocked@telegram';
-    financeStore.saveFinance(blockedJid, makeFin({ name: 'Vencido', trialStart: Date.now() - 31 * 86400000 }));
+    financeStore.saveFinance(blockedJid, makeFin({ name: 'Gratis', trialStart: Date.now() }));
     await financeFlow.handle(sock, blockedJid, 'compré 10 mil en almuerzo', makeSession(null, 'fin_main'), ctx);
-    const blockMsg = sock.sent.find(m => m.jid === blockedJid && m.text && m.text.includes('prueba gratuita'));
-    check(!!blockMsg, 'gate premium bloquea conversación de free con prueba vencida');
+    const blockMsg = sock.sent.find(m => m.jid === blockedJid && m.text && m.text.includes('Master'));
+    check(!!blockMsg, 'gate por plan bloquea conversación de free (muestra planes)');
     check(!sock.sent.some(m => m.jid === blockedJid && m.text && m.text.includes('Compra registrada')),
         'no se registra la compra del usuario bloqueado');
 
-    // Admin que ya es premium: "pro" avisa que ya lo es (sin pedir pago)
+    // Admin que ya tiene plan: "pro" informa su estado (free -> muestra planes)
     sock.sent.length = 0;
     await financeFlow.handle(sock, ADMIN_JID, 'pro', makeSession(null, 'fin_main'), ctx);
-    // El admin no es premium todavía (no lo activamos); igual responde con el plan
-    const proMsg = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Premium Leo'));
-    check(!!proMsg, 'comando "pro" responde con el plan Premium');
+    const proMsg = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Nequi'));
+    check(!!proMsg, 'comando "pro" responde con la pantalla de planes');
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +307,7 @@ function cleanup() {
     try {
         testRegister();
         testActivatePremium();
+        testTiers();
         testStats();
         testPaymentConfig();
         testPremiumGate();
