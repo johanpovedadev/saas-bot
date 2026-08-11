@@ -3,7 +3,7 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 const { logger } = require('../utils/logger');
-const envConfig = require('../config/env.loader');
+const financeCrypto = require('./financeCrypto');
 
 const DB_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DB_DIR, 'finance.db');
@@ -47,14 +47,31 @@ function getDb() {
 function rowToFinance(row) {
     if (!row) return null;
     const extra = JSON.parse(row.extra || '{}');
+
+    // Montos cifrados en reposo (AES-256). Soportan migración: si el valor no
+    // tiene el prefijo de cifrado, es un dato legacy en claro y se lee tal cual.
+    const balance = financeCrypto.isEncrypted(row.balance)
+        ? (financeCrypto.decryptAmount(row.balance) ?? 0)
+        : (Number(row.balance) || 0);
+    const todaySpending = financeCrypto.isEncrypted(row.today_spending)
+        ? (financeCrypto.decryptAmount(row.today_spending) ?? 0)
+        : (Number(row.today_spending) || 0);
+    const transactionsRaw = row.transactions || '[]';
+    const transactions = financeCrypto.isEncrypted(transactionsRaw)
+        ? JSON.parse(financeCrypto.decrypt(transactionsRaw) || '[]')
+        : JSON.parse(transactionsRaw || '[]');
+    const goalTarget = financeCrypto.isEncrypted(extra.goalTarget)
+        ? (financeCrypto.decryptAmount(extra.goalTarget) ?? 0)
+        : (extra.goalTarget || 0);
+
     return {
         name: row.name || '',
-        balance: row.balance || 0,
-        todaySpending: row.today_spending || 0,
+        balance,
+        todaySpending,
         lastResetDate: row.last_reset_date || '',
         trialStart: row.trial_start || 0,
         isPremium: !!row.is_premium || (Date.now() < (extra.premiumUntil || 0)),
-        transactions: JSON.parse(row.transactions || '[]'),
+        transactions,
         pendingConfirm: null,
         streak: extra.streak || 0,
         lastStreakDate: extra.lastStreakDate || '',
@@ -63,9 +80,10 @@ function rowToFinance(row) {
         firstTransactionDone: extra.firstTransactionDone || false,
         lastCheckinDate: extra.lastCheckinDate || '',
         goalName: extra.goalName || '',
-        goalTarget: extra.goalTarget || 0,
+        goalTarget,
         goalStep: extra.goalStep || 0,
         goalTempName: extra.goalTempName || '',
+        goalType: extra.goalType || '',
         notifiedNewFeatures: extra.notifiedNewFeatures || false,
         lastReportDate: extra.lastReportDate || '',
         milestonesSent: extra.milestonesSent || [],
@@ -76,15 +94,23 @@ function rowToFinance(row) {
 }
 
 function financeToRow(jid, fin) {
+    const balanceEnc = financeCrypto.encryptAmount(fin.balance || 0);
+    const todayEnc = financeCrypto.encryptAmount(fin.todaySpending || 0);
+    const txsEnc = financeCrypto.encrypt(JSON.stringify(fin.transactions || []));
+    const goalTargetEnc = financeCrypto.encryptAmount(fin.goalTarget || 0);
+    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null) {
+        logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
+        return null;
+    }
     return {
         jid,
         name: fin.name || '',
-        balance: fin.balance || 0,
-        today_spending: fin.todaySpending || 0,
+        balance: balanceEnc,
+        today_spending: todayEnc,
         last_reset_date: fin.lastResetDate || '',
         trial_start: fin.trialStart || 0,
         is_premium: fin.isPremium ? 1 : 0,
-        transactions: JSON.stringify(fin.transactions || []),
+        transactions: txsEnc,
         extra: JSON.stringify({
             streak: fin.streak || 0,
             lastStreakDate: fin.lastStreakDate || '',
@@ -93,9 +119,10 @@ function financeToRow(jid, fin) {
             firstTransactionDone: fin.firstTransactionDone || false,
             lastCheckinDate: fin.lastCheckinDate || '',
             goalName: fin.goalName || '',
-            goalTarget: fin.goalTarget || 0,
+            goalTarget: goalTargetEnc,
             goalStep: fin.goalStep || 0,
             goalTempName: fin.goalTempName || '',
+            goalType: fin.goalType || '',
             notifiedNewFeatures: fin.notifiedNewFeatures || false,
             lastReportDate: fin.lastReportDate || '',
             milestonesSent: fin.milestonesSent || [],
@@ -123,6 +150,7 @@ function saveFinance(jid, fin) {
         const d = getDb();
         if (!d || !jid || !fin) return false;
         const row = financeToRow(jid, fin);
+        if (!row) return false;
         d.prepare(`
             INSERT INTO finance_users (jid, name, balance, today_spending, last_reset_date, trial_start, is_premium, transactions, extra, updated_at)
             VALUES (@jid, @name, @balance, @today_spending, @last_reset_date, @trial_start, @is_premium, @transactions, @extra, datetime('now'))
@@ -149,9 +177,14 @@ function addTransaction(jid, tx) {
         const d = getDb();
         if (!d || !jid) return false;
         const row = d.prepare('SELECT transactions FROM finance_users WHERE jid = ?').get(jid);
-        const txs = row ? JSON.parse(row.transactions || '[]') : [];
+        const raw = row ? row.transactions : '[]';
+        const txs = financeCrypto.isEncrypted(raw)
+            ? JSON.parse(financeCrypto.decrypt(raw) || '[]')
+            : JSON.parse(raw || '[]');
         txs.push(tx);
-        d.prepare('UPDATE finance_users SET transactions = ?, updated_at = datetime(\'now\') WHERE jid = ?').run(JSON.stringify(txs), jid);
+        const enc = financeCrypto.encrypt(JSON.stringify(txs));
+        if (enc === null) return false;
+        d.prepare('UPDATE finance_users SET transactions = ?, updated_at = datetime(\'now\') WHERE jid = ?').run(enc, jid);
         return true;
     } catch (err) {
         logger.error(`financeStore.addTransaction(${jid}): ${err.message}`);

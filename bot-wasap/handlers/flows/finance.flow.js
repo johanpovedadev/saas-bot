@@ -5,7 +5,8 @@ const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
-const { generateCard, getNewMilestones } = require('../../services/financeCard');
+const financeScore = require('../../services/financeScore');
+const { generateCard, getNewMilestones, getGoalType } = require('../../services/financeCard');
 const financeReferral = require('../../services/financeReferral');
 
 const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
@@ -39,6 +40,7 @@ function initFinance(userSession) {
             goalTarget: 0,
             goalStep: 0,
             goalTempName: '',
+            goalType: '',
             notifiedNewFeatures: false,
             lastReportDate: '',
             milestonesSent: [],
@@ -244,6 +246,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
             else if (/\b(mil|k)\b/i.test(t)) val *= 1000;
             if (val > 0) {
                 fin.goalName = fin.goalTempName;
+                fin.goalType = getGoalType(fin.goalName).key;
                 fin.goalTarget = val;
                 fin.goalStep = 0;
                 fin.goalTempName = '';
@@ -261,7 +264,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 for (const mId of goalMs) {
                     if (!fin.milestonesSent.includes(mId)) {
                         try {
-                            const imgPath = await generateCard(fin.name, mId, fin.goalName);
+                            const imgPath = await generateCard(fin.name, mId, fin.goalName, getGoalType(fin.goalName).emoji);
                             await sendImage(sock, jid, imgPath, `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`, ctx);
                             fin.milestonesSent.push(mId);
                         } catch (e) {
@@ -336,6 +339,10 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         case 'upgrade':
         case 'goal_query':
             await say(sock, jid, result.response, ctx);
+            break;
+
+        case 'health_score':
+            await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
             break;
 
         case 'goals':
@@ -492,9 +499,16 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     for (const mId of newMilestones) {
         if (!fin.milestonesSent.includes(mId)) {
             try {
+                const goalType = fin.goalName ? getGoalType(fin.goalName) : null;
                 const extra = mId.startsWith('goal-') && fin.goalName ? `${fin.goalName}` : undefined;
-                const imgPath = await generateCard(fin.name, mId, extra);
-                await sendImage(sock, jid, imgPath, `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`, ctx);
+                const imgPath = await generateCard(fin.name, mId, extra, goalType?.emoji);
+                let caption = `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`;
+                if (mId.startsWith('goal-') && fin.goalName) {
+                    const pct = mId.replace('goal-', '');
+                    caption = `🎉 ${goalType.emoji} *¡${pct}% de tu meta "${fin.goalName}"!*\n` +
+                        `Llevás $${fin.balance.toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}. ¡Seguí así! 🦁`;
+                }
+                await sendImage(sock, jid, imgPath, caption, ctx);
                 fin.milestonesSent.push(mId);
             } catch (e) {
                 logger.error(`[${jid}] Error generating milestone card ${mId}: ${e.message}`);
@@ -503,7 +517,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     }
 
     financeStore.saveFinance(jid, fin);
-    logger.info({ jid, type, amount, category, description, balance: fin.balance }, 'Finance transaction saved');
+    logger.info({ jid, type, category, description }, 'Finance transaction saved');
 }
 
 async function showWelcome(sock, jid, ctx) {

@@ -63,7 +63,10 @@ async function testFinanceAudioIsProcessed() {
     financeFlow.handle = async (...args) => { handleCalledWith = args; };
 
     try {
-        await sock.listeners['message'](makeAudioMsg('573001112222@c.us'));
+        sock.listeners['message'](makeAudioMsg('573001112222@c.us'));
+        // El listener del handler encola el procesamiento en ctx._chatQueues y NO
+        // retorna la promesa: esperamos la cola por chat para no correr un race.
+        await ctx._chatQueues.get('573001112222@c.us');
 
         assert.ok(calledWith, 'financeAi.interpretAudio debe haberse invocado');
         assert.strictEqual(calledWith.audioBase64, 'ZmFrZS1hdWRpby1kYXRh');
@@ -97,7 +100,8 @@ async function testNonFinanceMediaIgnoredSilently() {
     financeAi.interpretAudio = async () => { interpretAudioCalled = true; return null; };
 
     try {
-        await sock.listeners['message'](makeAudioMsg('573003334444@c.us'));
+        sock.listeners['message'](makeAudioMsg('573003334444@c.us'));
+        await ctx._chatQueues.get('573003334444@c.us');
         assert.strictEqual(interpretAudioCalled, false, 'financeAi no debe invocarse para tenants que no son finance');
         assert.strictEqual(sock.sent.length, 0, 'no debe enviar ningun mensaje (se ignora en silencio)');
         console.log('OK: media de un tenant no-finanzas se ignora sin crashear');

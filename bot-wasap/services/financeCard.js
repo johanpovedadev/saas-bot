@@ -16,8 +16,40 @@ const MILESTONES = {
     'streak-30': { icon: '🏆', label: '¡30 días! Imparable', color: '#FFD700', sub: 'Un mes completo. Eres un león' },
     'goal-25': { icon: '📈', label: '25% de tu meta', color: '#2196F3', sub: 'Ya vas camino a cumplirla' },
     'goal-50': { icon: '🎯', label: '¡Mitad de la meta!', color: '#00BCD4', sub: 'Vas por la mitad. Sigue así' },
+    'goal-75': { icon: '🏁', label: '¡75% de tu meta!', color: '#8BC34A', sub: 'Ya casi lo lográs. No aflojes' },
     'goal-100': { icon: '🚀', label: '¡META CUMPLIDA!', color: '#FF5722', sub: 'LO LOGRASTE. Celebra este logro' },
 };
+
+// Set predefinido de "imagen" (emoji) por tipo de meta. La elección es
+// automática según el nombre que escribe el usuario ("viaje", "casa", ...).
+const GOAL_TYPES = {
+    'viaje': { key: 'viaje', emoji: '✈️' },
+    'vacacion': { key: 'vacacion', emoji: '✈️' },
+    'casa': { key: 'casa', emoji: '🏠' },
+    'apartamento': { key: 'casa', emoji: '🏠' },
+    'emergencia': { key: 'emergencia', emoji: '🛡️' },
+    'colchon': { key: 'emergencia', emoji: '🛡️' },
+    'imprevisto': { key: 'emergencia', emoji: '🛡️' },
+    'carro': { key: 'carro', emoji: '🚗' },
+    'moto': { key: 'moto', emoji: '🏍️' },
+    'deuda': { key: 'deuda', emoji: '📉' },
+    'educacion': { key: 'educacion', emoji: '🎓' },
+    'estudio': { key: 'educacion', emoji: '🎓' },
+    'regalo': { key: 'regalo', emoji: '🎁' },
+    'boda': { key: 'boda', emoji: '💍' },
+    'navidad': { key: 'navidad', emoji: '🎄' },
+    'inversion': { key: 'inversion', emoji: '📈' },
+    'negocio': { key: 'negocio', emoji: '💼' },
+    'ahorro': { key: 'ahorro', emoji: '💰' }
+};
+
+function getGoalType(name) {
+    const n = String(name || '').toLowerCase();
+    for (const [key, info] of Object.entries(GOAL_TYPES)) {
+        if (n.includes(key)) return { key: info.key, emoji: info.emoji };
+    }
+    return { key: 'meta', emoji: '🎯' };
+}
 
 function hexToRgba(hex, alpha) {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -40,7 +72,7 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
-async function generateCard(userName, milestoneId, extra) {
+async function generateCard(userName, milestoneId, extra, goalEmoji) {
     const info = MILESTONES[milestoneId];
     if (!info) throw new Error(`Unknown milestone: ${milestoneId}`);
 
@@ -66,6 +98,15 @@ async function generateCard(userName, milestoneId, extra) {
     ctx.fillStyle = info.color;
     ctx.font = 'bold 20px sans-serif';
     ctx.fillText('🦁 Leo', 38, 47);
+
+    // Goal image badge (emoji del tipo de meta elegido al crear la meta)
+    if (goalEmoji) {
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        drawRoundedRect(ctx, WIDTH - 90, 20, 60, 40, 20);
+        ctx.fill();
+        ctx.font = '24px sans-serif';
+        ctx.fillText(goalEmoji, WIDTH - 66, 47);
+    }
 
     // User name
     ctx.fillStyle = '#ffffff';
@@ -157,10 +198,11 @@ function getNewMilestones(fin, prevFin) {
         const prevPct = prev.goalTarget > 0 ? Math.min(100, Math.round((prev.balance || 0) / prev.goalTarget * 100)) : 0;
         if (pct >= 25 && prevPct < 25) milestones.push('goal-25');
         if (pct >= 50 && prevPct < 50) milestones.push('goal-50');
+        if (pct >= 75 && prevPct < 75) milestones.push('goal-75');
         if (pct >= 100 && prevPct < 100) milestones.push('goal-100');
     }
 
     return milestones;
 }
 
-module.exports = { generateCard, getNewMilestones, MILESTONES };
+module.exports = { generateCard, getNewMilestones, MILESTONES, GOAL_TYPES, getGoalType };

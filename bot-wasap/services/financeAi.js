@@ -39,7 +39,7 @@ Contexto del usuario:
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "register_expense" | "register_income" | "query" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
+  "intent": "register_expense" | "register_income" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
   "amount": <número en COP, 0 si no aplica>,
   "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
   "subcategory": "<subcategoría>",
@@ -53,6 +53,7 @@ Conceptos clave:
 - register_expense: cuando el usuario reporta una compra ("compré 18k en almuerzo", "pagué 50mil de mercado")
 - register_income: cuando reporta ingreso ("recibí sueldo", "me pagaron 2 millones")
 - query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto compré hoy?")
+- health_score: cuando pregunta por su salud financiera o score ("salud", "score", "como van mis finanzas", "que tal va mi plata", "/salud")
 - onboarding_name: PRIMERA INTERACCIÓN - responde al nombre
 - chat: conversación casual, saludos, agradecimientos
 - help: cuando pide ayuda o no sabes qué quiere
@@ -416,6 +417,17 @@ function fallbackInterpret(message, userSession) {
             amount: 0, category: '', description: '',
             needs_confirmation: false,
             response: `🎯 ¡Excelente que pienses en metas, ${name}! Decime: ¿para qué querés ahorrar? (ej: "un viaje", "un carro", "emergencias")`
+        };
+    }
+
+    // Health score: "/salud", "salud financiera", "¿cómo van mis finanzas?",
+    // "¿qué tal mi score?" (va ANTES de los patrones de query para no ser capturado)
+    if (/^\/?salud/i.test(t) || /(salud financiera|score|mis finanzas|como van mis finanzas|como voy con mis finanzas|como va mi plata|como voy de plata|como estoy de plata|como estoy (economica|financieramente|de salud)|que tal (esta|mi) (salud|score)|estado de (mi|la)?\s*salud|health)/i.test(t)) {
+        return {
+            intent: 'health_score',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: 'health_score'
         };
     }
 
