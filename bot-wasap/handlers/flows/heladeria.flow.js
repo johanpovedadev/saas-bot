@@ -434,10 +434,7 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
             return;
         }
         const yaElegido = flow.saboresSeleccionados.find(x => (x.CodigoProducto || x) === (sabor.CodigoProducto || sabor));
-        if (yaElegido) {
-            await say(sock, jid, `😊 *${sabor[dbFields.productName] || sabor}* ya lo elegiste. Elige otro sabor.`, ctx);
-            return;
-        }
+        if (yaElegido) continue;
         flow.saboresSeleccionados.push(sabor);
     }
 
@@ -659,9 +656,9 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
     const nombre = getProductName(product);
 
     // Varias unidades de un producto personalizable (sabores/toppings):
-    // validar si TODAS llevan la misma personalización o cada una diferente.
-    // La cascada de pedido completo (classifyOrderInput) pasa skipUnitsQuestion
-    // = true: ahí la misma personalización se asume para todas las unidades.
+    // siempre validar si TODAS llevan la misma personalización o cada una
+    // diferente (tanto en el flujo interactivo como en la cascada de pedido
+    // completo). skipUnitsQuestion solo lo usan llamadas internas puntuales.
     const hasOptions = (flow.counts.sabores > 0 || flow.counts.toppings > 0);
     if (qty > 1 && hasOptions && !skipUnitsQuestion) {
         flow.customization = {
@@ -812,10 +809,7 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
             return;
         }
         const yaElegido = customization.currentSabores.find(x => (x.CodigoProducto || x) === (sabor.CodigoProducto || sabor));
-        if (yaElegido) {
-            await say(sock, jid, `😊 *${sabor[dbFields.productName] || sabor}* ya lo elegiste. Elige otro sabor.`, ctx);
-            return;
-        }
+        if (yaElegido) continue;
         customization.currentSabores.push(sabor);
     }
 
@@ -1051,14 +1045,19 @@ function resolveProducts(items, ctx) {
     const cache = getProducts(ctx);
     const dbFields = getDbFields();
     const resolved = [];
+    // Quita la 's' final de cada palabra para que variantes en plural ("conos
+    // sencillos", "copas osito") matcheen con el nombre del catálogo.
+    const depluralize = (s) => String(s || '').split(' ').map(w => w.replace(/s$/, '')).join(' ');
     for (const it of (items || [])) {
         const targetCode = stripAccents(String(it.codigo || '')).toLowerCase();
         const targetName = stripAccents(String(it.nombre || '')).toLowerCase();
+        const targetNameSingular = depluralize(targetName);
         const product = cache.find(p => {
             const code = stripAccents(String(p[dbFields.productCode] || '')).toLowerCase();
             const name = stripAccents(String(p[dbFields.productName] || '')).toLowerCase();
             if (targetCode && code === targetCode) return true;
             if (targetName && (name === targetName || name.includes(targetName) || targetName.includes(name))) return true;
+            if (targetNameSingular && (name === targetNameSingular || name.includes(targetNameSingular) || targetNameSingular.includes(name))) return true;
             return false;
         });
         if (product) {
@@ -1612,12 +1611,22 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         }
     }
 
-    // 5) Aplicar cantidad si es el turno (flujo guiado). En la cascada de
-    //    pedido completo se asume la MISMA personalización para todas las
-    //    unidades (skipUnitsQuestion), sin interrumpir con la pregunta 1/2.
+    // 4b) Pedido completo detectado (producto + cantidad, sin toppings): la
+    //     cascada quedó en la pregunta de toppings OPCIONALES. Avanzar en
+    //     silencio a la fase de cantidad para no bloquear ni perder la
+    //     cantidad del pedido.
     const cant = Number(result.cantidad);
+    if (userSession.heladoFlow && userSession.phase === HELADO_TOPPINGS && targetProduct && cant >= 1 && cant <= 100 &&
+        (!result.toppings || result.toppings.length === 0)) {
+        userSession.phase = HELADO_QUANTITY;
+        acted = true;
+    }
+
+    // 5) Aplicar cantidad si es el turno (flujo guiado). Si hay más de una
+    //    unidad con opciones de personalización, se pregunta 1) iguales /
+    //    2) cada una diferente (no se asume la misma personalización).
     if (userSession.heladoFlow && userSession.phase === HELADO_QUANTITY && cant >= 1 && cant <= 100) {
-        await handleQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx, true);
+        await handleQuantity(sock, jid, String(Math.trunc(cant)), userSession, ctx);
         acted = true;
     }
 

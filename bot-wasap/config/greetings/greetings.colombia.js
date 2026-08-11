@@ -129,6 +129,8 @@ const COLOMBIAN_GREETINGS = [
     // ===== VARIANTES CON EMOTICONES/LENGUAJE DIGITAL =====
     'holaa',
     'holaaa',
+    'holi',
+    'holii',
     'holiii',
     'holiiii',
     'holaaaa',

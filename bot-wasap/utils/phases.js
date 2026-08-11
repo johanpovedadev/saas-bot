@@ -59,7 +59,10 @@ const PHASE = {
     HELADO_SABORES: 'HELADO_SABORES',       // Selección de sabores obligatorios
     HELADO_TOPPINGS: 'HELADO_TOPPINGS',     // Selección de toppings opcionales
     HELADO_QUANTITY: 'HELADO_QUANTITY',     // Cantidad + agregar al carrito
-    HELADO_POST_ADD: 'HELADO_POST_ADD'      // Opciones post-compra (seguir/pagar/menú) - flujo heladería
+    HELADO_POST_ADD: 'HELADO_POST_ADD',     // Opciones post-compra (seguir/pagar/menú) - flujo heladería
+    HELADO_UNITS_MODE: 'HELADO_UNITS_MODE', // Varias unidades: 1) todas iguales / 2) cada una diferente
+    HELADO_PER_UNIT_SABORES: 'HELADO_PER_UNIT_SABORES',     // Sabores de una unidad específica
+    HELADO_PER_UNIT_TOPPINGS: 'HELADO_PER_UNIT_TOPPINGS'     // Toppings de una unidad específica
 };
 
 module.exports = PHASE;

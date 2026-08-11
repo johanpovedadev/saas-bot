@@ -373,7 +373,29 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
 
     const raw = address.trim();
 
-    const parts = raw.split(',').map(p => p.trim()).filter(Boolean);
+    // Soporte para enviar los datos en UN SOLO MENSAJE:
+    //  - Con comas (formato recomendado): "Dirección, Nombre, Teléfono, Pago".
+    //  - Sin comas pero con UNA CAMPO POR LÍNEA (ej: dirección en la primera
+    //    línea, luego nombre, teléfono y método de pago), siempre que alguna
+    //    línea parezca un campo de entrega (teléfono ≥7 dígitos o método de
+    //    pago). Si no hay señal clara, se conserva TODO como una sola
+    //    dirección (para no partir una dirección pegada en varias líneas).
+    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const hasCommas = raw.includes(',');
+    const hasDeliveryField = lines.some(l => {
+        const digits = l.replace(/[^0-9]/g, '');
+        return digits.length >= 7 || /efectivo|transferencia|nequi|daviplata|tarjeta|pago/i.test(l);
+    });
+
+    let parts;
+    if (hasCommas) {
+        parts = raw.split(',').map(p => p.trim()).filter(Boolean);
+    } else if (lines.length >= 2 && hasDeliveryField) {
+        parts = lines;
+    } else {
+        parts = [raw.trim()];
+    }
+
     if (parts.length >= 2) {
         let addrPart = parts[0];
         let namePart = null;
