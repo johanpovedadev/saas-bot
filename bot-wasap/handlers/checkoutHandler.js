@@ -382,9 +382,18 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     //    dirección (para no partir una dirección pegada en varias líneas).
     const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const hasCommas = raw.includes(',');
-    const hasDeliveryField = lines.some(l => {
+    // Una línea parece TELÉFONO si tiene ≥7 dígitos y casi no tiene letras
+    // (ej: "3139848800", "+57 3139848800", "cel 3139848800"). Una dirección
+    // tipo "Cra 123 #45-67" tiene varios dígitos pero también letras, así que
+    // NO cuenta como campo de entrega: no se parte una dirección pegada en
+    // varias líneas solo por tener números.
+    const looksLikePhone = (l) => {
         const digits = l.replace(/[^0-9]/g, '');
-        return digits.length >= 7 || /efectivo|transferencia|nequi|daviplata|tarjeta|pago/i.test(l);
+        const nonDigitChars = l.replace(/[0-9]/g, '').replace(/\s+/g, '').length;
+        return digits.length >= 7 && nonDigitChars <= 3;
+    };
+    const hasDeliveryField = lines.some(l => {
+        return looksLikePhone(l) || /efectivo|transferencia|nequi|daviplata|tarjeta|pago/i.test(l);
     });
 
     let parts;

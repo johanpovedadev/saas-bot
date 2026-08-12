@@ -124,6 +124,16 @@ async function send(text) {
     console.log('   order:', JSON.stringify({ n: s6d.order.name, a: s6d.order.address }));
     console.log('   fase:', s6d.phase);
 
+    // ============ BUG 6e: dirección multilínea CON números (no partirla) ============
+    console.log('=== BUG 6e: "Cra 123 #45-67\\nal lado del parque" (dirección pegada en 2 líneas) ===');
+    sessionService.resetChat(JID, ctx);
+    const s6e = ctx.sessions[JID];
+    s6e.order = { items: [{ codigo: '21', nombre: 'Copa', precio: 5000, cantidad: 1, sabores: [], toppings: [] }] };
+    s6e.phase = PHASE.CHECK_DIR;
+    await send('Cra 123 #45-67\nal lado del parque');
+    console.log('   order:', JSON.stringify({ n: s6e.order.name, a: s6e.order.address }));
+    console.log('   fase:', s6e.phase);
+
     // ============ BUG 3: ghost lulo - 2 sabores, "lulo maracuya arequipe" ============
     console.log('=== BUG 3: producto 2 sabores, usuario escribe "lulo maracuya arequipe" ===');
     heladeriaAi.interpretOrderText = async () => ({ producto: null, sabores: [], toppings: [], cantidad: null, direccion: null, duda: null });
