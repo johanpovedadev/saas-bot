@@ -195,6 +195,22 @@ const TOPPING_STOPWORDS = new Set([
     'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
 ]);
 
+const SABOR_STOPWORDS = new Set([
+    'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
+    'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'dame',
+    'añade', 'añadele', 'dale', 'me', 'te', 'le', 'que', 'se', 'a', 'en', 'al', 'es', 'porfa',
+    'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más', 'otro', 'otra', 'otros',
+    'otras', 'más'
+]);
+
+/**
+ * Nombre normalizado de un sabor (sin acentos, minúsculas) para matching.
+ */
+function normSaborName(sabor, dbFields) {
+    const f = dbFields || getDbFields();
+    return stripAccents(String((sabor && (sabor[f.productName] || sabor)) || '').toLowerCase());
+}
+
 function formatToppingsGrouped(ctx) {
     const dbFields = getDbFields();
     const list = buildOptionLists(ctx).toppings;
@@ -240,7 +256,7 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
             `🍦 *${nombre}* seleccionado.\n\n` +
             `📍 *Paso 1:* Elige *${counts.sabores} ${palabra}*:\n\n` +
             `${lista || '_No hay sabores disponibles._'}\n\n` +
-            `_Ejemplo: s1 s2 s3_\n\n` +
+            `_Los sabores pueden repetirse o ser distintos (ej: s1 s1 s3)._\n\n` +
             `(Después podrás agregar toppings opcionales o escribir *sin*)`, ctx);
         return;
     }
@@ -409,11 +425,18 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
 
     if (noKeywordsRegex.test(input)) {
         await say(sock, jid,
-            `❌ Para este producto los sabores son obligatorios. Elige *${flow.counts.sabores}* ${flow.counts.sabores > 1 ? 'sabores' : 'sabor'} (ej: *s1 s2 s3*).`, ctx);
+            `❌ Para este producto los sabores son obligatorios. Elige *${flow.counts.sabores}* ${flow.counts.sabores > 1 ? 'sabores' : 'sabor'} (pueden repetirse, ej: *s1 s1*).`, ctx);
         return;
     }
 
-    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+        .filter(t => !SABOR_STOPWORDS.has(t) && t.length >= 2);
+    // Repetición deliberada del MISMO token ("lulo lulo" = 2 bolas de lulo) se
+    // cuenta como 2 sabores. Dos tokens DISTINTOS que resuelven al mismo sabor
+    // ("lulo" + "maracuya" → "Lulo Maracuya") son el mismo sabor nombrado de
+    // dos formas → se cuentan UNA sola vez (no rompe el flujo ni infla).
+    const pushedThisMessage = new Set();
+    const tokenProduct = new Map();
     for (const tok of tokens) {
         if (flow.saboresSeleccionados.length >= flow.counts.sabores) break;
         const m = tok.match(/^s(\d+)$/i);
@@ -426,15 +449,17 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
                 return;
             }
         } else {
-            sabor = saboresList.find(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase().includes(tok)) || null;
+            sabor = saboresList.find(s => normSaborName(s, dbFields).includes(tok)) || null;
         }
         if (!sabor) {
             if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
             await say(sock, jid, `❌ No reconocí "${tok}". Escribe códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
             return;
         }
-        const yaElegido = flow.saboresSeleccionados.find(x => (x.CodigoProducto || x) === (sabor.CodigoProducto || sabor));
-        if (yaElegido) continue;
+        const id = sabor.CodigoProducto || sabor;
+        if (pushedThisMessage.has(id) && tokenProduct.get(tok) !== id) continue;
+        pushedThisMessage.add(id);
+        tokenProduct.set(tok, id);
         flow.saboresSeleccionados.push(sabor);
     }
 
@@ -445,7 +470,7 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
         const falta = flow.counts.sabores - sel.length;
         const faltan = falta > 1 ? `Te faltan *${falta}* sabores más` : `Te falta *1* sabor más`;
         await say(sock, jid,
-            `✅ ${nombres ? `Sabores hasta ahora: *${nombres}*.` : ''} ${faltan}.\n\n_Ejemplo: s2 s5_`, ctx);
+            `✅ ${nombres ? `Sabores hasta ahora: *${nombres}*.` : ''} ${faltan}.\n\n_Los sabores pueden repetirse o ser distintos. Ejemplo: s2 s2_`, ctx);
         return;
     }
 
@@ -763,7 +788,7 @@ async function askPerUnitSabores(sock, jid, userSession, ctx) {
         await say(sock, jid,
             `🍦 Unidad *${unitNum}/${qty}* — elige *${flow.counts.sabores} ${palabra}*:\n\n` +
             `${lista || '_No hay sabores disponibles._'}\n\n` +
-            `_Ejemplo: s1 s2 s3_`, ctx);
+            `_Los sabores pueden repetirse o ser distintos. Ejemplo: s1 s2 s3_`, ctx);
     } else {
         await askPerUnitToppings(sock, jid, userSession, ctx);
     }
@@ -784,11 +809,16 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
 
     if (noKeywordsRegex.test(input)) {
         await say(sock, jid,
-            `❌ Para este producto los sabores son obligatorios. Elige *${flow.counts.sabores}* ${flow.counts.sabores > 1 ? 'sabores' : 'sabor'} (ej: *s1 s2 s3*).`, ctx);
+            `❌ Para este producto los sabores son obligatorios. Elige *${flow.counts.sabores}* ${flow.counts.sabores > 1 ? 'sabores' : 'sabor'} (pueden repetirse, ej: *s1 s1*).`, ctx);
         return;
     }
 
-    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+        .filter(t => !SABOR_STOPWORDS.has(t) && t.length >= 2);
+    // Misma lógica que handleSabores: repetición deliberada del mismo token se
+    // cuenta; dos tokens distintos que resuelven al mismo sabor se cuentan una vez.
+    const pushedThisMessage = new Set();
+    const tokenProduct = new Map();
     for (const tok of tokens) {
         if (customization.currentSabores.length >= flow.counts.sabores) break;
         const m = tok.match(/^s(\d+)$/i);
@@ -801,15 +831,17 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
                 return;
             }
         } else {
-            sabor = saboresList.find(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase().includes(tok)) || null;
+            sabor = saboresList.find(s => normSaborName(s, dbFields).includes(tok)) || null;
         }
         if (!sabor) {
             if (await classifyOrderInput(sock, jid, text, userSession, ctx)) return;
             await say(sock, jid, `❌ No reconocí "${tok}". Escribe códigos como *S1*, *S2* o el nombre del sabor.`, ctx);
             return;
         }
-        const yaElegido = customization.currentSabores.find(x => (x.CodigoProducto || x) === (sabor.CodigoProducto || sabor));
-        if (yaElegido) continue;
+        const id = sabor.CodigoProducto || sabor;
+        if (pushedThisMessage.has(id) && tokenProduct.get(tok) !== id) continue;
+        pushedThisMessage.add(id);
+        tokenProduct.set(tok, id);
         customization.currentSabores.push(sabor);
     }
 
@@ -820,7 +852,7 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
         const falta = flow.counts.sabores - sel.length;
         const faltan = falta > 1 ? `Te faltan *${falta}* sabores más` : `Te falta *1* sabor más`;
         await say(sock, jid,
-            `✅ ${nombres ? `Sabores hasta ahora: *${nombres}*.` : ''} ${faltan}.\n\n_Ejemplo: s2 s5_`, ctx);
+            `✅ ${nombres ? `Sabores hasta ahora: *${nombres}*.` : ''} ${faltan}.\n\n_Los sabores pueden repetirse o ser distintos. Ejemplo: s2 s2_`, ctx);
         return;
     }
 
@@ -1440,7 +1472,7 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
             await say(sock, jid,
                 `🍦 *${nombre}* — elige *${counts.sabores} ${palabra}*:\n\n` +
                 `${lista || '_No hay sabores disponibles._'}\n\n` +
-                `_Ejemplo: s1 s2 s3_`, ctx);
+                `_Los sabores pueden repetirse o ser distintos (ej: s1 s1 s3)._`, ctx);
             return;
         }
         case HELADO_TOPPINGS: {
