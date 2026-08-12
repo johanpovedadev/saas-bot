@@ -270,15 +270,18 @@ async function testFlow() {
     const adminNotif = sock.sent.find(m => m.jid === ADMIN_JID && m.text && m.text.includes('Solicitud de upgrade'));
     check(!!adminNotif, 'solicitud de upgrade notifica al admin');
 
-    // Gate en handle(): free -> bloquea la conversación IA
+    // Plan Gratis en handle(): menú SIN IA — ya NO bloquea con el upsell de
+    // premium; el texto natural lo entiende el parser determinista (confirmación).
     sock.sent.length = 0;
     const blockedJid = '_t_blocked@telegram';
     financeStore.saveFinance(blockedJid, makeFin({ name: 'Gratis', trialStart: Date.now() }));
     await financeFlow.handle(sock, blockedJid, 'compré 10 mil en almuerzo', makeSession(null, 'fin_main'), ctx);
-    const blockMsg = sock.sent.find(m => m.jid === blockedJid && m.text && m.text.includes('Master'));
-    check(!!blockMsg, 'gate por plan bloquea conversación de free (muestra planes)');
+    const blockMsg = sock.sent.find(m => m.jid === blockedJid && m.text && m.text.includes('no incluye IA'));
+    check(!blockMsg, 'free ya NO recibe el bloqueo de premium (usa el menú sin IA)');
+    const confirmPrompt = sock.sent.find(m => m.jid === blockedJid && m.text && m.text.includes('¿Es correcto?'));
+    check(!!confirmPrompt, 'free registra el gasto con confirmación (parser determinista)');
     check(!sock.sent.some(m => m.jid === blockedJid && m.text && m.text.includes('Compra registrada')),
-        'no se registra la compra del usuario bloqueado');
+        'la compra solo se guarda al confirmar');
 
     // Admin que ya tiene plan: "pro" informa su estado (free -> muestra planes)
     sock.sent.length = 0;

@@ -20,6 +20,14 @@ const CONFIRM_VARIANTS = [
     'Hecho. Un paso más cerca de tus metas 💪'
 ];
 
+const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
+    `2️⃣ Registrar un ingreso\n` +
+    `3️⃣ Ver mi resumen y saldo\n` +
+    `4️⃣ Mi salud financiera\n` +
+    `5️⃣ Mis metas de ahorro\n` +
+    `6️⃣ Invitar amigos (código)\n` +
+    `7️⃣ Planes y actualizar a Pro`;
+
 function initFinance(userSession) {
     if (!userSession.finance) {
         userSession.finance = {
@@ -462,6 +470,9 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await showWelcome(sock, jid, ctx);
     }
     if (t === '/help') {
+        if (fin.name && !canUseAi(jid)) {
+            return await showQuickMenu(sock, jid, fin, ctx);
+        }
         return await say(sock, jid,
             `😊 Podés decirme cosas como:\n\n` +
             `💸 *"Compré 18 mil en almuerzo"*\n` +
@@ -517,12 +528,11 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
     }
 
-    // Gate de plan: bloquear la conversación IA (texto) cuando el usuario no
-    // tiene un plan con IA activo (free siempre, basic sin cupo/vencido). El
-    // gate de audio/imagen se hace en handler.js vía isPremiumBlocked/onPremiumBlocked.
+    // Plan Gratis: menú numerado con opciones SIN IA (registrar, resumen, salud,
+    // metas, referidos, planes). El parser determinista entiende textos naturales
+    // sin consumir IA. Los planes con IA siguen el camino conversacional normal.
     if (userSession.phase === PHASE.FIN_MAIN && !canUseAi(jid)) {
-        await showPremiumRequired(sock, jid, ctx);
-        return;
+        return await handleFreeUser(sock, jid, t, userSession, ctx, fin);
     }
 
     // Conversational AI
@@ -610,6 +620,9 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
         `_"¿Cuánto tengo?"_\n\n` +
         `¿Qué querés registrar hoy?`,
         ctx);
+    if (!canUseAi(jid)) {
+        await showQuickMenu(sock, jid, fin, ctx, `🦁 Estamos listos, *${fin.name}*!`);
+    }
 }
 
 async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
@@ -625,12 +638,18 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
             ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
               `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n` +
               goalLine +
-              `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n` +
-              `¿Querés seguir registrando, ver tu resumen o hablar de metas?`
-            : `Todavía no has registrado nada. Podés empezar cuando quieras:\n\n` +
-              `_"Compré 15 mil en desayuno"_\n` +
-              `_"Recibí 500 mil de freelance"_`),
+              `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n`
+            : `Todavía no has registrado nada.\n\n`),
         ctx);
+    if (!canUseAi(jid)) {
+        await showQuickMenu(sock, jid, fin, ctx);
+    } else {
+        await say(sock, jid,
+            txCount > 0
+                ? `¿Querés seguir registrando, ver tu resumen o hablar de metas?`
+                : `Podés empezar cuando quieras:\n\n_"Compré 15 mil en desayuno"_\n_"Recibí 500 mil de freelance"_`,
+            ctx);
+    }
 }
 
 async function handleGoals(sock, jid, text, userSession, ctx, fin) {
@@ -697,58 +716,50 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
     }
 }
 
-async function handleConversation(sock, jid, text, userSession, ctx, fin) {
-    // Consume cupo de IA (Basic). Master ilimitado; free nunca llega aquí por el
-    // gate. Si el cupo se agotó (p.ej. media de una llamada previa), bloquea.
-    const consumption = financeAdmin.consumeAiUsage(jid);
-    if (!consumption.allowed) {
-        await showPremiumRequired(sock, jid, ctx);
-        return;
-    }
+/**
+ * Menú numerado del plan Gratis (opciones SIN IA). Se reutiliza en el check-in,
+ * la bienvenida, /help y cuando el parser determinista no entiende el mensaje.
+ */
+async function showQuickMenu(sock, jid, fin, ctx, header) {
+    const greeting = header ||
+        `🦁 ${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]}, *${fin.name}*!`;
+    await say(sock, jid,
+        `${greeting}\n\n` +
+        `Elegí una opción o escribime natural (ej: _"compré 18 mil en almuerzo"_) 😉\n\n` +
+        FREE_MENU_OPTIONS,
+        ctx);
+}
 
-    const result = await financeAi.interpret(text, userSession);
-
-    if (!result) {
-        await say(sock, jid,
-            `😅 No entendí bien. ¿Puedes decirlo de otra forma?\n\nPor ejemplo: _"Compré 18 mil en almuerzo"_ o _"¿Cuánto tengo?"_`,
-            ctx);
-        return;
-    }
-
+/**
+ * Aplica el resultado del interpretador (IA o parser determinista) a la sesión:
+ * registra gastos/ingresos, confirma, muestra resumen, salud, metas, etc.
+ */
+async function applyIntent(sock, jid, result, userSession, ctx, fin) {
     switch (result.intent) {
         case 'register_expense':
+        case 'register_income': {
+            const type = result.intent === 'register_expense' ? 'expense' : 'income';
+            const cat = result.category || (type === 'expense' ? 'Otros' : 'Ingreso');
+            const desc = result.description || (type === 'expense' ? 'Compra' : 'Ingreso');
             if (result.needs_confirmation && result.amount > 0) {
                 fin.pendingConfirm = {
-                    type: 'expense',
+                    type,
                     amount: result.amount,
-                    category: result.category || 'Otros',
-                    description: result.description || 'Compra',
+                    category: cat,
+                    description: desc,
                     date: result.date || 'hoy'
                 };
                 await say(sock, jid, result.response, ctx);
             } else if (result.amount > 0) {
-                await saveAndConfirm(sock, jid, 'expense', result.amount, result.category || 'Otros', result.description || 'Compra', fin, ctx);
+                await saveAndConfirm(sock, jid, type, result.amount, cat, desc, fin, ctx);
             } else {
-                await say(sock, jid, result.response || `😅 ¿Cuánto compraste? No entendí el monto.`, ctx);
+                await say(sock, jid, result.response ||
+                    (type === 'expense'
+                        ? `😅 ¿Cuánto compraste? Decímelo así: _"18 mil en almuerzo"_`
+                        : `😅 ¿Cuánto ingresó? Decímelo así: _"Recibí 2 millones de sueldo"_`), ctx);
             }
             break;
-
-        case 'register_income':
-            if (result.needs_confirmation && result.amount > 0) {
-                fin.pendingConfirm = {
-                    type: 'income',
-                    amount: result.amount,
-                    category: result.category || 'Ingreso',
-                    description: result.description || 'Ingreso',
-                    date: result.date || 'hoy'
-                };
-                await say(sock, jid, result.response, ctx);
-            } else if (result.amount > 0) {
-                await saveAndConfirm(sock, jid, 'income', result.amount, result.category || 'Ingreso', result.description || 'Ingreso', fin, ctx);
-            } else {
-                await say(sock, jid, result.response || `😅 ¿Cuánto ingresó? No entendí el monto.`, ctx);
-            }
-            break;
+        }
 
         case 'query':
         case 'chat':
@@ -784,11 +795,93 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
             break;
 
         default:
-            await say(sock, jid, result.response || `😅 No entendí. Recuerda que puedes decirme cosas como:\n\n` +
-                `• "Compré 18 mil en almuerzo"\n` +
-                `• "Recibí 2 millones de sueldo"\n` +
-                `• "¿Cuánto tengo?"`, ctx);
+            await say(sock, jid, result.response || `😅 No entendí. Escribí un número de la lista o decime algo como _"Compré 18 mil en almuerzo"_.`, ctx);
     }
+}
+
+/**
+ * Experiencia del plan Gratis en FIN_MAIN: menú numerado de opciones SIN IA.
+ * El parser determinista (fallbackInterpret) registra gastos/ingresos, consulta
+ * el resumen, la salud, las metas y los referidos sin consumir cupo de IA y sin
+ * bloquear al usuario con el upsell de premium.
+ */
+async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
+    const option = t.match(/^([1-7])$/);
+    if (option) {
+        switch (option[1]) {
+            case '1':
+                await say(sock, jid,
+                    `💸 Perfecto. Decime qué compraste y cuánto:\n\n` +
+                    `_"18 mil en almuerzo"_\n` +
+                    `_"Compré 50 mil en mercado"_`,
+                    ctx);
+                return;
+            case '2':
+                await say(sock, jid,
+                    `💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n` +
+                    `_"Recibí 2 millones de sueldo"_\n` +
+                    `_"Gané 300 mil por un trabajo"_`,
+                    ctx);
+                return;
+            case '3': {
+                const res = await financeAi.interpret('resumen', userSession, true);
+                await say(sock, jid, res?.response ||
+                    `📊 *Tu estado, ${fin.name}:*\n\n💵 Saldo: $${(fin.balance || 0).toLocaleString('es-CO')}\n💸 Hoy: $${(fin.todaySpending || 0).toLocaleString('es-CO')}`, ctx);
+                return;
+            }
+            case '4':
+                await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
+                return;
+            case '5':
+                userSession.phase = PHASE.FIN_GOALS;
+                fin.goalStep = 0;
+                await say(sock, jid,
+                    `🎯 ¡Excelente que pienses en metas! Decime: ¿para qué querés ahorrar?\n\n_(ej: "un viaje", "un carro", "emergencias")_`,
+                    ctx);
+                return;
+            case '6':
+                await handleReferralInfo(sock, jid, fin, ctx);
+                return;
+            case '7':
+                await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
+                return;
+        }
+        return;
+    }
+
+    // Texto natural: parser determinista (sin IA, sin consumir cupo). Así un
+    // usuario Gratis puede decir "compré 18 mil en almuerzo" y se registra igual.
+    const result = await financeAi.interpret(t, userSession, true);
+    if (!result) {
+        await showQuickMenu(sock, jid, fin, ctx);
+        return;
+    }
+    await applyIntent(sock, jid, result, userSession, ctx, fin);
+    if (result.intent === 'chat' || result.intent === 'help' || result.intent === 'onboarding_name') {
+        await showQuickMenu(sock, jid, fin, ctx);
+    }
+}
+
+async function handleConversation(sock, jid, text, userSession, ctx, fin) {
+    // Consume cupo de IA (Basic). Master ilimitado; free nunca llega aquí por el
+    // gate (usa handleFreeUser). Si el cupo se agotó (p.ej. media de una llamada
+    // previa), bloquea.
+    const consumption = financeAdmin.consumeAiUsage(jid);
+    if (!consumption.allowed) {
+        await showPremiumRequired(sock, jid, ctx);
+        return;
+    }
+
+    const result = await financeAi.interpret(text, userSession);
+
+    if (!result) {
+        await say(sock, jid,
+            `😅 No entendí bien. ¿Puedes decirlo de otra forma?\n\nPor ejemplo: _"Compré 18 mil en almuerzo"_ o _"¿Cuánto tengo?"_`,
+            ctx);
+        return;
+    }
+
+    await applyIntent(sock, jid, result, userSession, ctx, fin);
 }
 
 async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
@@ -867,7 +960,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
             : '';
 
     await say(sock, jid,
-        `✅ *${type === 'expense' ? 'Compra' : 'Ingreso'} registrado!*\n` +
+        `✅ *${type === 'expense' ? 'Compra registrada' : 'Ingreso registrado'}!*\n` +
         confirmMsg + '\n\n' +
         `${type === 'expense' ? '💸' : '💰'} $${amount.toLocaleString('es-CO')} — ${description}\n` +
         `🏷️ ${category}\n\n` +
@@ -980,15 +1073,20 @@ async function showWelcome(sock, jid, ctx) {
             `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.${notif}` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
-                  `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n` +
-                  `¿Qué necesitás?\n` +
-                  `• Registrar movimiento\n` +
-                  `• Ver resumen\n` +
-                  `• Hablar de metas\n` +
-                  (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`)
-                : `Todavía no registraste nada. Podés arrancar cuando quieras:\n\n` +
-                  `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`),
+                  `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n`
+                : `Todavía no registraste nada. Podés arrancar cuando quieras.\n\n`),
             ctx);
+        if (!canUseAi(jid)) {
+            await showQuickMenu(sock, jid, fin, ctx);
+        } else {
+            await say(sock, jid,
+                `¿Qué necesitás?\n` +
+                `• Registrar movimiento\n` +
+                `• Ver resumen\n` +
+                `• Hablar de metas\n` +
+                (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`),
+                ctx);
+        }
         return;
     }
     await say(sock, jid,
@@ -1012,7 +1110,7 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     if (fin.name) {
         userSession.phase = PHASE.FIN_MAIN;
         if (!canUseAi(jid)) {
-            await showPremiumRequired(sock, jid, ctx);
+            await handleFreeUser(sock, jid, text, userSession, ctx, fin);
             return;
         }
         await handleConversation(sock, jid, text, userSession, ctx, fin);

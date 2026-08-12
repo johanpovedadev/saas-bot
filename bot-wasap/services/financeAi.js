@@ -81,7 +81,12 @@ Reglas de negocio:
 - needs_confirmation debe ser TRUE para registros de compras/ingresos.`;
 }
 
-async function interpret(message, userSession) {
+async function interpret(message, userSession, forceFallback) {
+    // forceFallback: usá SOLO el parser determinista (sin IA). Lo usa el plan
+    // Gratis para que registre gastos/ingresos y consulte sin consumir cupo.
+    if (forceFallback) {
+        return fallbackInterpret(message, userSession);
+    }
     const key = process.env.GEMINI_API_KEY;
     if (!key || key.includes('TU_') || key.includes('AQUI') || key.length < 20) {
         logger.warn('financeAi: Gemini key no disponible, usando fallback');
