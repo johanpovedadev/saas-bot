@@ -169,6 +169,30 @@ async function send(text) {
 
     heladeriaAi.interpretOrderText = async () => ({ producto: null, sabores: [], toppings: [], cantidad: null, direccion: null, duda: null });
 
+    // ============ VER CARRITO tras "seguir comprando" (en el menú) ============
+    console.log('=== VER CARRITO: en SELECCION_OPCION con carrito lleno, escribe "carrito" ===');
+    sessionService.resetChat(JID, ctx);
+    const s7 = ctx.sessions[JID];
+    s7.carrito = [
+        { codigo: 'A1', nombre: 'Cono sencillo', precio: 3000, cantidad: 2, sabores: ['Lulo Maracuya'], toppings: [] },
+        { codigo: 'A2', nombre: 'Copa Osito', precio: 7000, cantidad: 1, sabores: ['Arequipe'], toppings: ['Galletas Oreo'] }
+    ];
+    s7.phase = PHASE.SELECCION_OPCION;
+    await send('carrito');
+    console.log('   fase:', s7.phase);
+    console.log('   muestra-resumen:', /Resumen de tu pedido/i.test(sent.join('\n')));
+    console.log('   lista-items:', /Cono sencillo/i.test(sent.join('\n')) && /Copa Osito/i.test(sent.join('\n')));
+
+    console.log('=== VER CARRITO: variante "mi pedido" ===');
+    await send('mi pedido');
+    console.log('   fase:', s7.phase);
+    console.log('   muestra-resumen:', /Resumen de tu pedido/i.test(sent.join('\n')));
+
+    console.log('=== VER CARRITO: "ver mi pedido por favor" ===');
+    await send('ver mi pedido por favor');
+    console.log('   fase:', s7.phase);
+    console.log('   muestra-resumen:', /Resumen de tu pedido/i.test(sent.join('\n')));
+
     console.log('\nDONE');
     process.exit(0);
 })();

@@ -84,6 +84,12 @@ const HELADERIA_PHASES = [
 const CATEGORIA_SABORES = 'Sabores_Helado';
 const CATEGORIA_TOPPINGS = 'Toppings';
 
+// Intención de ver el carrito/pedido actual ("carrito", "mi pedido",
+// "ver mi pedido", "resumen de mi pedido"...). Permite que un usuario que
+// quedó en el menú tras "seguir comprando" vuelva a ver su pedido.
+// Solo aplica si la sesión tiene ítems (ver hasCartItems).
+const CART_VIEW_REGEX = /^((quiero|quisiera|necesito|puedo)\s+)?(ver|mostrar|revisar|mirar)?\s*(el\s+|mi\s+)?(carrito|pedido|orden|resumen)(\s+(del|de\s+mi)\s+(pedido|carrito|orden))?(\s+por\s+favou?r)?\s*[?.!]*$/;
+
 function stripAccents(s) {
     return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -143,6 +149,13 @@ function ensureCarrito(userSession) {
 
 function clearCarrito(userSession) {
     userSession.carrito = [];
+}
+
+function hasCartItems(userSession) {
+    if (!userSession) return false;
+    if (Array.isArray(userSession.carrito) && userSession.carrito.length > 0) return true;
+    if (userSession.order && Array.isArray(userSession.order.items) && userSession.order.items.length > 0) return true;
+    return false;
 }
 
 /**
@@ -355,7 +368,11 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         resetGuidedState(userSession);
         userSession.errorCount = 0;
         userSession.phase = PHASE.SELECCION_OPCION;
-        await say(sock, jid, '🍨 ¡Perfecto! Puedes agregar más productos a tu pedido. Elige una opción del menú:', ctx);
+        const cartCount = ensureCarrito(userSession).length;
+        const cartHint = cartCount > 0
+            ? ` Tienes *${cartCount}* ${cartCount === 1 ? 'producto' : 'productos'} en tu pedido: escribe *carrito* cuando quieras verlo.`
+            : '';
+        await say(sock, jid, `🍨 ¡Perfecto! Puedes agregar más productos a tu pedido.${cartHint} Elige una opción del menú:`, ctx);
         await menuHandler.sendMainMenu(sock, jid, ctx);
         return;
     }
@@ -1915,6 +1932,15 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
 
     if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
+
+    // Usuario con ítems en el pedido puede volver a verlo desde cualquier fase
+    // (incluido el menú tras "seguir comprando") escribiendo "carrito"/"mi pedido".
+    const cartIntent = stripAccents(String(text || '').toLowerCase().trim());
+    if (hasCartItems(userSession) && CART_VIEW_REGEX.test(cartIntent)) {
+        logger.info(`[${jid}] -> Ver carrito/pedido ("${text}")`);
+        await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+        return;
+    }
 
     if (CHECKOUT_PHASES.includes(userSession.phase)) {
         if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
