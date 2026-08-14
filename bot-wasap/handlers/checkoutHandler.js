@@ -355,13 +355,130 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
 }
 
+// Una parte "parece TELÉFONO" si tiene ≥7 dígitos y casi no tiene letras
+// (ej: "3139848800", "+57 3139848800", "cel 3139848800"). Una dirección tipo
+// "Cra 123 #45-67" tiene varios dígitos pero también letras, así que NO
+// cuenta como teléfono.
+function looksLikePhone(p) {
+    const digits = p.replace(/[^0-9]/g, '');
+    const nonDigitChars = p.replace(/[0-9]/g, '').replace(/\s+/g, '').length;
+    return digits.length >= 7 && nonDigitChars <= 3;
+}
+
+function looksLikePayment(p) {
+    return /efectivo|transferencia|nequi|daviplata|tarjeta|pago/i.test(p);
+}
+
+// Una parte "parece DIRECCIÓN" si trae una palabra típica de dirección
+// colombiana, o si trae algún dígito (una dirección casi siempre tiene un
+// número de casa/calle; un nombre de persona casi nunca trae dígitos). Se
+// evalúa DESPUÉS de descartar teléfono/pago, así que un número de teléfono
+// suelto ya no llega hasta acá.
+function looksLikeAddress(p) {
+    if (/\b(cra|cll|calle|carrera|diagonal|diag|avenida|av|transv|trav|tv|kr|cr|manzana|mz|barrio|bloque|apto|casa|torre|vereda)\b/i.test(p)) return true;
+    return /\d/.test(p);
+}
+
+/**
+ * Clasifica por CONTENIDO (no por posición) las partes de un mensaje de
+ * entrega ("Dirección, Nombre, Teléfono, Pago" o variantes fuera de orden),
+ * y guarda en userSession.order lo que logre identificar. No asume que la
+ * primera parte es la dirección — antes, si el cliente mandaba los datos en
+ * otro orden (ej. nombre primero), la dirección terminaba mal asignada.
+ */
+function classifyDeliveryParts(parts, userSession) {
+    let addrPart = null;
+    let namePart = null;
+    let phonePart = null;
+    let paymentPart = null;
+    const extra = [];
+
+    for (const p of parts) {
+        if (!phonePart && looksLikePhone(p)) {
+            phonePart = p.replace(/[^0-9]/g, '');
+        } else if (!paymentPart && looksLikePayment(p)) {
+            const low = p.toLowerCase();
+            paymentPart = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
+        } else if (!addrPart && looksLikeAddress(p)) {
+            addrPart = p;
+        } else if (!namePart) {
+            namePart = p;
+        } else {
+            extra.push(p);
+        }
+    }
+    // Texto que no calzó en ningún campo (ej: el cliente mandó 5 partes):
+    // se pega al nombre en vez de perderlo en silencio.
+    if (extra.length) namePart = [namePart, ...extra].filter(Boolean).join(' ');
+
+    if (!userSession.order) userSession.order = {};
+    if (addrPart) userSession.order.address = addrPart;
+    if (namePart) userSession.order.name = namePart;
+    if (phonePart) userSession.order.telefono = phonePart;
+    if (paymentPart) userSession.order.paymentMethod = paymentPart;
+}
+
+/**
+ * Pide el siguiente campo de entrega que falte (dirección → nombre →
+ * teléfono → pago), en ese orden, sin importar cuál ya se haya capturado
+ * antes ni en qué orden llegó. Si ya están los 4, muestra el resumen final.
+ * Centraliza el "gap-filling" para que no importe si los datos llegaron
+ * todos juntos, en varios mensajes, o fuera de orden.
+ */
+async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
+    if (!userSession.order.address) {
+        userSession.phase = PHASE.CHECK_DIR;
+        await say(sock, jid, '🏠 No logré identificar tu *dirección de entrega*. Por favor, escríbela (ej: Cra 23 #10-05).', ctx);
+        return;
+    }
+    if (!userSession.order.name) {
+        userSession.phase = PHASE.CHECK_NAME;
+        await say(sock, jid, `👤 ¿A nombre de quién va el pedido? Escribe tu nombre completo.`, ctx);
+        return;
+    }
+    if (!userSession.order.telefono) {
+        userSession.phase = PHASE.CHECK_TELEFONO;
+        await say(sock, jid, '📞 Por favor, escribe tu número de teléfono (mínimo 7 dígitos).', ctx);
+        return;
+    }
+    if (!userSession.order.paymentMethod) {
+        userSession.phase = PHASE.CHECK_PAGO;
+        await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+        return;
+    }
+
+    userSession.phase = PHASE.FINALIZE_ORDER;
+    const cfg = getTenantCheckoutConfig();
+    const summary = generateCartSummary(userSession);
+    userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
+    const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
+    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+        ? money(userSession.order.deliveryCost)
+        : 'Por confirmar';
+
+    const summaryText = `📝 *Resumen final del pedido*\n\n` +
+        `*Productos:*\n${summary.text}\n\n` +
+        `Subtotal: ${money(summary.total)}\n` +
+        `Domicilio: ${deliveryText}\n` +
+        `*Total a pagar: ${money(orderTotal)}*\n\n` +
+        `*Datos de entrega:*\n` +
+        `👤 Nombre: ${userSession.order.name}\n` +
+        `🏠 Dirección: ${userSession.order.address}\n` +
+        `📞 Teléfono: ${userSession.order.telefono}\n` +
+        `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
+        `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
+
+    await say(sock, jid, summaryText, ctx);
+    logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen.`);
+}
+
 async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitialCall = false) {
     logger.info(`[${jid}] -> Entrando a handleEnterAddress. Dirección: "${address}", Inicio: ${isInitialCall}`);
 
     if (isInitialCall) {
         userSession.phase = PHASE.CHECK_DIR;
         await say(sock, jid, '🏠 ¡Perfecto! Para continuar, por favor escribe tu *dirección de entrega*.' +
-            '\n\nSi prefieres, puedes enviar todos los datos en UN SOLO MENSAJE, separados por comas en este orden: *Dirección, Nombre, Teléfono, Método de pago*.' +
+            '\n\nSi prefieres, puedes enviar todos los datos en UN SOLO MENSAJE, separados por comas (en cualquier orden funciona, pero recomendamos): *Dirección, Nombre, Teléfono, Método de pago*.' +
             '\n\nEjemplo: *Cra 23 #10-05, Juan Pérez, 3139848800, efectivo*', ctx);
         return;
     }
@@ -374,7 +491,8 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     const raw = address.trim();
 
     // Soporte para enviar los datos en UN SOLO MENSAJE:
-    //  - Con comas (formato recomendado): "Dirección, Nombre, Teléfono, Pago".
+    //  - Con comas (formato recomendado): campos separados por coma, EN
+    //    CUALQUIER ORDEN — se clasifican por contenido, no por posición.
     //  - Sin comas pero con UNA CAMPO POR LÍNEA (ej: dirección en la primera
     //    línea, luego nombre, teléfono y método de pago), siempre que alguna
     //    línea parezca un campo de entrega (teléfono ≥7 dígitos o método de
@@ -382,19 +500,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     //    dirección (para no partir una dirección pegada en varias líneas).
     const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const hasCommas = raw.includes(',');
-    // Una línea parece TELÉFONO si tiene ≥7 dígitos y casi no tiene letras
-    // (ej: "3139848800", "+57 3139848800", "cel 3139848800"). Una dirección
-    // tipo "Cra 123 #45-67" tiene varios dígitos pero también letras, así que
-    // NO cuenta como campo de entrega: no se parte una dirección pegada en
-    // varias líneas solo por tener números.
-    const looksLikePhone = (l) => {
-        const digits = l.replace(/[^0-9]/g, '');
-        const nonDigitChars = l.replace(/[0-9]/g, '').replace(/\s+/g, '').length;
-        return digits.length >= 7 && nonDigitChars <= 3;
-    };
-    const hasDeliveryField = lines.some(l => {
-        return looksLikePhone(l) || /efectivo|transferencia|nequi|daviplata|tarjeta|pago/i.test(l);
-    });
+    const hasDeliveryField = lines.some(l => looksLikePhone(l) || looksLikePayment(l));
 
     let parts;
     if (hasCommas) {
@@ -405,86 +511,18 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         parts = [raw.trim()];
     }
 
+    if (!userSession.order) userSession.order = {};
+
     if (parts.length >= 2) {
-        let addrPart = parts[0];
-        let namePart = null;
-        let phonePart = null;
-        let paymentPart = null;
-
-        for (let i = 1; i < parts.length; i++) {
-            const p = parts[i];
-            const digits = p.replace(/[^0-9]/g, '');
-            if (!phonePart && digits.length >= 7) {
-                phonePart = digits;
-                continue;
-            }
-            if (!paymentPart && /efectivo|transferencia|nequi|daviplata|nequi|tarjeta|pago/i.test(p)) {
-                const low = p.toLowerCase();
-                if (low.includes('transfer')) paymentPart = 'transferencia';
-                else if (low.includes('efect')) paymentPart = 'efectivo';
-                else paymentPart = low;
-                continue;
-            }
-            if (!namePart) {
-                namePart = p;
-            }
-        }
-
-        if (!userSession.order) userSession.order = {};
-        userSession.order.address = addrPart;
-        if (namePart) userSession.order.name = namePart;
-        if (phonePart) userSession.order.telefono = phonePart;
-        if (paymentPart) userSession.order.paymentMethod = paymentPart;
-
-        if (!userSession.order.name) {
-            userSession.phase = PHASE.CHECK_NAME;
-            await say(sock, jid, `👤 ¿A nombre de quién va el pedido? Escribe tu nombre completo.`, ctx);
-            return;
-        }
-        if (!userSession.order.telefono) {
-            userSession.phase = PHASE.CHECK_TELEFONO;
-            await say(sock, jid, '📞 Por favor, escribe tu número de teléfono (mínimo 7 dígitos).', ctx);
-            return;
-        }
-        if (!userSession.order.paymentMethod) {
-            userSession.phase = PHASE.CHECK_PAGO;
-            await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
-            return;
-        }
-
-        userSession.phase = PHASE.FINALIZE_ORDER;
-        const cfg = getTenantCheckoutConfig();
-        const summary = generateCartSummary(userSession);
-        userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
-        const orderTotal = summary.total + (userSession.order.deliveryCost || 0);        const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
-            ? money(userSession.order.deliveryCost) 
-            : 'Por confirmar';
-        
-        const summaryText = `📝 *Resumen final del pedido*\n\n` +
-            `*Productos:*\n${summary.text}\n\n` +
-            `Subtotal: ${money(summary.total)}\n` +
-            `Domicilio: ${deliveryText}\n` +
-            `*Total a pagar: ${money(orderTotal)}*\n\n` +
-            `*Datos de entrega:*\n` +
-            `👤 Nombre: ${userSession.order.name}\n` +
-            `🏠 Dirección: ${userSession.order.address}\n` +
-            `📞 Teléfono: ${userSession.order.telefono}\n` +
-            `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
-            `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
-
-        await say(sock, jid, summaryText, ctx);
-        logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen (entrada única).`);
+        classifyDeliveryParts(parts, userSession);
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
         return;
     }
 
-    if (!userSession.order) userSession.order = {};
-
-    // El cliente mandó SOLO un número en el paso de dirección (ej: "3138777115")
-    // — probablemente cree que ya dio su teléfono, no una dirección. Lo
-    // guardamos como teléfono en vez de aceptarlo como dirección (antes pasaba
-    // la validación de "mínimo 8 caracteres" igual, y el cliente quedaba
-    // atascado cuando el bot le pedía el teléfono de nuevo más adelante y él
-    // respondía "ya te lo pasé").
+    // Una sola parte (sin comas ni líneas múltiples): puede ser la dirección,
+    // o puede ser SOLO un teléfono si el cliente cree que ya lo había dado
+    // antes (ej: "3138777115") — en ese caso no lo aceptamos como dirección,
+    // lo guardamos como teléfono y seguimos pidiendo la dirección real.
     if (looksLikePhone(raw) && !userSession.order.telefono) {
         userSession.order.telefono = raw.replace(/[^0-9]/g, '');
         await say(sock, jid, `📞 Ese número ya quedó guardado como tu teléfono.\n\n🏠 Ahora escribe tu *dirección de entrega*.`, ctx);
@@ -496,11 +534,8 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         return;
     }
     userSession.order.address = raw;
-
-    userSession.phase = PHASE.CHECK_NAME;
-    await say(sock, jid, `👤 ¿A nombre de quién va el pedido? Escribe tu nombre completo.`, ctx);
     userSession.errorCount = 0;
-    logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Solicitando nombre.`);
+    await askNextMissingCheckoutField(sock, jid, userSession, ctx);
 }
 
 async function handleEnterName(sock, jid, input, userSession, ctx) {
@@ -508,19 +543,7 @@ async function handleEnterName(sock, jid, input, userSession, ctx) {
     if (validateInput(input, 'string', { minLength: 3 })) {
         userSession.order.name = input.trim();
         userSession.errorCount = 0;
-
-        // Si el teléfono ya se capturó antes (ej: el cliente lo mandó en el
-        // paso de dirección), no volver a pedirlo — pasar directo a pago.
-        if (userSession.order.telefono) {
-            userSession.phase = PHASE.CHECK_PAGO;
-            await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
-            logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Teléfono ya capturado, solicitando pago.`);
-            return;
-        }
-
-        userSession.phase = PHASE.CHECK_TELEFONO;
-        await say(sock, jid, '📞 ¡Genial! Ahora, por favor, escribe tu *número de teléfono* para contactarte si es necesario.', ctx);
-        logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Solicitando teléfono.`);
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
     } else {
         userSession.errorCount++;
         await say(sock, jid, '❌ Por favor, escribe un nombre válido (mínimo 3 caracteres).', ctx);
@@ -535,8 +558,7 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
         return;
     }
     userSession.order.telefono = telefono;
-    userSession.phase = PHASE.CHECK_PAGO;
-    await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+    await askNextMissingCheckoutField(sock, jid, userSession, ctx);
 }
 
 async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
