@@ -62,7 +62,18 @@ const PHASE = {
     HELADO_POST_ADD: 'HELADO_POST_ADD',     // Opciones post-compra (seguir/pagar/menú) - flujo heladería
     HELADO_UNITS_MODE: 'HELADO_UNITS_MODE', // Varias unidades: 1) todas iguales / 2) cada una diferente
     HELADO_PER_UNIT_SABORES: 'HELADO_PER_UNIT_SABORES',     // Sabores de una unidad específica
-    HELADO_PER_UNIT_TOPPINGS: 'HELADO_PER_UNIT_TOPPINGS'     // Toppings de una unidad específica
+    HELADO_PER_UNIT_TOPPINGS: 'HELADO_PER_UNIT_TOPPINGS',     // Toppings de una unidad específica
+
+    // ===================================
+    // 🧘 FASES FLUJO AGENDA BRI PILATES
+    // ===================================
+    PIL_WELCOME: 'pil_welcome',           // Ofrece la clase de cortesia
+    PIL_ASK_NAME: 'pil_ask_name',         // Pide el nombre
+    PIL_ASK_DAY: 'pil_ask_day',           // Pide dia (lunes/miercoles/viernes)
+    PIL_ASK_PERIOD: 'pil_ask_period',     // Pide manana/tarde
+    PIL_ASK_TIME: 'pil_ask_time',         // Pide hora especifica dentro del periodo
+    PIL_CONFIRM: 'pil_confirm',           // Confirma la reserva
+    PIL_MAIN: 'pil_main'                  // Post-reserva / menu conversacional
 };
 
 module.exports = PHASE;
