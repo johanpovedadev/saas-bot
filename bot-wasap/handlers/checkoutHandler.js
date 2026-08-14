@@ -477,11 +477,24 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         return;
     }
 
+    if (!userSession.order) userSession.order = {};
+
+    // El cliente mandó SOLO un número en el paso de dirección (ej: "3138777115")
+    // — probablemente cree que ya dio su teléfono, no una dirección. Lo
+    // guardamos como teléfono en vez de aceptarlo como dirección (antes pasaba
+    // la validación de "mínimo 8 caracteres" igual, y el cliente quedaba
+    // atascado cuando el bot le pedía el teléfono de nuevo más adelante y él
+    // respondía "ya te lo pasé").
+    if (looksLikePhone(raw) && !userSession.order.telefono) {
+        userSession.order.telefono = raw.replace(/[^0-9]/g, '');
+        await say(sock, jid, `📞 Ese número ya quedó guardado como tu teléfono.\n\n🏠 Ahora escribe tu *dirección de entrega*.`, ctx);
+        return;
+    }
+
     if (!validateInput(raw, 'address')) {
         await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
         return;
     }
-    if (!userSession.order) userSession.order = {};
     userSession.order.address = raw;
 
     userSession.phase = PHASE.CHECK_NAME;
@@ -494,9 +507,18 @@ async function handleEnterName(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterName. Nombre recibido: "${input}"`);
     if (validateInput(input, 'string', { minLength: 3 })) {
         userSession.order.name = input.trim();
-        userSession.phase = PHASE.CHECK_TELEFONO;
         userSession.errorCount = 0;
 
+        // Si el teléfono ya se capturó antes (ej: el cliente lo mandó en el
+        // paso de dirección), no volver a pedirlo — pasar directo a pago.
+        if (userSession.order.telefono) {
+            userSession.phase = PHASE.CHECK_PAGO;
+            await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+            logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Teléfono ya capturado, solicitando pago.`);
+            return;
+        }
+
+        userSession.phase = PHASE.CHECK_TELEFONO;
         await say(sock, jid, '📞 ¡Genial! Ahora, por favor, escribe tu *número de teléfono* para contactarte si es necesario.', ctx);
         logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Solicitando teléfono.`);
     } else {
