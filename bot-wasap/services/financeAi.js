@@ -43,19 +43,23 @@ Contexto del usuario:
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "register_expense" | "register_income" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
+  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
   "amount": <número en COP, 0 si no aplica>,
   "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
   "subcategory": "<subcategoría>",
   "description": "<descripción corta>",
   "date": "<hoy, ayer, fecha específica>",
   "needs_confirmation": true/false,
+  "loan_counterparty": "<nombre de la persona, solo si intent es register_loan>",
+  "loan_direction": "me_deben" | "debo",
   "response": "<tu respuesta empática y motivadora en español>"
 }
 
 Conceptos clave:
 - register_expense: cuando el usuario reporta una compra ("compré 18k en almuerzo", "pagué 50mil de mercado")
 - register_income: cuando reporta ingreso ("recibí sueldo", "me pagaron 2 millones")
+- register_loan: cuando presta o le prestan plata ("le presté a Juan 50 mil", "María me debe 100 mil", "le debo a Pedro 30 mil"). loan_direction="me_deben" si a el/ella le deben (prestó plata o alguien le debe), "debo" si el/ella debe.
+- query_loans: cuando pregunta por sus préstamos ("préstamos", "quién me debe", "qué debo", "mis préstamos")
 - query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto compré hoy?")
 - health_score: cuando pregunta por su salud financiera o score ("salud", "score", "como van mis finanzas", "que tal va mi plata", "/salud")
 - onboarding_name: PRIMERA INTERACCIÓN - responde al nombre
@@ -357,6 +361,50 @@ function fallbackInterpret(message, userSession) {
                 response: `💰 *Registrado:* $${amount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
+    }
+
+    // Prestamos: "le preste a Juan 50 mil" / "le preste 50 mil a Juan" -> me deben.
+    // "Maria me debe 100 mil" -> me deben. "le debo a Pedro 30 mil" -> debo.
+    // "Juan me presto 20 mil" -> debo (me lo prestaron a mi).
+    const prestoAPat = /\b(?:le\s+)?prest[eé]\s+(?:a\s+)?([a-záéíóúñ]+)/i;
+    const meDebePat = /\b([a-záéíóúñ]+)\s+me\s+debe\b/i;
+    const leDeboPat = /\ble\s+debo\s+a\s+([a-záéíóúñ]+)/i;
+    const mePrestoPat = /\b([a-záéíóúñ]+)\s+me\s+presto\b/i;
+
+    let loanMatch = null;
+    let loanDirection = null;
+    let m;
+    if ((m = t.match(prestoAPat))) { loanMatch = m; loanDirection = 'me_deben'; }
+    else if ((m = t.match(meDebePat))) { loanMatch = m; loanDirection = 'me_deben'; }
+    else if ((m = t.match(leDeboPat))) { loanMatch = m; loanDirection = 'debo'; }
+    else if ((m = t.match(mePrestoPat))) { loanMatch = m; loanDirection = 'debo'; }
+
+    if (loanMatch) {
+        const amount = parseAmount(raw);
+        if (amount > 0) {
+            const counterparty = loanMatch[1].charAt(0).toUpperCase() + loanMatch[1].slice(1);
+            const verb = loanDirection === 'me_deben' ? 'Te debe' : 'Le debés a';
+            return {
+                intent: 'register_loan',
+                amount,
+                category: 'Prestamo',
+                description: counterparty,
+                loan_counterparty: counterparty,
+                loan_direction: loanDirection,
+                needs_confirmation: true,
+                response: `🤝 *Registrado:* ${verb} *${counterparty}* $${amount.toLocaleString('es-CO')}\n\n¿Es correcto? (sí/no)`
+            };
+        }
+    }
+
+    // Consulta de prestamos: "prestamos", "quien me debe", "que debo", etc.
+    if (/\b(prestamos?|deudas\s+entre\s+amigos|quien\s+me\s+debe|a\s+quien\s+le\s+debo|que\s+debo)\b/i.test(t)) {
+        return {
+            intent: 'query_loans',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: 'query_loans'
+        };
     }
 
     // Referral code pattern: LEO + 4-6 digits

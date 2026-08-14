@@ -63,6 +63,11 @@ function rowToFinance(row) {
     const goalTarget = financeCrypto.isEncrypted(extra.goalTarget)
         ? (financeCrypto.decryptAmount(extra.goalTarget) ?? 0)
         : (extra.goalTarget || 0);
+    const loans = extra.loans
+        ? (financeCrypto.isEncrypted(extra.loans)
+            ? JSON.parse(financeCrypto.decrypt(extra.loans) || '[]')
+            : (Array.isArray(extra.loans) ? extra.loans : []))
+        : [];
 
     return {
         name: row.name || '',
@@ -89,7 +94,8 @@ function rowToFinance(row) {
         milestonesSent: extra.milestonesSent || [],
         referralCode: extra.referralCode || '',
         invitedBy: extra.invitedBy || '',
-        premiumUntil: extra.premiumUntil || 0
+        premiumUntil: extra.premiumUntil || 0,
+        loans
     };
 }
 
@@ -98,7 +104,8 @@ function financeToRow(jid, fin) {
     const todayEnc = financeCrypto.encryptAmount(fin.todaySpending || 0);
     const txsEnc = financeCrypto.encrypt(JSON.stringify(fin.transactions || []));
     const goalTargetEnc = financeCrypto.encryptAmount(fin.goalTarget || 0);
-    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null) {
+    const loansEnc = financeCrypto.encrypt(JSON.stringify(fin.loans || []));
+    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null) {
         logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
         return null;
     }
@@ -128,7 +135,8 @@ function financeToRow(jid, fin) {
             milestonesSent: fin.milestonesSent || [],
             referralCode: fin.referralCode || '',
             invitedBy: fin.invitedBy || '',
-            premiumUntil: fin.premiumUntil || 0
+            premiumUntil: fin.premiumUntil || 0,
+            loans: loansEnc
         })
     };
 }

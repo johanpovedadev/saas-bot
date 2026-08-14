@@ -28,6 +28,8 @@ const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
     `6️⃣ Invitar amigos (código)\n` +
     `7️⃣ Planes y actualizar a Pro`;
 
+const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
+
 function initFinance(userSession) {
     if (!userSession.finance) {
         userSession.finance = {
@@ -55,9 +57,12 @@ function initFinance(userSession) {
             lastReportDate: '',
             milestonesSent: [],
             pendingReferral: null,
-            premiumUntil: 0
+            premiumUntil: 0,
+            loans: [],
+            pendingLoanList: null
         };
     }
+    if (!Array.isArray(userSession.finance.loans)) userSession.finance.loans = [];
     const today = new Date().toDateString();
     if (userSession.finance.lastResetDate !== today) {
         userSession.finance.todaySpending = 0;
@@ -447,9 +452,11 @@ async function handle(sock, jid, text, userSession, ctx) {
             // Merge: keep in-memory name/pendingConfirm, use DB for everything else
             const currentName = userSession.finance.name;
             const pending = userSession.finance.pendingConfirm;
+            const pendingLoans = userSession.finance.pendingLoanList;
             userSession.finance = persisted;
             userSession.finance.name = currentName;
             userSession.finance.pendingConfirm = pending;
+            userSession.finance.pendingLoanList = pendingLoans;
         }
     }
     const fin = initFinance(userSession);
@@ -496,6 +503,18 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Pending confirmation
     if (fin.pendingConfirm) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Respuesta numerica a la lista de prestamos mostrada (marcar como pagado).
+    // Consumo unico: si el numero no calza, se limpia igual y sigue el flujo normal
+    // (para no bloquear el menu numerado del plan Gratis con un numero viejo).
+    if (fin.pendingLoanList && /^\d+$/.test(t)) {
+        const list = fin.pendingLoanList;
+        fin.pendingLoanList = null;
+        const idx = parseInt(t, 10) - 1;
+        if (idx >= 0 && idx < list.length) {
+            return await markLoanAsPaid(sock, jid, list[idx], fin, ctx);
+        }
     }
 
     // Pending referral confirmation
@@ -546,11 +565,11 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
         userSession.phase = PHASE.FIN_DIAGNOSTIC;
         fin.trialStart = Date.now();
         await say(sock, jid,
-            `🦁 Un gusto, *${fin.name}*. Antes de arrancar, contame: ¿qué es lo que más te choca de tu plata ahorita?\n\n` +
-            `1️⃣ Se me va sin darme cuenta\n` +
-            `2️⃣ Tengo deudas encima\n` +
-            `3️⃣ Quiero ahorrar pero no logro\n` +
-            `4️⃣ Ni idea, por eso estoy aquí`,
+            `🦁 Un gusto, *${fin.name}*. Antes de arrancar, contame: ¿qué es lo que quieres lograr con tus finanzas ahorita?\n\n` +
+            `1️⃣ Ahorrar para algo importante\n` +
+            `2️⃣ Salir de mis deudas y respirar tranquilo\n` +
+            `3️⃣ Tener el control total de mi plata\n` +
+            `4️⃣ Simplemente empezar a organizarme`,
             ctx);
         return;
     }
@@ -570,10 +589,10 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
     const t = text.trim();
     const option = parseInt(t);
     const answers = {
-        1: 'Se me va sin darme cuenta',
-        2: 'Tengo deudas encima',
-        3: 'Quiero ahorrar pero no logro',
-        4: 'Ni idea, por eso estoy aquí'
+        1: 'Ahorrar para algo importante',
+        2: 'Salir de tus deudas y respirar tranquilo',
+        3: 'Tener el control total de tu plata',
+        4: 'Empezar a organizarte'
     };
 
     if (option >= 1 && option <= 4) {
@@ -581,9 +600,9 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
         financeStore.saveFinance(jid, fin);
         userSession.phase = PHASE.FIN_GOAL_ONBOARDING;
         await say(sock, jid,
-            `Uff, "${answers[option]}" — le pasa a 8 de cada 10 colombianos, no estás solo 🦁\n\n` +
-            `No es que ganés poco, es que nadie te ha ayudado a verlo claro. Yo sí voy a estar aquí.\n\n` +
-            `🦁 Última cosa antes de arrancar: ¿pa' qué te gustaría ahorrar? (un viaje, salir de una deuda, lo que sea — contame corto)`,
+            `"${answers[option]}" — ¡me gusta! Vamos a lograrlo juntos 🦁\n\n` +
+            `A partir de hoy vas a ver exactamente para dónde va tu plata y qué tan cerca estás de lo que querés. Sin vueltas.\n\n` +
+            `🦁 Última cosa antes de arrancar: ¿pa' qué te gustaría ahorrar? (un viaje, salir de una deuda, lo que sea — contame corto, así te armo el camino hacia esa meta)`,
             ctx);
     } else {
         await say(sock, jid,
@@ -761,6 +780,31 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             break;
         }
 
+        case 'register_loan': {
+            const counterparty = result.loan_counterparty || result.description || 'alguien';
+            const direction = result.loan_direction === 'debo' ? 'debo' : 'me_deben';
+            if (result.needs_confirmation && result.amount > 0) {
+                fin.pendingConfirm = {
+                    type: 'loan',
+                    amount: result.amount,
+                    counterparty,
+                    direction,
+                    date: result.date || 'hoy'
+                };
+                await say(sock, jid, result.response, ctx);
+            } else if (result.amount > 0) {
+                await saveLoanAndConfirm(sock, jid, counterparty, result.amount, direction, fin, ctx);
+            } else {
+                await say(sock, jid, result.response ||
+                    `😅 ¿Cuánto y con quién? Decímelo así: _"le presté a Juan 50 mil"_ o _"le debo a Pedro 30 mil"_`, ctx);
+            }
+            break;
+        }
+
+        case 'query_loans':
+            await handleQueryLoans(sock, jid, fin, ctx);
+            break;
+
         case 'query':
         case 'chat':
         case 'help':
@@ -891,7 +935,11 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
     if (!confirm) return;
 
     if (/^(1|si|sip|sep|ok|okay|dale|confirmo|correcto|yes|claro|listo|dale|simon)/i.test(t)) {
-        await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx);
+        if (confirm.type === 'loan') {
+            await saveLoanAndConfirm(sock, jid, confirm.counterparty, confirm.amount, confirm.direction, fin, ctx);
+        } else {
+            await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx);
+        }
         fin.pendingConfirm = null;
     } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
         fin.pendingConfirm = null;
@@ -902,6 +950,9 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
             'Deshecho. Cuéntame el correcto.'
         ][Math.floor(Math.random() * 4)];
         await say(sock, jid, `✅ ${cancelMsg}`, ctx);
+    } else if (confirm.type === 'loan') {
+        const verb = confirm.direction === 'me_deben' ? 'Te debe' : 'Le debés a';
+        await say(sock, jid, `🤝 ${verb} *${confirm.counterparty}* $${confirm.amount.toLocaleString('es-CO')}\n\n¿Es correcto? (sí/no)`, ctx);
     } else {
         const rePrompt = [
             `¿Es correcto?\n\n💸 Compra: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
@@ -1034,6 +1085,87 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
 
     financeStore.saveFinance(jid, fin);
     logger.info({ jid, type, category, description }, 'Finance transaction saved');
+}
+
+/**
+ * Registra un préstamo (dado o recibido). A diferencia de gastos/ingresos, NO
+ * toca el saldo — es un cuaderno aparte para no perder de vista quién debe
+ * qué, sin mezclarlo con el flujo de caja del día a día.
+ */
+async function saveLoanAndConfirm(sock, jid, counterparty, amount, direction, fin, ctx) {
+    if (!Array.isArray(fin.loans)) fin.loans = [];
+    const loan = {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        counterparty,
+        amount,
+        direction, // 'me_deben' | 'debo'
+        date: new Date().toISOString().split('T')[0],
+        status: 'pendiente'
+    };
+    fin.loans.push(loan);
+    financeStore.saveFinance(jid, fin);
+
+    const verb = direction === 'me_deben' ? 'Vas a recuperar' : 'Te falta pagarle a';
+    const nombre = direction === 'me_deben' ? counterparty : counterparty;
+    const msg = direction === 'me_deben'
+        ? `🤝 ¡Anotado! *${counterparty}* te debe $${amount.toLocaleString('es-CO')}. ${verb} esa plata — yo te ayudo a no perderle el rastro.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`
+        : `🤝 ¡Anotado! Le debés $${amount.toLocaleString('es-CO')} a *${counterparty}*. ${verb} ${nombre} cuando puedas — ya quedó registrado para que no se te olvide.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`;
+    await say(sock, jid, msg, ctx);
+    logger.info({ jid, counterparty, amount, direction }, 'Finance loan saved');
+}
+
+/**
+ * Muestra el resumen de préstamos (a favor y en contra), en positivo, y deja
+ * la lista numerada guardada en fin.pendingLoanList para que el siguiente
+ * mensaje con solo un número marque ese préstamo como pagado.
+ */
+async function handleQueryLoans(sock, jid, fin, ctx) {
+    const loans = (fin.loans || []).filter(l => l.status !== 'pagado');
+    if (loans.length === 0) {
+        fin.pendingLoanList = null;
+        await say(sock, jid,
+            `🤝 No tenés préstamos pendientes registrados — todo al día 🦁\n\n` +
+            `Cuando prestes o te presten plata, decímelo así: _"le presté a Juan 50 mil"_ o _"le debo a Pedro 30 mil"_.`,
+            ctx);
+        return;
+    }
+
+    const meDeben = loans.filter(l => l.direction === 'me_deben');
+    const debo = loans.filter(l => l.direction === 'debo');
+    const ordered = [...meDeben, ...debo];
+    fin.pendingLoanList = ordered.map(l => l.id);
+
+    let n = 0;
+    let text = `🤝 *Tus préstamos*\n`;
+    if (meDeben.length) {
+        const total = meDeben.reduce((s, l) => s + l.amount, 0);
+        text += `\n💰 *Te deben* (vas a recuperar $${total.toLocaleString('es-CO')}):\n`;
+        text += meDeben.map(l => `${++n}. ${l.counterparty} — $${l.amount.toLocaleString('es-CO')}`).join('\n');
+        text += '\n';
+    }
+    if (debo.length) {
+        const total = debo.reduce((s, l) => s + l.amount, 0);
+        text += `\n📤 *Debés* (te falta pagar $${total.toLocaleString('es-CO')}):\n`;
+        text += debo.map(l => `${++n}. ${l.counterparty} — $${l.amount.toLocaleString('es-CO')}`).join('\n');
+        text += '\n';
+    }
+    text += `\nEscribí el *número* cuando alguno se pague, y lo marco como listo ✅`;
+
+    await say(sock, jid, text, ctx);
+}
+
+async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
+    const loan = (fin.loans || []).find(l => l.id === loanId);
+    if (!loan) {
+        await say(sock, jid, `😅 No encontré ese préstamo, puede que ya lo hubieras marcado. Escribí *"préstamos"* para ver la lista actual.`, ctx);
+        return;
+    }
+    loan.status = 'pagado';
+    financeStore.saveFinance(jid, fin);
+    const msg = loan.direction === 'me_deben'
+        ? `✅ ¡Bien! *${loan.counterparty}* ya te pagó los $${loan.amount.toLocaleString('es-CO')}. Un pendiente menos 🦁`
+        : `✅ ¡Listo! Ya le pagaste a *${loan.counterparty}* los $${loan.amount.toLocaleString('es-CO')}. Un pendiente menos 🦁`;
+    await say(sock, jid, msg, ctx);
 }
 
 async function showWelcome(sock, jid, ctx) {
