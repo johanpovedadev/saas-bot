@@ -651,12 +651,12 @@ def consultar_preguntas_frecuentes(request):
 # ISSUE #33 - Health Check Django
 @require_GET
 def health_check(request):
+    from . import google_sheets
+    sheets_status = google_sheets.get_sheets_status()
     return JsonResponse({
         'status': 'ok',
         'timestamp': datetime.now().isoformat(),
-        'service': 'django-seguros',
+        'service': f"django-{os.environ.get('BUSINESS_KEY', 'unknown')}",
         'version': '1.0.0',
-        'google_sheets': {
-            'status': 'unknown'
-        }
+        'google_sheets': sheets_status
     })

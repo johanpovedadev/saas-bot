@@ -81,6 +81,27 @@ print(f"   Pagina Entregas: {ENTREGAS_SHEET_NAME}")
 
 _gspread_client = None
 
+# ============================================================================
+# ESTADO DE CONEXION (para health_check real, ver views.py:health_check)
+# ============================================================================
+_sheets_status = {'status': 'unknown', 'last_error': None, 'last_check': None}
+
+def get_sheets_status():
+    """Ultimo estado conocido de la conexion a Google Sheets (sin hacer una
+    llamada nueva a la API) - se actualiza cada vez que get_clean_inventory()
+    corre, exitoso o no."""
+    return dict(_sheets_status)
+
+def _report_sheets_ok():
+    _sheets_status['status'] = 'ok'
+    _sheets_status['last_error'] = None
+    _sheets_status['last_check'] = datetime.now().isoformat()
+
+def _report_sheets_error(message):
+    _sheets_status['status'] = 'error'
+    _sheets_status['last_error'] = message
+    _sheets_status['last_check'] = datetime.now().isoformat()
+
 def _get_gspread_client():
     """Retorna un cliente gspread autenticado (singleton)"""
     global _gspread_client
@@ -185,18 +206,20 @@ def get_clean_inventory():
         clean_data = df.to_dict('records')
         
         print(f"[OK] Inventario limpio: {len(clean_data)} productos unicos")
-        
+
         # Mostrar primer producto como ejemplo
         if clean_data:
             print(f"Ejemplo de producto: {clean_data[0]}")
-        
+
+        _report_sheets_ok()
         return clean_data
-        
+
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         print(f"Error al obtener inventario limpio: {e}")
         print(f"Trace completo:\n{error_trace}")
+        _report_sheets_error(str(e))
         return []
 
 def conectar_sheet():
