@@ -71,11 +71,16 @@ function resolveTargetJid(token, userSession) {
 async function handleAdminCommand(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
     
+    // Comando: silenciar / mute (por número directo, sin necesitar "yo continuo" antes)
+    if (t.startsWith('silenciar ') || t.startsWith('mute ')) {
+        return await handleMuteCommand(sock, jid, t, ctx);
+    }
+
     // Comando: desilenciar / unmute
     if (t.startsWith('desilenciar ') || t.startsWith('unmute ')) {
         return await handleUnmuteCommand(sock, jid, t, ctx);
     }
-    
+
     // Comando: listar silenciados
     if (t === 'listar silenciados' || t === 'muted list' || t === 'lista silenciados') {
         return await handleListMutedCommand(sock, jid, ctx);
@@ -151,6 +156,35 @@ async function handlePm2Command(sock, jid, action, businessKeyRaw, ctx) {
     } else {
         await say(sock, jid, `❌ No se pudo ${action === 'start' ? 'prender' : 'apagar'} *${businessKey}*: ${result.error}`, ctx);
     }
+    return true;
+}
+
+/**
+ * Comando: Silenciar un chat por número directo (sin necesitar haber
+ * interactuado antes con ese cliente vía "yo continuo"). Apaga las
+ * respuestas automáticas del bot solo para ese número, en este negocio.
+ */
+async function handleMuteCommand(sock, jid, text, ctx) {
+    const parts = text.split(/\s+/);
+    const targetDigits = parts[1] || '';
+    const target = targetDigits.replace(/[^0-9]/g, '');
+
+    if (!target) {
+        await say(sock, jid, 'Uso: silenciar 573XXXXXXXXX', ctx);
+        return true;
+    }
+
+    const targetJid = `${target}@c.us`;
+    if (!ctx.mutedChats) ctx.mutedChats = new Set();
+    const wasAlreadyMuted = ctx.mutedChats.has(targetJid);
+    ctx.mutedChats.add(targetJid);
+
+    if (wasAlreadyMuted) {
+        await say(sock, jid, `ℹ️ El chat ${target} ya estaba silenciado.`, ctx);
+    } else {
+        await say(sock, jid, `✅ Chat ${target} silenciado. El bot no le va a responder hasta que lo desilencies.`, ctx);
+    }
+
     return true;
 }
 
