@@ -70,7 +70,26 @@ function resolveTargetJid(token, userSession) {
  */
 async function handleAdminCommand(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
-    
+
+    // Prender/apagar otros bots por chat: tiene su PROPIA autorización (más
+    // abajo, en handlePm2Command) porque también acepta al dueño dinámico
+    // del negocio objetivo (botRegistry), que puede no ser admin de ESTE
+    // negocio — por eso se resuelve antes del gate genérico de abajo.
+    const pilM = t.match(/^\/?(prender|encender)\s+(\S+)/i);
+    if (pilM) {
+        return await handlePm2Command(sock, jid, 'start', pilM[2], ctx);
+    }
+    const apagarM = t.match(/^\/?apagar\s+(\S+)/i);
+    if (apagarM) {
+        return await handlePm2Command(sock, jid, 'stop', apagarM[1], ctx);
+    }
+
+    // Gate único para el resto de comandos de esta función: ninguno debe
+    // poder ejecutarlo un cliente cualquiera (antes no había ningún chequeo
+    // acá — un cliente podía silenciar el chat de otro cliente escribiendo
+    // "silenciar <numero>", por ejemplo).
+    if (!isAdmin(jid, ctx)) return false;
+
     // Comando: silenciar / mute (por número directo, sin necesitar "yo continuo" antes)
     if (t.startsWith('silenciar ') || t.startsWith('mute ')) {
         return await handleMuteCommand(sock, jid, t, ctx);
@@ -85,43 +104,30 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx) {
     if (t === 'listar silenciados' || t === 'muted list' || t === 'lista silenciados') {
         return await handleListMutedCommand(sock, jid, ctx);
     }
-    
+
     // Comando: yo continuo (tomar control)
     if (t === 'yo continuo') {
         return await handleYoContinuoCommand(sock, jid, userSession, ctx);
     }
-    
+
     // Comandos de MIA
     if (t === 'mia activa' || t === 'mia continua') {
         return await handleMiaActivaCommand(sock, jid, userSession, ctx);
     }
-    
-    if (t.startsWith('reactivar mia') || t.startsWith('mia reactivar') || 
+
+    if (t.startsWith('reactivar mia') || t.startsWith('mia reactivar') ||
         t.startsWith('activar mia') || t.startsWith('mia activar')) {
         return await handleMiaReactivarCommand(sock, jid, t, userSession, ctx);
     }
-    
-    if (t.startsWith('mia desactivar') || t.startsWith('desactivar mia') || 
+
+    if (t.startsWith('mia desactivar') || t.startsWith('desactivar mia') ||
         t.startsWith('mia bloquear') || t.startsWith('bloquear mia')) {
         return await handleMiaDesactivarCommand(sock, jid, t, userSession, ctx);
     }
-    
+
     if (t.startsWith('mia status') || t.startsWith('status mia') ||
         t === 'mia estado' || t === 'estado mia') {
         return await handleMiaStatusCommand(sock, jid, t, userSession, ctx);
-    }
-
-    // Prender/apagar otros bots por chat. Autorizado si: es admin del negocio
-    // que esta procesando este mensaje (isAdmin, ej: tu numero, ya listado en
-    // todos los negocios), O es el numero actualmente conectado como dueño
-    // del negocio objetivo (botRegistry, se actualiza solo al reconectar).
-    const pilM = t.match(/^\/?(prender|encender)\s+(\S+)/i);
-    if (pilM) {
-        return await handlePm2Command(sock, jid, 'start', pilM[2], ctx);
-    }
-    const apagarM = t.match(/^\/?apagar\s+(\S+)/i);
-    if (apagarM) {
-        return await handlePm2Command(sock, jid, 'stop', apagarM[1], ctx);
     }
 
     return false; // No es comando admin

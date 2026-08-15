@@ -46,6 +46,21 @@ async function send(jid, text, ctx) {
         assert.strictEqual(adminHandler.isChatMuted(customer, ctx), false);
         console.log('OK: "desilenciar <numero>" revierte el silencio');
 
+        // Seguridad: un cliente CUALQUIERA (no admin) no debe poder silenciar
+        // ni desilenciar el chat de otro cliente.
+        const otroCliente = '573001112222@c.us';
+        const victima = '573005556666@c.us';
+        const r4 = await send(otroCliente, `silenciar ${victima.split('@')[0]}`, ctx);
+        assert.strictEqual(r4, false, 'un no-admin no debe poder ejecutar el comando (debe caer al flujo normal)');
+        assert.strictEqual(adminHandler.isChatMuted(victima, ctx), false, 'la victima NO debe quedar silenciada por un no-admin');
+        console.log('OK: un cliente sin permisos NO puede silenciar el chat de otro cliente');
+
+        ctx.mutedChats.add(victima); // simular que SI estaba silenciada por un admin
+        const r5 = await send(otroCliente, `desilenciar ${victima.split('@')[0]}`, ctx);
+        assert.strictEqual(r5, false);
+        assert.strictEqual(adminHandler.isChatMuted(victima, ctx), true, 'un no-admin no debe poder desilenciar el chat de otro cliente');
+        console.log('OK: un cliente sin permisos NO puede desilenciar el chat de otro cliente');
+
         console.log('\nTodos los tests pasaron.');
         process.exitCode = 0;
     } catch (e) {
