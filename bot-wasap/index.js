@@ -522,6 +522,11 @@ const startBot = async () => {
 
         const botJid = sock.info.wid._serialized;
         console.log('✅ Conectado como', botJid);
+        try {
+            require('./services/botRegistry').registerOwner(BUSINESS_KEY, botJid);
+        } catch (e) {
+            logger.warn(`No se pudo registrar el dueño del bot: ${e.message}`);
+        }
         // ISSUE #31 - Alerta de reconexion a system admins
         try {
             await notificationService.notifyBotReconnected(sock, ctx);

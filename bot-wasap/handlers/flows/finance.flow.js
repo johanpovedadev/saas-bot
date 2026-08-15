@@ -249,6 +249,29 @@ function syncPlanToSession(ctx, targetJid, res) {
 }
 
 /**
+ * Comando: /prender <negocio> o /apagar <negocio> — controla el proceso PM2
+ * de OTRO bot desde el chat de Telegram. Ver services/pm2Control.js.
+ */
+async function handlePm2CommandTelegram(sock, jid, action, businessKeyRaw, ctx) {
+    const pm2Control = require('../../services/pm2Control');
+    const businessKey = String(businessKeyRaw || '').toLowerCase().trim();
+
+    if (!pm2Control.resolveAppName(businessKey)) {
+        await say(sock, jid, `❌ No reconozco "${businessKeyRaw}". Negocios válidos: ${pm2Control.listValidKeys().join(', ')}`, ctx);
+        return true;
+    }
+
+    await say(sock, jid, `⏳ ${action === 'start' ? 'Prendiendo' : 'Apagando'} *${businessKey}*...`, ctx);
+    const result = await pm2Control.pm2Action(action, businessKey);
+    if (result.ok) {
+        await say(sock, jid, `✅ *${businessKey}* ${action === 'start' ? 'prendido' : 'apagado'}.`, ctx);
+    } else {
+        await say(sock, jid, `❌ No se pudo ${action === 'start' ? 'prender' : 'apagar'} *${businessKey}*: ${result.error}`, ctx);
+    }
+    return true;
+}
+
+/**
  * Comandos de administrador (solo el admin del tenant):
  *   /set_tier <user_id> <basic|master|free> [días] -> asigna/cambia el plan
  *   /activar_premium <user_id> <días>              -> alias de set_tier master
@@ -258,6 +281,19 @@ function syncPlanToSession(ctx, targetJid, res) {
 async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
     if (!isAdminJid(jid)) return false;
     const t = (text || '').trim();
+
+    // Prender/apagar otros bots (WhatsApp) desde el chat de Telegram. Solo el
+    // admin de finanzas (isAdminJid ya validado arriba) — el dueño dinamico
+    // por negocio (botRegistry) no aplica aca porque Telegram no tiene JID de
+    // WhatsApp con el que comparar.
+    const pilM = t.match(/^\/?(prender|encender)\s+(\S+)/i);
+    if (pilM) {
+        return await handlePm2CommandTelegram(sock, jid, 'start', pilM[2], ctx);
+    }
+    const apagarM = t.match(/^\/?apagar\s+(\S+)/i);
+    if (apagarM) {
+        return await handlePm2CommandTelegram(sock, jid, 'stop', apagarM[1], ctx);
+    }
 
     const tierMatch = t.match(/^\/?set_tier\s+(\S+)\s+(basic|master|free)\s*(\d*)\s*$/i);
     if (tierMatch) {

@@ -34,7 +34,10 @@ async function send(ctx, jid, text) {
         assert.strictEqual(calendarService.isConfigured(), false, 'sin GOOGLE_CALENDAR_ID no debe reportarse configurado');
         console.log('OK: calendarService detecta correctamente que no hay credenciales aun');
 
-        const jid = '573000000401@c.us';
+        // JID unico por corrida: pilates.db persiste entre ejecuciones (no se
+        // limpia sola), asi que reusar un JID fijo acumularia reservas de
+        // corridas anteriores y rompería el assert de "1 sola reserva".
+        const jid = `573000000401${Date.now()}@c.us`;
         const ctx = freshCtx();
         ctx.sessions[jid] = { phase: null, pilates: null };
 

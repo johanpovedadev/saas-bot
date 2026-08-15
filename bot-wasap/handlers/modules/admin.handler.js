@@ -101,12 +101,57 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx) {
         return await handleMiaDesactivarCommand(sock, jid, t, userSession, ctx);
     }
     
-    if (t.startsWith('mia status') || t.startsWith('status mia') || 
+    if (t.startsWith('mia status') || t.startsWith('status mia') ||
         t === 'mia estado' || t === 'estado mia') {
         return await handleMiaStatusCommand(sock, jid, t, userSession, ctx);
     }
-    
+
+    // Prender/apagar otros bots por chat. Autorizado si: es admin del negocio
+    // que esta procesando este mensaje (isAdmin, ej: tu numero, ya listado en
+    // todos los negocios), O es el numero actualmente conectado como dueño
+    // del negocio objetivo (botRegistry, se actualiza solo al reconectar).
+    const pilM = t.match(/^\/?(prender|encender)\s+(\S+)/i);
+    if (pilM) {
+        return await handlePm2Command(sock, jid, 'start', pilM[2], ctx);
+    }
+    const apagarM = t.match(/^\/?apagar\s+(\S+)/i);
+    if (apagarM) {
+        return await handlePm2Command(sock, jid, 'stop', apagarM[1], ctx);
+    }
+
     return false; // No es comando admin
+}
+
+/**
+ * Comando: /prender <negocio> o /apagar <negocio> — controla el proceso PM2
+ * de OTRO bot desde el chat. Ver services/pm2Control.js (lista blanca) y
+ * services/botRegistry.js (dueño dinamico por negocio).
+ */
+async function handlePm2Command(sock, jid, action, businessKeyRaw, ctx) {
+    const pm2Control = require('../../services/pm2Control');
+    const botRegistry = require('../../services/botRegistry');
+
+    const businessKey = String(businessKeyRaw || '').toLowerCase().trim();
+    const owner = botRegistry.getOwner(businessKey);
+    const allowed = isAdmin(jid, ctx) || (owner && owner === jid);
+    if (!allowed) {
+        await say(sock, jid, `⛔ No tenés permiso para controlar ese bot.`, ctx);
+        return true;
+    }
+
+    if (!pm2Control.resolveAppName(businessKey)) {
+        await say(sock, jid, `❌ No reconozco "${businessKeyRaw}". Negocios válidos: ${pm2Control.listValidKeys().join(', ')}`, ctx);
+        return true;
+    }
+
+    await say(sock, jid, `⏳ ${action === 'start' ? 'Prendiendo' : 'Apagando'} *${businessKey}*...`, ctx);
+    const result = await pm2Control.pm2Action(action, businessKey);
+    if (result.ok) {
+        await say(sock, jid, `✅ *${businessKey}* ${action === 'start' ? 'prendido' : 'apagado'}.`, ctx);
+    } else {
+        await say(sock, jid, `❌ No se pudo ${action === 'start' ? 'prender' : 'apagar'} *${businessKey}*: ${result.error}`, ctx);
+    }
+    return true;
 }
 
 /**
