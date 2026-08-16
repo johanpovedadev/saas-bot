@@ -125,6 +125,21 @@ function getUser(jid) {
     }
 }
 
+/**
+ * Todos los usuarios registrados (mas recientes primero), paginado. Para la
+ * vista de "leads" del panel de administracion.
+ */
+function listUsers({ limit = 100, offset = 0 } = {}) {
+    const d = getDb();
+    if (!d) return [];
+    try {
+        return d.prepare('SELECT * FROM admin_users ORDER BY fecha_registro DESC LIMIT ? OFFSET ?').all(limit, offset);
+    } catch (err) {
+        logger.error(`financeAdmin.listUsers: ${err.message}`);
+        return [];
+    }
+}
+
 function normalizeTier(tier) {
     const t = String(tier || '').toLowerCase().trim();
     if (t === 'master' || t === 'pro' || t === 'premium' || t === 'ilimitado') return TIER_MASTER;
@@ -354,6 +369,7 @@ module.exports = {
     TIER_MASTER,
     registerUser,
     getUser,
+    listUsers,
     getTier,
     isPremium,
     setTier,

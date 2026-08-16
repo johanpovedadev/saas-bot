@@ -84,4 +84,19 @@ function getBookingsByJid(jid) {
     }
 }
 
-module.exports = { saveBooking, markCalendarSynced, getBookingsByJid };
+/**
+ * Todas las reservas (mas recientes primero), paginado. Para la vista de
+ * "leads" del panel de administracion.
+ */
+function getAllBookings({ limit = 100, offset = 0 } = {}) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(`SELECT * FROM pilates_bookings ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(limit, offset);
+    } catch (err) {
+        logger.error(`pilatesStore: getAllBookings error: ${err.message}`);
+        return [];
+    }
+}
+
+module.exports = { saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings };
