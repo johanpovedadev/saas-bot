@@ -1,0 +1,40 @@
+<section class="card" data-key="<%= business.key %>">
+  <header class="card-header">
+    <h2><%= business.name %></h2>
+    <span class="status-badge" data-status-badge>cargando…</span>
+  </header>
+
+  <div class="card-row" data-info>
+    <span>PID: <span data-pid>—</span></span>
+    <span>Número conectado: <span data-owner>—</span></span>
+  </div>
+
+  <div class="card-actions">
+    <button type="button" class="btn btn-start" data-action="start">▶️ Prender</button>
+    <button type="button" class="btn btn-stop" data-action="stop">⏹️ Apagar</button>
+  </div>
+
+  <% if (business.channel === 'whatsapp') { %>
+  <div class="card-section">
+    <h3>Silenciar un número</h3>
+    <div class="inline-form">
+      <input type="text" placeholder="573XXXXXXXXX" data-mute-input>
+      <button type="button" class="btn" data-action="mute">Silenciar</button>
+      <button type="button" class="btn" data-action="unmute">Desilenciar</button>
+    </div>
+    <ul class="muted-list" data-muted-list></ul>
+  </div>
+  <% } else { %>
+  <div class="card-section muted-note">Silenciar por número no disponible para Telegram todavía.</div>
+  <% } %>
+
+  <div class="card-section">
+    <h3>Conversaciones recientes</h3>
+    <div class="log-viewer" data-log-viewer>—</div>
+  </div>
+
+  <div class="card-section">
+    <h3>Leads</h3>
+    <div class="leads-viewer" data-leads-viewer>—</div>
+  </div>
+</section>

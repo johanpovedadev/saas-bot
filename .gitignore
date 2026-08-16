@@ -38,6 +38,10 @@ service_account_decoded.json
 repo-backup.bundle
 sensitive-backup*.zip
 service_account.json.bak.backup
+
+# Panel de administración local (cuentas/sesiones, nunca al repo)
+admin-panel/node_modules/
+admin-panel/data/
 filter-repo-output.txt
 gitleaks-report.json
 replace-secrets.txt

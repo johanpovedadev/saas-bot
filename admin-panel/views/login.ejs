@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel de administración — Ingresar</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-body">
+  <form class="login-card" method="POST" action="/login">
+    <h1>Panel de administración</h1>
+    <p class="subtitle">Ingresa con tu cuenta de negocio o de super-admin.</p>
+    <% if (error) { %>
+      <div class="error"><%= error %></div>
+    <% } %>
+    <label>Usuario
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>Contraseña
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Ingresar</button>
+  </form>
+</body>
+</html>

@@ -125,6 +125,18 @@ module.exports = {
       }
     },
     {
+      name: 'admin-panel',
+      cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\admin-panel',
+      script: 'server.js',
+      interpreter: 'node',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
       name: 'bot-dev',
       cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
       script: 'index.js',
