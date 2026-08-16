@@ -2,7 +2,10 @@
 
 function requireLogin(req, res, next) {
     if (!req.session.user) {
-        if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'No autenticado' });
+        // req.path es relativo al router donde se monta este middleware (ej.
+        // "/businesses" dentro de apiRoutes, no "/api/businesses") - hay que
+        // mirar originalUrl para detectar confiablemente una llamada a /api.
+        if (req.originalUrl.startsWith('/api/')) return res.status(401).json({ error: 'No autenticado' });
         return res.redirect('/login');
     }
     next();
