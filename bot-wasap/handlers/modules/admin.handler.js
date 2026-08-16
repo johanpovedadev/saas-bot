@@ -12,6 +12,7 @@ const { say } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
 const frustrationService = require('../../services/frustrationService');
+const mutedStore = require('../../services/mutedStore');
 
 /**
  * Obtiene los JIDs de los administradores
@@ -184,6 +185,7 @@ async function handleMuteCommand(sock, jid, text, ctx) {
     if (!ctx.mutedChats) ctx.mutedChats = new Set();
     const wasAlreadyMuted = ctx.mutedChats.has(targetJid);
     ctx.mutedChats.add(targetJid);
+    mutedStore.muteChat(process.env.BUSINESS_KEY, targetJid);
 
     if (wasAlreadyMuted) {
         await say(sock, jid, `ℹ️ El chat ${target} ya estaba silenciado.`, ctx);
@@ -248,6 +250,7 @@ async function handleYoContinuoCommand(sock, jid, userSession, ctx) {
     if (customerJid) {
         if (!ctx.mutedChats) ctx.mutedChats = new Set();
         ctx.mutedChats.add(customerJid);
+        mutedStore.muteChat(process.env.BUSINESS_KEY, customerJid);
         await say(sock, jid, `✅ Bot silenciado para el chat con ${customerJid.split('@')[0]}. Ya puedes hablar.`, ctx);
     } else {
         await say(sock, jid, 'No hay un cliente seleccionado previamente (usa "yo continuo" después de seleccionar uno).', ctx);
@@ -264,6 +267,7 @@ async function handleMiaActivaCommand(sock, jid, userSession, ctx) {
     
     if (customerJid && ctx.mutedChats && ctx.mutedChats.has(customerJid)) {
         ctx.mutedChats.delete(customerJid);
+        mutedStore.unmuteChat(process.env.BUSINESS_KEY, customerJid);
         await say(sock, jid, `✅ Bot reactivado para el chat con ${customerJid.split('@')[0]}.`, ctx);
         
         try {
@@ -429,18 +433,25 @@ async function handleMiaStatusCommand(sock, jid, text, userSession, ctx) {
  * @returns {boolean} - true si se desmuteó
  */
 function unmuteChat(jid, ctx) {
-    if (!ctx.mutedChats) return false;
-    return ctx.mutedChats.delete(jid);
+    // Limpiar en ambos lados y reportar "estaba silenciado" si cualquiera de
+    // los dos lo tenia — cubre el caso de un mute hecho desde OTRO proceso
+    // (el panel web, solo en mutedStore) que este proceso nunca vio en memoria.
+    const persistedRemoved = mutedStore.unmuteChat(process.env.BUSINESS_KEY, jid);
+    const memRemoved = ctx.mutedChats ? ctx.mutedChats.delete(jid) : false;
+    return persistedRemoved || memRemoved;
 }
 
 /**
- * Verifica si un chat está muteado
+ * Verifica si un chat está muteado. Chequea primero la memoria del proceso
+ * (rápido) y si no, el registro compartido en disco (mutedStore) — así un
+ * silenciado hecho desde OTRO proceso (el panel web) también se respeta acá.
  * @param {string} jid - JID del chat
  * @param {Object} ctx - Contexto global
  * @returns {boolean}
  */
 function isChatMuted(jid, ctx) {
-    return ctx.mutedChats && ctx.mutedChats.has(jid);
+    if (ctx.mutedChats && ctx.mutedChats.has(jid)) return true;
+    return mutedStore.isMuted(process.env.BUSINESS_KEY, jid);
 }
 
 module.exports = {

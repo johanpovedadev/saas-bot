@@ -7,7 +7,11 @@
  * Uso: node test_mute_by_number.js
  */
 const assert = require('assert');
+const path = require('path');
 process.env.BUSINESS_KEY = 'heladeria';
+// Aislar del archivo compartido real (bot-wasap/data/muted_chats.json): sin
+// esto, cada corrida de este test escribiria/leeria sobre datos reales.
+process.env.MUTED_STORE_PATH = path.join(__dirname, 'data', `__test_muted_${Date.now()}.json`);
 
 const adminHandler = require('./handlers/modules/admin.handler');
 
@@ -67,6 +71,7 @@ async function send(jid, text, ctx) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
+        try { require('fs').unlinkSync(process.env.MUTED_STORE_PATH); } catch (_) {}
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();
