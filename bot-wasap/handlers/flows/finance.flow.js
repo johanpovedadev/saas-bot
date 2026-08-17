@@ -26,7 +26,8 @@ const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
     `4️⃣ Mi salud financiera\n` +
     `5️⃣ Mis metas de ahorro\n` +
     `6️⃣ Invitar amigos (código)\n` +
-    `7️⃣ Planes y actualizar a Pro`;
+    `7️⃣ Planes y actualizar a Pro\n` +
+    `8️⃣ Préstamos (quién me debe / qué debo)`;
 
 const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
 
@@ -522,6 +523,7 @@ async function handle(sock, jid, text, userSession, ctx) {
             `💰 *"Recibí 2 millones de sueldo"*\n` +
             `📊 *"¿Cuánto tengo?"*\n` +
             `📷 *[foto de factura]*\n` +
+            `🤝 *"Le presté a Juan 50 mil"* o *"préstamos"* para ver quién te debe\n` +
             `💎 *"Actualizar a Pro"* para ver los planes Basic / Master\n\n` +
             `¿Qué necesitás? 🦁`, ctx);
     }
@@ -617,7 +619,8 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
         `🦁 ¡Hola de nuevo *${fin.name}*! ¿Qué necesitás hoy?\n\n` +
         `• Registrar una compra o ingreso\n` +
         `• Ver tu resumen\n` +
-        `• Hablar de metas`,
+        `• Hablar de metas\n` +
+        `• Anotar un préstamo (dado o recibido)`,
         ctx);
 }
 
@@ -886,7 +889,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
  * bloquear al usuario con el upsell de premium.
  */
 async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
-    const option = t.match(/^([1-7])$/);
+    const option = t.match(/^([1-8])$/);
     if (option) {
         switch (option[1]) {
             case '1':
@@ -924,6 +927,9 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                 return;
             case '7':
                 await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
+                return;
+            case '8':
+                await handleQueryLoans(sock, jid, fin, ctx);
                 return;
         }
         return;
@@ -1252,6 +1258,7 @@ async function showWelcome(sock, jid, ctx) {
                 `• Registrar movimiento\n` +
                 `• Ver resumen\n` +
                 `• Hablar de metas\n` +
+                `• Anotar un préstamo\n` +
                 (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`),
                 ctx);
         }
