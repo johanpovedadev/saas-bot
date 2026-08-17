@@ -43,7 +43,7 @@ function pm2Action(action, businessKey) {
             resolve({ ok: false, error: `Negocio desconocido: "${businessKey}". Válidos: ${listValidKeys().join(', ')}` });
             return;
         }
-        execFile('npx', ['pm2', action, appName], { timeout: 20000, shell: true }, (err) => {
+        execFile('npx', ['pm2', action, appName], { timeout: 20000, shell: true, windowsHide: true }, (err) => {
             if (err) {
                 logger.error(`pm2Control: error ejecutando pm2 ${action} ${appName}: ${err.message}`);
                 resolve({ ok: false, error: err.message });

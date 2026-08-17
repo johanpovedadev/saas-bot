@@ -12,7 +12,7 @@ const pm2Control = require(path.join(__dirname, '..', '..', 'bot-wasap', 'servic
  */
 function getAllStatuses() {
     return new Promise((resolve) => {
-        execFile('npx', ['pm2', 'jlist'], { timeout: 15000, shell: true, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+        execFile('npx', ['pm2', 'jlist'], { timeout: 15000, shell: true, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
             if (err) {
                 console.error('pm2Status: error ejecutando pm2 jlist:', err.message);
                 resolve({});

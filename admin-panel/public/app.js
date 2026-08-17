@@ -15,24 +15,29 @@ function fmtTime(ms) {
     return new Date(ms).toLocaleString('es-CO');
 }
 
-async function refreshCard(card) {
-    const key = card.dataset.key;
+// Una sola llamada a /api/businesses actualiza TODAS las tarjetas (antes
+// cada tarjeta pedia esto por separado en su propio intervalo -> con 4
+// negocios eran 4 llamadas redundantes cada 10s, cada una disparando un
+// "pm2 jlist" por detras).
+async function refreshAllStatuses() {
     try {
         const { businesses } = await api('/businesses');
-        const info = businesses.find(b => b.key === key);
-        if (!info) return;
-
-        const badge = card.querySelector('[data-status-badge]');
-        const online = info.status === 'online';
-        badge.textContent = online ? 'En línea' : (info.status === 'stopped' ? 'Apagado' : info.status);
-        badge.className = `status-badge ${online ? 'online' : (info.status === 'stopped' ? 'stopped' : '')}`;
-
-        card.querySelector('[data-pid]').textContent = info.pid || '—';
-        card.querySelector('[data-owner]').textContent = info.ownerJid ? info.ownerJid.split('@')[0] : '—';
+        businesses.forEach(info => {
+            const card = document.querySelector(`.card[data-key="${info.key}"]`);
+            if (!card) return;
+            const badge = card.querySelector('[data-status-badge]');
+            const online = info.status === 'online';
+            badge.textContent = online ? 'En línea' : (info.status === 'stopped' ? 'Apagado' : info.status);
+            badge.className = `status-badge ${online ? 'online' : (info.status === 'stopped' ? 'stopped' : '')}`;
+            card.querySelector('[data-pid]').textContent = info.pid || '—';
+            card.querySelector('[data-owner]').textContent = info.ownerJid ? info.ownerJid.split('@')[0] : '—';
+        });
     } catch (e) {
-        console.error('refreshCard status', key, e);
+        console.error('refreshAllStatuses', e);
     }
+}
 
+async function refreshCardDetails(card) {
     await refreshMuted(card);
     await refreshLogs(card);
     await refreshLeads(card);
@@ -110,14 +115,14 @@ function wireCard(card) {
     card.querySelector('[data-action="start"]').addEventListener('click', async () => {
         try {
             await api(`/businesses/${key}/start`, { method: 'POST' });
-            setTimeout(() => refreshCard(card), 1500);
+            setTimeout(refreshAllStatuses, 1500);
         } catch (e) { alert(e.message); }
     });
 
     card.querySelector('[data-action="stop"]').addEventListener('click', async () => {
         try {
             await api(`/businesses/${key}/stop`, { method: 'POST' });
-            setTimeout(() => refreshCard(card), 1500);
+            setTimeout(refreshAllStatuses, 1500);
         } catch (e) { alert(e.message); }
     });
 
@@ -146,8 +151,11 @@ function wireCard(card) {
     }
 }
 
-document.querySelectorAll('.card').forEach(card => {
+const cards = document.querySelectorAll('.card');
+cards.forEach(card => {
     wireCard(card);
-    refreshCard(card);
-    setInterval(() => refreshCard(card), 10000);
+    refreshCardDetails(card);
 });
+refreshAllStatuses();
+setInterval(refreshAllStatuses, 10000);
+setInterval(() => cards.forEach(refreshCardDetails), 15000);
