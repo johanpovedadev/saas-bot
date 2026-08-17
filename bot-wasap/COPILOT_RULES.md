@@ -47,6 +47,28 @@ Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegist
    respeta el flag `bot.ai.enabled` de la config — no asumas que un flag apagado significa
    que la IA no corre, ni que uno prendido significa que sí (revisa el servicio puntual).
 
+## Conexión de WhatsApp (regla fija: siempre por WhatsApp Web / QR)
+
+Todos los bots de WhatsApp de este proyecto se conectan **por WhatsApp Web**
+(vía `whatsapp-web.js`, que controla un Chrome con Puppeteer) — **nunca**
+por la API oficial de WhatsApp Business ni por verificación con código de
+teléfono. Esto implica:
+
+- Vincular o re-vincular un negocio siempre es: escanear un código QR con el
+  celular real de ese negocio (Ajustes → Dispositivos vinculados → Vincular
+  un dispositivo), igual que enlazar WhatsApp Web en una PC normal.
+- La sesión se puede cerrar sola en cualquier momento (límite de
+  dispositivos vinculados de WhatsApp, el dueño del celular cierra sesión
+  manualmente, etc.). Cuando eso pasa, el bot queda en loop: genera QR,
+  nadie lo escanea a tiempo, hace timeout, PM2 lo reinicia, genera otro QR
+  — así indefinidamente (revisa `restart_time`/`↺` alto en `pm2 status`
+  como señal de esto).
+- Para recuperarlo: `pm2 restart bot-<negocio>`, esperar ~10s, y tomar el
+  QR fresco de `bot-wasap/assets/<businessKey>/qr_code.png` (se regenera
+  cada minuto aprox. si no se escanea).
+- No hay forma de auto-reconectar sin intervención humana — siempre hace
+  falta que alguien con el celular del negocio escanee el QR de nuevo.
+
 ## Bugs ya corregidos (no los reintroduzcas)
 
 - `handlers/handler.js`, bloque de manejo de audio/imagen: usaba `sessionService
