@@ -1694,6 +1694,16 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         acted = true;
     }
 
+    // 7) Parte del pedido que la IA NO pudo emparejar contra el catálogo (ej:
+    //    pidió "copa car y jugo de guanábana" pero guanábana no es un sabor
+    //    disponible). Antes esto se perdía en silencio: se agregaba lo que sí
+    //    coincidía y el cliente terminaba pensando que pidió las dos cosas.
+    //    Solo avisa si YA se hizo algo más (si no, el mensaje de "no entendí"
+    //    del flujo ya cubre el caso de "no encontré nada").
+    if (result.no_reconocido && acted) {
+        await say(sock, jid, `😅 Ojo: no encontré *"${result.no_reconocido}"* en el menú, así que no lo agregué. ¿Quieres que te muestre el menú para revisar el nombre exacto?`, ctx);
+    }
+
     return acted;
 }
 

@@ -403,12 +403,14 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni 
   "toppings": ["nombres exactos de toppings detectados o []"],
   "cantidad": número entero >= 1 o null,
   "direccion": "texto de la dirección si el cliente la menciona; si no, null",
-  "duda": "si el cliente hizo una pregunta o expresó una duda en vez de responder el paso, escribe la duda aquí; si no, null"
+  "duda": "si el cliente hizo una pregunta o expresó una duda en vez de responder el paso, escribe la duda aquí; si no, null",
+  "no_reconocido": "si el cliente pidió un producto, sabor, topping o bebida ADICIONAL que NO coincide con nada del catálogo (ej: pidió 'copa car y jugo de guanábana' pero guanábana no es un sabor de jugo disponible), escribe aquí EXACTAMENTE lo que pidió y no encontraste (ej: 'jugo de guanábana'); si todo lo que pidió sí coincidió con el catálogo, deja null"
 }
 
 Reglas:
 - Usa SIEMPRE nombres exactos de las listas. Haz fuzzy match (acentos, mayúsculas, typos).
 - "bebidas": si el cliente menciona una bebida del catálogo junto a un producto o sola (ej: "con limonada", "una capricho mío con limonada natural", "y un jugo"), pon el nombre EXACTO de la bebida del catálogo aquí. Las bebidas del catálogo tienen códigos que empiezan con "B-" (ej: Limonada Natural, Limonada Cereza, Limonada de Coco). No inventes bebidas que no estén en el catálogo. NO pongas aquí toppings ni sabores.
+- "no_reconocido": es CRÍTICO no dejar pedidos a medias en silencio. Si el mensaje menciona MÁS de una cosa (ej: dos productos, o un producto y una bebida/sabor) y solo pudiste resolver una parte contra el catálogo, escribe la parte que NO resolviste en "no_reconocido" en vez de simplemente omitirla. El cliente debe enterarse de qué no se pudo agregar.
 - Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
 - cantidad solo si indica unidades ("una" → 1, "dos" → 2, "un litro" → null).
 - direccion: solo si el cliente escribe algo como "para la cra 23", "la dirección es...", "calle/carrera/diagonal/avenida/cll/cra".
@@ -433,7 +435,8 @@ Reglas:
         if (parsed.cantidad === undefined || parsed.cantidad === null) parsed.cantidad = null;
         if (!parsed.direccion) parsed.direccion = null;
         if (!parsed.duda) parsed.duda = null;
-        logger.info(`heladeriaAi interpretOrderText (${step}): producto=${parsed.producto} bebidas=${parsed.bebidas.length} sabores=${parsed.sabores.length} toppings=${parsed.toppings.length} cant=${parsed.cantidad} duda=${!!parsed.duda}`);
+        if (!parsed.no_reconocido) parsed.no_reconocido = null;
+        logger.info(`heladeriaAi interpretOrderText (${step}): producto=${parsed.producto} bebidas=${parsed.bebidas.length} sabores=${parsed.sabores.length} toppings=${parsed.toppings.length} cant=${parsed.cantidad} duda=${!!parsed.duda} no_reconocido=${parsed.no_reconocido || ''}`);
         return parsed;
     } catch (e) {
         logger.warn(`heladeriaAi interpretOrderText: JSON inválido del modelo: ${e.message}`);
