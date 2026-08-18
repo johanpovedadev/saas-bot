@@ -148,3 +148,7 @@ input {
 .leads-table { width: 100%; border-collapse: collapse; }
 .leads-table th, .leads-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .leads-table th { color: var(--text-dim); font-weight: 500; }
+
+.qr-section { text-align: center; border: 1px solid var(--warn); border-radius: 8px; background: rgba(217, 164, 65, 0.08); }
+.qr-image { width: 180px; height: 180px; background: #fff; border-radius: 8px; padding: 8px; margin: 4px auto; display: block; }
+.qr-hint { color: var(--text-dim); font-size: 0.78rem; margin: 6px 0 0; }

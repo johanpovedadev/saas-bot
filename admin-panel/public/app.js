@@ -38,9 +38,28 @@ async function refreshAllStatuses() {
 }
 
 async function refreshCardDetails(card) {
+    await refreshQr(card);
     await refreshMuted(card);
     await refreshLogs(card);
     await refreshLeads(card);
+}
+
+async function refreshQr(card) {
+    const section = card.querySelector('[data-qr-section]');
+    if (!section) return; // Telegram no tiene esta seccion
+    const key = card.dataset.key;
+    try {
+        const { exists, fresh } = await api(`/businesses/${key}/qr-status`);
+        if (!exists || !fresh) {
+            section.style.display = 'none';
+            return;
+        }
+        const img = card.querySelector('[data-qr-image]');
+        img.src = `/api/businesses/${key}/qr.png?t=${Date.now()}`;
+        section.style.display = '';
+    } catch (e) {
+        section.style.display = 'none';
+    }
 }
 
 async function refreshMuted(card) {

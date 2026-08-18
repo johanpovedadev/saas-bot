@@ -15,6 +15,14 @@
   </div>
 
   <% if (business.channel === 'whatsapp') { %>
+  <div class="card-section qr-section" data-qr-section style="display:none">
+    <h3>Escanear para conectar</h3>
+    <img class="qr-image" data-qr-image alt="Código QR">
+    <p class="qr-hint">Escanéalo con el WhatsApp del número de este negocio (Ajustes → Dispositivos vinculados → Vincular un dispositivo). Se renueva solo cada minuto.</p>
+  </div>
+  <% } %>
+
+  <% if (business.channel === 'whatsapp') { %>
   <div class="card-section">
     <h3>Silenciar un número</h3>
     <div class="inline-form">
