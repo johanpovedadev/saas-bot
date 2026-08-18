@@ -130,7 +130,15 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             const resolved = resolveProducts(result.products, ctx);
             if (resolved.length > 0) {
                 const added = await addResolvedProducts(sock, jid, resolved, userSession, ctx);
-                if (added) return;
+                if (added) {
+                    // Si pidio mas de una cosa y solo una parte coincidio con el
+                    // menu, avisar cual parte NO se agrego en vez de dejarla caer
+                    // en silencio (antes el cliente no se enteraba).
+                    if (result.no_reconocido) {
+                        await say(sock, jid, `😅 Ojo: no encontré *"${result.no_reconocido}"* en el menú, así que no lo agregué. Escribe *menú* si quieres revisar el nombre exacto.`, ctx);
+                    }
+                    return;
+                }
             }
             await say(sock, jid, result.response || '😅 No encontré ese plato en el menú. Escribe *menú* para ver nuestras opciones 🐟', ctx);
             return;

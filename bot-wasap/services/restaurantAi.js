@@ -88,11 +88,13 @@ Analiza el mensaje del usuario y devuelve SIEMPRE un JSON válido con esta estru
       "cantidad": <número>
     }
   ],
+  "no_reconocido": "si el cliente pidió MÁS de una cosa y alguna NO coincide con nada del menú (ej: pidió 'un pargo rojo y una limonada de guanábana' pero esa limonada no existe), escribe aquí EXACTAMENTE lo que pidió y no encontraste; si todo lo que pidió sí coincidió, deja null",
   "response": "<tu respuesta en español, amigable y con emojis>"
 }
 
 Reglas de intents:
 - order: el usuario pide UNO O MÁS productos del menú ("quiero un pargo rojo", "2 pargos y 1 cazuela"). Debes completar "products" con los códigos y nombres EXACTOS del menú. Si el producto no existe, usa "chat" o "custom_order".
+- "no_reconocido" es CRÍTICO: si el mensaje menciona más de una cosa y solo pudiste resolver una parte contra el menú, escribe la parte que NO resolviste en "no_reconocido" en vez de simplemente omitirla — el cliente debe enterarse de qué no se pudo agregar, nunca dejarlo en silencio.
 - repeat_order: el usuario quiere repetir un pedido anterior ("quiero lo de la última vez", "repite mi último pedido"). Basate en "recentOrders".
 - custom_order: el usuario pide algo que no está en el menú o un encargo especial ("me arman un plato especial", "3 bandejas para evento").
 - query_menu: pregunta qué hay en el menú, precios, recomendaciones ("qué tienen?", "cuánto vale el pargo?").
@@ -139,6 +141,7 @@ async function interpret(message, userSession, recentOrders) {
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.products)) parsed.products = [];
+            if (!parsed.no_reconocido) parsed.no_reconocido = null;
             return parsed;
         } catch (e) {
             logger.warn(`restaurantAi intento ${attempt}: ${e.message}`);
@@ -232,6 +235,7 @@ async function interpretAudioIntent(audioBase64, userSession, recentOrders, mime
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.products)) parsed.products = [];
+            if (!parsed.no_reconocido) parsed.no_reconocido = null;
             logger.info(`restaurantAi interpretAudioIntent: intent=${parsed.intent}, transcripción="${(parsed.transcription || '').substring(0, 120)}"`);
             return parsed;
         } catch (e) {
