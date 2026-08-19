@@ -41,6 +41,19 @@
     <div class="log-viewer" data-log-viewer>—</div>
   </div>
 
+  <% if (business.leadsAdapter === 'pilates_creditos') { %>
+  <div class="card-section">
+    <h3>Cargar clienta</h3>
+    <div class="inline-form">
+      <input type="text" placeholder="Teléfono (573XXXXXXXXX)" data-credito-telefono>
+      <input type="text" placeholder="Nombre" data-credito-nombre>
+      <input type="number" min="0" placeholder="Clases al mes" data-credito-clases style="width:110px">
+      <button type="button" class="btn" data-action="guardar-credito">Guardar</button>
+    </div>
+    <p class="qr-hint">Se resetea solo cada mes: lo que ya tomó y lo que le queda siempre se calculan contra el mes en curso.</p>
+  </div>
+  <% } %>
+
   <div class="card-section">
     <h3><%= business.leadsLabel || 'Leads' %></h3>
     <div class="leads-viewer" data-leads-viewer>—</div>

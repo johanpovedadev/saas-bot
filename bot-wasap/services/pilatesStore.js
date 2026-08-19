@@ -56,6 +56,21 @@ function getDb() {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+        // Roster local de clientas recurrentes, cargado desde el panel web
+        // (telefono + cuantas clases al mes) — alternativa/complemento al
+        // Google Sheet en pilatesRoster.js para quien prefiera no usar Sheets.
+        // El cupo se resetea solo cada mes: "usadas este mes" siempre se
+        // cuenta en vivo contra la fecha actual (countBookingsThisMonth), no
+        // hay que restablecer nada manualmente el dia 1.
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS pilates_clients (
+                jid TEXT PRIMARY KEY,
+                nombre TEXT NOT NULL DEFAULT '',
+                telefono TEXT NOT NULL,
+                allotment INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        `);
         // Migracion aditiva: pilates_bookings puede existir de antes (bot de
         // captacion) sin la columna session_id — se agrega si falta.
         const cols = db.prepare(`PRAGMA table_info(pilates_bookings)`).all().map(c => c.name);
@@ -333,9 +348,41 @@ function countBookingsThisMonth(jid) {
     }
 }
 
+/** Crea o actualiza el cupo mensual de una clienta cargada desde el panel. */
+function upsertLocalClient(jid, nombre, telefono, allotment) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        database.prepare(`
+            INSERT INTO pilates_clients (jid, nombre, telefono, allotment, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET
+                nombre = CASE WHEN excluded.nombre != '' THEN excluded.nombre ELSE pilates_clients.nombre END,
+                telefono = excluded.telefono, allotment = excluded.allotment, updated_at = datetime('now')
+        `).run(jid, nombre || '', telefono, allotment);
+        return jid;
+    } catch (err) {
+        logger.error(`pilatesStore: upsertLocalClient error: ${err.message}`);
+        return null;
+    }
+}
+
+/** Roster local completo (clientas cargadas desde el panel, no el Sheet). */
+function getLocalClients() {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(`SELECT * FROM pilates_clients ORDER BY updated_at DESC`).all();
+    } catch (err) {
+        logger.error(`pilatesStore: getLocalClients error: ${err.message}`);
+        return [];
+    }
+}
+
 module.exports = {
     saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings,
     findOrCreateSession, setSessionCalendarEvent, incrementSessionCount, decrementSessionCount,
     getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
-    cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth
+    cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
+    upsertLocalClient, getLocalClients
 };

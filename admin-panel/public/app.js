@@ -168,6 +168,25 @@ function wireCard(card) {
             } catch (e) { alert(e.message); }
         });
     }
+
+    const creditoBtn = card.querySelector('[data-action="guardar-credito"]');
+    if (creditoBtn) {
+        creditoBtn.addEventListener('click', async () => {
+            const telefono = card.querySelector('[data-credito-telefono]');
+            const nombre = card.querySelector('[data-credito-nombre]');
+            const clases = card.querySelector('[data-credito-clases]');
+            try {
+                await api(`/businesses/${key}/pilates-credito`, {
+                    method: 'POST',
+                    body: JSON.stringify({ telefono: telefono.value, nombre: nombre.value, clases: clases.value })
+                });
+                telefono.value = '';
+                nombre.value = '';
+                clases.value = '';
+                refreshLeads(card);
+            } catch (e) { alert(e.message); }
+        });
+    }
 }
 
 const cards = document.querySelectorAll('.card');

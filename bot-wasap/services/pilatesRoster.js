@@ -1,19 +1,21 @@
 'use strict';
 
 /**
- * Roster de clientas de Bri Pilates leido desde un Google Sheet que Bri
- * mantiene a mano (columnas: Nombre, Telefono, Dia, Hora, Clases_por_mes).
- * "Clases_por_mes" es el cupo mensual: 0 = no es clienta regular, >0 = si.
+ * Roster de clientas de Bri Pilates: fusiona dos fuentes posibles —
+ * (1) un Google Sheet opcional que Bri mantiene a mano (columnas: Nombre,
+ * Telefono, Dia, Hora, Clases_por_mes), y (2) el roster local cargado desde
+ * el panel web (telefono + cuantas clases al mes, sin necesitar Sheets — ver
+ * pilatesStore.upsertLocalClient). Si una clienta esta en ambas, gana el
+ * dato del panel (mas facil de corregir al vuelo que editar el Sheet).
  *
- * Los creditos restantes NO se guardan en el Sheet — se calculan en vivo
- * cruzando el cupo del Sheet con las reservas confirmadas del mes en curso
- * en pilatesStore (bot-wasap/services/pilatesStore.js). Asi el corte de mes
- * lo da la fecha misma, sin necesitar un job de "reseteo".
+ * El cupo mensual (allotment) es lo unico que se guarda — cuantas ha tomado
+ * y cuantas le quedan SIEMPRE se calculan en vivo contra las reservas
+ * confirmadas del mes en curso (pilatesStore.countBookingsThisMonth). Por
+ * eso el corte de mes es automatico: no hay que "resetear" nada el dia 1,
+ * el conteo simplemente vuelve a empezar en 0 porque ya es otro mes.
  *
- * Mismo mecanismo de credenciales que calendarService.js — mientras no haya
- * GOOGLE_SHEET_ID/credenciales configuradas, las funciones devuelven listas
- * vacias en vez de lanzar (el bot sigue funcionando, solo sin datos de
- * roster todavia).
+ * Mientras no haya GOOGLE_SHEET_ID/credenciales configuradas, el Sheet se
+ * omite en silencio y el roster local solo (panel) sigue funcionando igual.
  */
 
 const { logger } = require('../utils/logger');
@@ -68,11 +70,8 @@ function phoneToJid(phone) {
     return `${digits}@c.us`;
 }
 
-async function getRosterRows() {
-    if (!isConfigured()) {
-        logger.warn('pilatesRoster: GOOGLE_SHEET_ID/credenciales no configuradas todavia — roster vacio');
-        return [];
-    }
+async function getSheetRows() {
+    if (!isConfigured()) return [];
     try {
         const sheet = await getSheet();
         const rows = await sheet.getRows();
@@ -89,6 +88,25 @@ async function getRosterRows() {
     }
 }
 
+function getLocalRows() {
+    return pilatesStore.getLocalClients().map(c => ({
+        nombre: c.nombre,
+        telefono: c.telefono,
+        dia: '',
+        hora: '',
+        clasesPorMes: c.allotment
+    }));
+}
+
+/** Roster fusionado: local (panel) tiene prioridad sobre el Sheet por telefono. */
+async function getRosterRows() {
+    const sheetRows = await getSheetRows();
+    const localRows = getLocalRows();
+    const localPhones = new Set(localRows.map(r => phoneToJid(r.telefono)));
+    const merged = [...localRows, ...sheetRows.filter(r => !localPhones.has(phoneToJid(r.telefono)))];
+    return merged;
+}
+
 /** Filas con cupo mensual > 0 — las que entran a la campana de sabados. */
 async function getActiveRegulars() {
     const rows = await getRosterRows();
@@ -98,21 +116,23 @@ async function getActiveRegulars() {
         .filter(r => r.jid);
 }
 
+/** Creditos de una fila del roster para el mes en curso: cupo menos reservas confirmadas de este mes. */
+function creditsForRow(row, jid) {
+    const usedThisMonth = jid ? pilatesStore.countBookingsThisMonth(jid) : 0;
+    const allotment = row.clasesPorMes;
+    return {
+        nombre: row.nombre,
+        telefono: row.telefono,
+        allotment,
+        usedThisMonth,
+        remaining: Math.max(0, allotment - usedThisMonth)
+    };
+}
+
 /** Vista de creditos para el panel: cupo mensual, usadas y restantes de cada clienta. */
 async function getCreditsSummary() {
     const rows = await getRosterRows();
-    return rows.map(r => {
-        const jid = phoneToJid(r.telefono);
-        const usedThisMonth = jid ? pilatesStore.countBookingsThisMonth(jid) : 0;
-        const allotment = r.clasesPorMes;
-        return {
-            nombre: r.nombre,
-            telefono: r.telefono,
-            allotment,
-            usedThisMonth,
-            remaining: Math.max(0, allotment - usedThisMonth)
-        };
-    });
+    return rows.map(r => creditsForRow(r, phoneToJid(r.telefono)));
 }
 
 /**
@@ -124,9 +144,25 @@ async function getClientCredit(jid) {
     const rows = await getRosterRows();
     const row = rows.find(r => phoneToJid(r.telefono) === jid);
     if (!row) return null;
-    const usedThisMonth = pilatesStore.countBookingsThisMonth(jid);
-    const allotment = row.clasesPorMes;
-    return { allotment, usedThisMonth, remaining: Math.max(0, allotment - usedThisMonth) };
+    return creditsForRow(row, jid);
 }
 
-module.exports = { isConfigured, getActiveRegulars, getCreditsSummary, getClientCredit, phoneToJid };
+/**
+ * Carga/actualiza una clienta desde el panel web: telefono, nombre y cuantas
+ * clases al mes. Cuantas ha tomado y cuantas le quedan siempre se calculan
+ * en vivo (ver creditsForRow) — nada que resetear el dia 1, el conteo del
+ * mes anterior simplemente deja de contar porque ya no es el mes en curso.
+ */
+function setLocalClient(telefono, nombre, clasesPorMes) {
+    const jid = phoneToJid(telefono);
+    if (!jid) return { ok: false, error: 'Numero de telefono invalido.' };
+    const allotment = Math.max(0, parseInt(clasesPorMes, 10) || 0);
+    const id = pilatesStore.upsertLocalClient(jid, nombre, telefono, allotment);
+    if (!id) return { ok: false, error: 'No se pudo guardar la clienta.' };
+    return { ok: true };
+}
+
+module.exports = {
+    isConfigured, getActiveRegulars, getCreditsSummary, getClientCredit,
+    setLocalClient, phoneToJid
+};

@@ -72,6 +72,19 @@ router.get('/businesses/:key/leads', requireBusinessScope, async (req, res) => {
     res.json(result);
 });
 
+// Cargar/actualizar una clienta del bot de Bri Pilates (clientas
+// recurrentes): telefono, nombre y cuantas clases al mes. Cuantas ha
+// tomado/le quedan se calculan solas contra el mes en curso (ver
+// GET .../leads, que ya trae esos dos numeros para esta clienta).
+router.post('/businesses/:key/pilates-credito', requireBusinessScope, async (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const { telefono, nombre, clases } = req.body || {};
+    if (!telefono) return res.status(400).json({ error: 'Falta el número de teléfono.' });
+    const pilatesRoster = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesRoster'));
+    const result = pilatesRoster.setLocalClient(telefono, nombre, clases);
+    res.status(result.ok ? 200 : 400).json(result);
+});
+
 // Estado del QR (sin bajar la imagen) - para que el frontend decida si
 // mostrar el <img> o un mensaje de "sin QR disponible ahora mismo".
 router.get('/businesses/:key/qr-status', requireBusinessScope, (req, res) => {
