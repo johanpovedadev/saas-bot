@@ -124,24 +124,25 @@ function pickTestSlot(dateISO) {
         assert.ok(!offeredAfterFull.some(s => s.label === targetSlot1.label), `el slot de ${targetSlot1.label} ya no debe ofrecerse una vez lleno (6/6)`);
         console.log(`OK: tope de cupo respetado (${targetSlot1.label} desaparece de la oferta al llegar a 6)`);
 
-        // 1b) Cupos restantes visibles + urgencia en los ultimos 3 cupos
-        // (dia y horario distintos al de la prueba 1, para no pisarse).
-        // Mide en base a lo que YA habia antes de este test (nunca asume que
-        // parte de 6/6 — podria haber reservas reales previas de verdad).
+        // 1b) Nunca se muestra el numero exacto de cupos a la clienta — solo
+        // "Disponible" o, con pocos cupos, un aviso de urgencia sin numero.
+        // Agrupado por Jornada AM/PM (dia y horario distintos a la prueba 1,
+        // para no pisarse). Mide en base a lo que YA habia antes del test
+        // (nunca asume que parte de 6/6 — podria haber reservas reales).
         const dateISOmiercoles = pilcFlow._internal.nextDateForDay('miercoles');
         const before1b = pickTestSlot(dateISOmiercoles);
         assert.ok(before1b, 'debe haber al menos un horario ofrecido el miercoles para esta prueba');
         const targetLabel1b = before1b.label;
         const freeBefore1b = before1b.free;
-        const bookedBefore1b = before1b.bookedCount;
 
         await bookClient(makeCtx(), 101, 'miercoles', targetLabel1b);
         await bookClient(makeCtx(), 102, 'miercoles', targetLabel1b);
         const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === targetLabel1b);
-        assert.strictEqual(partial.free, freeBefore1b - 2, 'tras 2 reservas deben quedar 2 cupos menos que antes');
+        assert.strictEqual(partial.free, freeBefore1b - 2, 'tras 2 reservas deben quedar 2 cupos menos que antes (internamente, no se le muestra a la clienta)');
         const partialText = pilcFlow._internal.formatSlotsList([partial]);
-        assert.ok(new RegExp(`quedan ${partial.free} cupos.*ya hay ${bookedBefore1b + 2} clientas agendadas`, 'i').test(partialText),
-            'debe mostrar cupos restantes y cuantas ya se agendaron');
+        assert.ok(!/\d+\s*cupo/i.test(partialText), 'no debe mostrarle a la clienta el numero exacto de cupos');
+        assert.ok(/disponible/i.test(partialText), 'debe indicar "disponible" sin numero mientras no sea urgencia');
+        assert.ok(/jornada (am|pm)/i.test(partialText), 'debe agrupar por jornada AM/PM (estilo de Bri)');
 
         // Sigue reservando hasta llegar a 3 o menos libres, para probar la urgencia.
         let n = 103;
@@ -151,9 +152,9 @@ function pickTestSlot(dateISO) {
         const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === targetLabel1b);
         assert.ok(urgent.free <= URGENCY_TEST_THRESHOLD, 'debe haber llegado a 3 cupos o menos');
         const urgentText = pilcFlow._internal.formatSlotsList([urgent]);
-        assert.ok(new RegExp(`🔥.*[uú]ltim${urgent.free === 1 ? 'o' : 'os'} ${urgent.free} cupo`, 'i').test(urgentText),
-            'con 3 o menos cupos libres debe mostrar urgencia');
-        console.log('OK: se ven los cupos restantes cuando ya hay agendadas, y aparece urgencia en los ultimos 3');
+        assert.ok(!/\d+\s*cupo/i.test(urgentText), 'la urgencia tampoco debe revelar el numero exacto de cupos');
+        assert.ok(/🔥.*pocos cupos/i.test(urgentText), 'con 3 o menos cupos libres debe mostrar urgencia sin numero');
+        console.log('OK: nunca se muestra el numero exacto de cupos — solo disponible/urgencia, agrupado por jornada AM/PM');
 
         // 1c) No se ofrecen dias que ya pasaron esta semana (se agenda semana
         // a semana) — se calcula dinamicamente segun el dia real de hoy para

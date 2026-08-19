@@ -141,16 +141,25 @@ function isBookingWithinCutoff(booking) {
 // resalta cuando ya se esta agotando.
 const URGENCY_THRESHOLD = 3;
 
+/**
+ * Lista de horarios agrupada por jornada (AM/PM), al estilo con el que Bri
+ * ya le escribia a sus clientas a mano ("Cupos disponibles jornada am...").
+ * A proposito NO muestra cuantos cupos quedan — solo si esta disponible o
+ * con pocos cupos (urgencia), nunca el numero exacto.
+ */
 function formatSlotsList(slots) {
-    return slots.map((s, i) => {
-        if (s.free <= URGENCY_THRESHOLD) {
-            return `${i + 1}️⃣ ${s.label} — 🔥 ¡Últim${s.free === 1 ? 'o' : 'os'} ${s.free} cupo${s.free === 1 ? '' : 's'}!`;
-        }
-        if (s.bookedCount > 0) {
-            return `${i + 1}️⃣ ${s.label} — quedan ${s.free} cupos (ya hay ${s.bookedCount} clientas agendadas)`;
-        }
-        return `${i + 1}️⃣ ${s.label} (${s.free} cupos disponibles)`;
-    }).join('\n');
+    let i = 0;
+    const lineFor = (s) => {
+        i++;
+        const tag = s.free <= URGENCY_THRESHOLD ? '🔥 Pocos cupos' : 'Disponible ✅';
+        return `${i}️⃣ ${s.label} — ${tag}`;
+    };
+    const am = slots.filter(s => parseInt(s.start.split(':')[0], 10) < 12);
+    const pm = slots.filter(s => parseInt(s.start.split(':')[0], 10) >= 12);
+    const parts = [];
+    if (am.length) parts.push(`🌅 *Jornada AM:*\n${am.map(lineFor).join('\n')}`);
+    if (pm.length) parts.push(`☀️ *Jornada PM:*\n${pm.map(lineFor).join('\n')}`);
+    return parts.join('\n\n');
 }
 
 /** Clave canonica de un horario a partir de su hora 24h de inicio (ej. "17:00" -> "5pm"). */
