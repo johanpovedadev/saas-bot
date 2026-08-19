@@ -73,7 +73,22 @@ const PHASE = {
     PIL_ASK_PERIOD: 'pil_ask_period',     // Pide manana/tarde
     PIL_ASK_TIME: 'pil_ask_time',         // Pide hora especifica dentro del periodo
     PIL_CONFIRM: 'pil_confirm',           // Confirma la reserva
-    PIL_MAIN: 'pil_main'                  // Post-reserva / menu conversacional
+    PIL_MAIN: 'pil_main',                 // Post-reserva / menu conversacional
+
+    // ===================================
+    // 🧘 FASES FLUJO BRI PILATES - CLIENTAS RECURRENTES
+    // ===================================
+    PILC_ASK_NAME: 'pilc_ask_name',                     // Primera vez: pide el nombre antes del menu
+    PILC_MENU: 'pilc_menu',                             // Menu principal (agendar/reagendar/hablar con Bri)
+    PILC_ASK_DAY: 'pilc_ask_day',                       // Pide dia (texto libre)
+    PILC_ASK_TIME: 'pilc_ask_time',                     // Ofrece horarios reales libres ese dia
+    PILC_CONFIRM: 'pilc_confirm',                       // Confirma la reserva nueva
+    PILC_RESCHEDULE_FIND: 'pilc_reschedule_find',       // Cual cita quiere reagendar
+    PILC_RESCHEDULE_DAY: 'pilc_reschedule_day',         // Pide el nuevo dia
+    PILC_RESCHEDULE_TIME: 'pilc_reschedule_time',       // Ofrece horarios reales libres del nuevo dia
+    PILC_RESCHEDULE_CONFIRM: 'pilc_reschedule_confirm', // Confirma el cambio (libera vieja + crea nueva)
+    PILC_HUMAN: 'pilc_human',                           // Esperando que Bri atienda directo
+    PILC_SATURDAY_REPLY: 'pilc_saturday_reply'          // Esperando respuesta a la campaña de sabados
 };
 
 module.exports = PHASE;

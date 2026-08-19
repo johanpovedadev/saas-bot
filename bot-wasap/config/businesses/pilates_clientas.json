@@ -1,0 +1,15 @@
+{
+  "business_name": "Bri Pilates - Clientas",
+  "business_type": "SERVICE",
+  "sheet_id": "",
+  "sheet_tab": "Clientas",
+  "business_admin_jids": ["573138777115@c.us"],
+  "system_admin_jids": ["573138777115@c.us"],
+  "contact_phone": "+57 300 000 0000",
+  "contact_whatsapp": "+573000000000",
+  "contact_email": "contacto@bripilates.com",
+  "city": "Bogota",
+  "department": "Cundinamarca",
+  "timezone": "America/Bogota",
+  "currency": "COP"
+}

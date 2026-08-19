@@ -30,6 +30,38 @@ function getDb() {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+        // Clases grupales (bot-pilates-clientas): una "sesion" = dia+hora de una
+        // fecha concreta, con hasta `capacity` reservas. Calendar solo sabe
+        // ocupado/libre, asi que el conteo real de cupos vive aqui.
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS pilates_sessions (
+                id TEXT PRIMARY KEY,
+                day TEXT NOT NULL,
+                date_iso TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                calendar_event_id TEXT,
+                capacity INTEGER NOT NULL DEFAULT 6,
+                booked_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'activa',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(date_iso, start_time)
+            )
+        `);
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS pilates_pauses (
+                id TEXT PRIMARY KEY,
+                jid TEXT NOT NULL,
+                week_of TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        `);
+        // Migracion aditiva: pilates_bookings puede existir de antes (bot de
+        // captacion) sin la columna session_id — se agrega si falta.
+        const cols = db.prepare(`PRAGMA table_info(pilates_bookings)`).all().map(c => c.name);
+        if (!cols.includes('session_id')) {
+            db.exec(`ALTER TABLE pilates_bookings ADD COLUMN session_id TEXT`);
+        }
         logger.info(`pilatesStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -43,8 +75,8 @@ function saveBooking(booking) {
     if (!database) return null;
     try {
         database.prepare(`
-            INSERT INTO pilates_bookings (id, jid, name, phone, day, time_label, status, calendar_synced, calendar_event_id)
-            VALUES (@id, @jid, @name, @phone, @day, @time_label, @status, @calendar_synced, @calendar_event_id)
+            INSERT INTO pilates_bookings (id, jid, name, phone, day, time_label, status, calendar_synced, calendar_event_id, session_id)
+            VALUES (@id, @jid, @name, @phone, @day, @time_label, @status, @calendar_synced, @calendar_event_id, @session_id)
         `).run({
             id: booking.id,
             jid: booking.jid,
@@ -54,7 +86,8 @@ function saveBooking(booking) {
             time_label: booking.timeLabel || '',
             status: booking.status || 'pendiente',
             calendar_synced: booking.calendarSynced ? 1 : 0,
-            calendar_event_id: booking.calendarEventId || null
+            calendar_event_id: booking.calendarEventId || null,
+            session_id: booking.sessionId || null
         });
         return booking.id;
     } catch (err) {
@@ -99,4 +132,210 @@ function getAllBookings({ limit = 100, offset = 0 } = {}) {
     }
 }
 
-module.exports = { saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings };
+/**
+ * Busca la sesion (dia+hora de una fecha concreta) o la crea si no existe
+ * todavia (booked_count arranca en 0). No incrementa el conteo — eso lo hace
+ * incrementSessionCount despues de confirmar la reserva.
+ */
+function findOrCreateSession(day, dateISO, startTime, endTime) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const existing = database.prepare(
+            `SELECT * FROM pilates_sessions WHERE date_iso = ? AND start_time = ?`
+        ).get(dateISO, startTime);
+        if (existing) return existing;
+
+        const id = `sess_${dateISO}_${startTime.replace(':', '')}_${Math.random().toString(36).slice(2, 6)}`;
+        database.prepare(`
+            INSERT INTO pilates_sessions (id, day, date_iso, start_time, end_time)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(id, day, dateISO, startTime, endTime);
+        return database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(id);
+    } catch (err) {
+        logger.error(`pilatesStore: findOrCreateSession error: ${err.message}`);
+        return null;
+    }
+}
+
+function setSessionCalendarEvent(sessionId, calendarEventId) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`UPDATE pilates_sessions SET calendar_event_id = ? WHERE id = ?`).run(calendarEventId || null, sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: setSessionCalendarEvent error: ${err.message}`);
+    }
+}
+
+/**
+ * Suma 1 cupo ocupado a la sesion. Si llega a capacidad, la marca 'llena'.
+ * Devuelve la sesion actualizada (o null si no existe / ya estaba llena).
+ */
+function incrementSessionCount(sessionId) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const session = database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(sessionId);
+        if (!session || session.booked_count >= session.capacity) return null;
+        const newCount = session.booked_count + 1;
+        const status = newCount >= session.capacity ? 'llena' : 'activa';
+        database.prepare(`UPDATE pilates_sessions SET booked_count = ?, status = ? WHERE id = ?`).run(newCount, status, sessionId);
+        return database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: incrementSessionCount error: ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Resta 1 cupo ocupado (nunca baja de 0). Devuelve la sesion actualizada
+ * para que el caller decida si debe borrar el evento de Calendar
+ * (booked_count llego a 0) o solo actualizar el titulo con el nuevo conteo.
+ */
+function decrementSessionCount(sessionId) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const session = database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(sessionId);
+        if (!session) return null;
+        const newCount = Math.max(0, session.booked_count - 1);
+        const status = newCount === 0 ? 'vacia' : 'activa';
+        database.prepare(`UPDATE pilates_sessions SET booked_count = ?, status = ? WHERE id = ?`).run(newCount, status, sessionId);
+        return database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: decrementSessionCount error: ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Cupos libres para una fecha concreta, indexado por start_time. Un horario
+ * que aun no tiene fila en pilates_sessions esta implicitamente libre — el
+ * caller decide la lista de horarios candidatos (5-6am/6-7am/5-6pm) y cruza
+ * contra este mapa.
+ */
+function getSessionAvailability(dateISO) {
+    const database = getDb();
+    if (!database) return {};
+    try {
+        const rows = database.prepare(`SELECT * FROM pilates_sessions WHERE date_iso = ?`).all(dateISO);
+        const map = {};
+        for (const r of rows) map[r.start_time] = r;
+        return map;
+    } catch (err) {
+        logger.error(`pilatesStore: getSessionAvailability error: ${err.message}`);
+        return {};
+    }
+}
+
+/**
+ * Reserva(s) activa(s) de una clienta (pendiente/confirmada) — para el paso
+ * 1 de reagendar ("cual es tu clase actual").
+ */
+function getActiveBookingByJid(jid) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(
+            `SELECT * FROM pilates_bookings WHERE jid = ? AND status IN ('pendiente','confirmada') ORDER BY created_at DESC`
+        ).all(jid);
+    } catch (err) {
+        logger.error(`pilatesStore: getActiveBookingByJid error: ${err.message}`);
+        return [];
+    }
+}
+
+function getBookingById(id) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        return database.prepare(`SELECT * FROM pilates_bookings WHERE id = ?`).get(id);
+    } catch (err) {
+        logger.error(`pilatesStore: getBookingById error: ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Mueve una reserva existente a una sesion nueva (reagendar). El caller ya
+ * debe haber hecho decrementSessionCount(sesion vieja) + incrementSessionCount
+ * (sesion nueva) — esta funcion solo actualiza el puntero de la reserva.
+ */
+function rescheduleBooking(bookingId, newSessionId, newDay, newTimeLabel) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(
+            `UPDATE pilates_bookings SET session_id = ?, day = ?, time_label = ?, status = 'confirmada' WHERE id = ?`
+        ).run(newSessionId, newDay, newTimeLabel, bookingId);
+    } catch (err) {
+        logger.error(`pilatesStore: rescheduleBooking error: ${err.message}`);
+    }
+}
+
+function cancelBooking(bookingId) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const booking = database.prepare(`SELECT * FROM pilates_bookings WHERE id = ?`).get(bookingId);
+        if (!booking) return null;
+        database.prepare(`UPDATE pilates_bookings SET status = 'cancelada' WHERE id = ?`).run(bookingId);
+        return booking;
+    } catch (err) {
+        logger.error(`pilatesStore: cancelBooking error: ${err.message}`);
+        return null;
+    }
+}
+
+function markBookingConfirmed(bookingId) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`UPDATE pilates_bookings SET status = 'confirmada' WHERE id = ?`).run(bookingId);
+    } catch (err) {
+        logger.error(`pilatesStore: markBookingConfirmed error: ${err.message}`);
+    }
+}
+
+/** Registra que esta semana la clienta no toma clase (campana de sabados, opcion 3). */
+function savePause(jid, weekOf) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const id = `pause_${jid}_${weekOf}`;
+        database.prepare(`INSERT OR REPLACE INTO pilates_pauses (id, jid, week_of) VALUES (?, ?, ?)`).run(id, jid, weekOf);
+        return id;
+    } catch (err) {
+        logger.error(`pilatesStore: savePause error: ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Cuenta reservas confirmadas/pendientes de una clienta creadas en el mes en
+ * curso — base del calculo en vivo de creditos (sin job de "reseteo" mensual,
+ * el corte lo da la fecha misma).
+ */
+function countBookingsThisMonth(jid) {
+    const database = getDb();
+    if (!database) return 0;
+    try {
+        const row = database.prepare(`
+            SELECT COUNT(*) AS n FROM pilates_bookings
+            WHERE jid = ? AND status IN ('pendiente','confirmada')
+            AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+        `).get(jid);
+        return row ? row.n : 0;
+    } catch (err) {
+        logger.error(`pilatesStore: countBookingsThisMonth error: ${err.message}`);
+        return 0;
+    }
+}
+
+module.exports = {
+    saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings,
+    findOrCreateSession, setSessionCalendarEvent, incrementSessionCount, decrementSessionCount,
+    getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
+    cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth
+};

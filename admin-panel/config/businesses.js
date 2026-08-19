@@ -25,9 +25,15 @@ const BUSINESSES = {
         leadsAdapter: null
     },
     pilates: {
-        name: 'Bri Pilates',
+        name: 'Bri Pilates (captación)',
         channel: 'whatsapp',
         leadsAdapter: 'pilates'
+    },
+    pilates_clientas: {
+        name: 'Bri Pilates (clientas)',
+        channel: 'whatsapp',
+        leadsAdapter: 'pilates_creditos',
+        leadsLabel: 'Créditos de clientas'
     },
     finance: {
         name: 'LEO FINANCIERO',

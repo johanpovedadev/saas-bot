@@ -4,6 +4,7 @@ const { getBusiness } = require('../../config/businesses');
 
 const adapters = {
     pilates: require('./pilates'),
+    pilates_creditos: require('./pilatesCreditos'),
     finance: require('./finance')
 };
 

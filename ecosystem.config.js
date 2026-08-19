@@ -125,6 +125,19 @@ module.exports = {
       }
     },
     {
+      name: 'bot-pilates-clientas',
+      cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
+      script: 'index.js',
+      interpreter: 'node',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'production',
+        BUSINESS_KEY: 'pilates_clientas'
+      }
+    },
+    {
       name: 'admin-panel',
       cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\admin-panel',
       script: 'server.js',

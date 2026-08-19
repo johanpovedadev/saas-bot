@@ -561,6 +561,19 @@ const startBot = async () => {
             console.warn('Night reporter no disponible:', e.message);
         }
 
+        // Campana automatica de sabados (Bri Pilates - clientas recurrentes),
+        // mismo patron opcional que el night reporter de arriba.
+        try {
+            const flowReg = require('./handlers/flowRegistry');
+            const flowMod = flowReg.getFlow(envConfig.business?.type) || flowReg.getFlow(BUSINESS_KEY);
+            if (flowMod && typeof flowMod.startSaturdayCampaign === 'function') {
+                flowMod.startSaturdayCampaign(sock, ctx);
+                console.log('✅ Campaña de sábados iniciada');
+            }
+        } catch (e) {
+            console.warn('Campaña de sábados no disponible:', e.message);
+        }
+
         // Detectar desconexion del browser (caida internet, crash)
         if (sock.pupBrowser) {
             sock.pupBrowser.on('disconnected', () => {
