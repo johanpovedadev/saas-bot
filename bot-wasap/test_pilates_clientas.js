@@ -36,6 +36,8 @@ flowRegistry.register('PILATES_RECURRENTE', pilcFlow);
 
 function testJid(n) { return `57300099${String(n).padStart(4, '0')}@c.us`; }
 
+const URGENCY_TEST_THRESHOLD = 3; // debe coincidir con URGENCY_THRESHOLD del flow
+
 function makeCtx() {
     return { sessions: {}, mutedChats: new Set(), carts: {}, lastSent: {}, botEnabled: true, order: {}, geminiKey: null, geminiAvailable: false, productsCache: [] };
 }
@@ -64,8 +66,29 @@ async function bookClient(ctx, n, day, slotChoice) {
 function cleanup() {
     const Database = require('better-sqlite3');
     const db = new Database(path.join(__dirname, 'data', 'pilates.db'));
+    // CRITICO: calcular y borrar las sesiones ANTES de borrar las reservas de
+    // prueba (si no, la subquery ya no encuentra sus session_id). Solo borra
+    // sesiones que este test creo (referenciadas por una reserva de prueba)
+    // y que NINGUNA reserva real (jid que no sea de prueba) tambien este
+    // usando — nunca `WHERE id LIKE 'sess_%'` a secas, eso borraba sesiones
+    // reales de clientas de verdad.
+    db.prepare(`
+        DELETE FROM pilates_sessions
+        WHERE id IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE jid LIKE '57300099%' AND session_id IS NOT NULL)
+        AND id NOT IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE jid NOT LIKE '57300099%' AND session_id IS NOT NULL)
+    `).run();
     db.prepare(`DELETE FROM pilates_bookings WHERE jid LIKE '57300099%'`).run();
-    db.prepare(`DELETE FROM pilates_sessions WHERE id LIKE 'sess_%'`).run();
+    // Auto-reparacion: cualquier sesion real compartida con una prueba pudo
+    // quedar con booked_count inflado (reservas de prueba que la
+    // incrementaron y luego se borraron sin decrementarla de vuelta).
+    // Recalcula desde la verdad (conteo real de reservas activas) en vez de
+    // confiar en los incrementos/decrementos intermedios del test.
+    const sessions = db.prepare(`SELECT id, capacity FROM pilates_sessions`).all();
+    for (const s of sessions) {
+        const row = db.prepare(`SELECT COUNT(*) AS n FROM pilates_bookings WHERE session_id = ? AND status IN ('pendiente','confirmada')`).get(s.id);
+        const status = row.n === 0 ? 'vacia' : (row.n >= s.capacity ? 'llena' : 'activa');
+        db.prepare(`UPDATE pilates_sessions SET booked_count = ?, status = ? WHERE id = ?`).run(row.n, status, s.id);
+    }
     try {
         const dbu = new Database(path.join(__dirname, 'data', 'users.db'));
         dbu.prepare(`DELETE FROM users WHERE jid LIKE '57300099%' OR jid = '573999880400@c.us' OR jid LIKE '5739998804%'`).run();
@@ -86,39 +109,89 @@ function cleanup() {
         console.log('OK: tope de cupo respetado (5:00 pm desaparece de la oferta al llegar a 6)');
 
         // 1b) Cupos restantes visibles + urgencia en los ultimos 3 cupos
-        // (se prueba en miercoles, aparte de lunes/viernes que usan las
-        // pruebas 1 y 2 para no contaminar sus sesiones).
+        // (se prueba en miercoles 6pm, un slot que ninguna otra prueba toca).
+        // Mide en base a lo que YA habia antes de este test (nunca asume que
+        // parte de 6/6 — podria haber reservas reales previas de verdad).
         const dateISOmiercoles = pilcFlow._internal.nextDateForDay('miercoles');
-        await bookClient(makeCtx(), 101, 'miercoles', '1');
-        await bookClient(makeCtx(), 102, 'miercoles', '1');
-        const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 am');
-        assert.strictEqual(partial.free, 4, 'tras 2 reservas deben quedar 4 cupos libres');
+        const before1b = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
+        const freeBefore1b = before1b ? before1b.free : 6;
+        const bookedBefore1b = before1b ? before1b.bookedCount : 0;
+
+        await bookClient(makeCtx(), 101, 'miercoles', '3');
+        await bookClient(makeCtx(), 102, 'miercoles', '3');
+        const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
+        assert.strictEqual(partial.free, freeBefore1b - 2, 'tras 2 reservas deben quedar 2 cupos menos que antes');
         const partialText = pilcFlow._internal.formatSlotsList([partial]);
-        assert.ok(/quedan 4 cupos.*ya hay 2 clientas agendadas/i.test(partialText), 'debe mostrar cupos restantes y cuantas ya se agendaron');
-        for (let i = 0; i < 3; i++) await bookClient(makeCtx(), 103 + i, 'miercoles', '1');
-        const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 am');
-        assert.strictEqual(urgent.free, 1, 'debe quedar 1 cupo tras 5 reservas');
+        assert.ok(new RegExp(`quedan ${partial.free} cupos.*ya hay ${bookedBefore1b + 2} clientas agendadas`, 'i').test(partialText),
+            'debe mostrar cupos restantes y cuantas ya se agendaron');
+
+        // Sigue reservando hasta llegar a 3 o menos libres, para probar la urgencia.
+        let n = 103;
+        while (pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm').free > URGENCY_TEST_THRESHOLD) {
+            await bookClient(makeCtx(), n++, 'miercoles', '3');
+        }
+        const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
+        assert.ok(urgent.free <= URGENCY_TEST_THRESHOLD, 'debe haber llegado a 3 cupos o menos');
         const urgentText = pilcFlow._internal.formatSlotsList([urgent]);
-        assert.ok(/🔥.*[uú]ltimo 1 cupo/i.test(urgentText), 'con 3 o menos cupos libres debe mostrar urgencia');
+        assert.ok(new RegExp(`🔥.*[uú]ltim${urgent.free === 1 ? 'o' : 'os'} ${urgent.free} cupo`, 'i').test(urgentText),
+            'con 3 o menos cupos libres debe mostrar urgencia');
         console.log('OK: se ven los cupos restantes cuando ya hay agendadas, y aparece urgencia en los ultimos 3');
 
-        // 2) Reagendar: libera el cupo viejo y lo deja en 6 libres de nuevo.
+        // 1c) No se ofrecen dias que ya pasaron esta semana (se agenda semana
+        // a semana) — se calcula dinamicamente segun el dia real de hoy para
+        // que el test sea valido sin importar cuando se corra.
+        const { DAY_ORDER: DO, hasDayPassedThisWeek, getDaysAvailableThisWeek } = pilcFlow._internal;
+        assert.ok(getDaysAvailableThisWeek().every(d => !hasDayPassedThisWeek(d)), 'ningun dia "disponible" debe estar marcado como ya pasado');
+        const passedDay = DO.find(d => hasDayPassedThisWeek(d));
+        if (passedDay) {
+            const jidWeek = testJid(600);
+            const sentWeek = []; const sockWeek = makeSock(sentWeek);
+            const ctxWeek = makeCtx();
+            await send(sockWeek, ctxWeek, jidWeek, 'hola');
+            await send(sockWeek, ctxWeek, jidWeek, 'Semana Test');
+            await send(sockWeek, ctxWeek, jidWeek, '1');
+            sentWeek.length = 0;
+            await send(sockWeek, ctxWeek, jidWeek, passedDay);
+            assert.ok(/ya pas[oó] esta semana/i.test(sentWeek.join(' ')), `no debe ofrecer ${passedDay}, ya paso esta semana`);
+            console.log(`OK: no se ofrece ${passedDay} porque ya pasó esta semana`);
+        } else {
+            console.log('OK: hoy no hay dias pasados esta semana que probar (candado validado por logica interna arriba)');
+        }
+
+        // 2) Reagendar: libera el cupo viejo y ocupa el nuevo en el mismo paso.
+        // Usa el primer dia disponible ESTA semana (nunca hardcoded 'lunes' —
+        // podria ya haber pasado) y mide todo en deltas relativos, nunca
+        // asumiendo que un slot parte de 6/6 (podria haber reservas reales).
+        const availableForResched = pilcFlow._internal.getDaysAvailableThisWeek();
+        const reschedDay1 = availableForResched[0];
+        const reschedDay2 = availableForResched.length > 1 ? availableForResched[1] : availableForResched[0];
+        const day1DateISO = pilcFlow._internal.nextDateForDay(reschedDay1);
+        const day2DateISO = pilcFlow._internal.nextDateForDay(reschedDay2);
+
+        const before1 = pilcFlow._internal.getOfferedSlots(day1DateISO).find(s => s.label === '5:00 am');
+        const freeBefore1 = before1 ? before1.free : 6;
+
         const ctxResched = makeCtx();
-        const { jid: reschedJid } = await bookClient(ctxResched, 100, 'lunes', '1');
-        const lunesDateISO = pilcFlow._internal.nextDateForDay('lunes');
-        const before = pilcFlow._internal.getOfferedSlots(lunesDateISO).find(s => s.label === '5:00 am');
-        assert.strictEqual(before.free, 5, 'tras 1 reserva debe quedar 5 libres en lunes 5am');
+        const { jid: reschedJid } = await bookClient(ctxResched, 100, reschedDay1, '1'); // 5am del dia 1
+
+        const before2 = pilcFlow._internal.getOfferedSlots(day2DateISO).find(s => s.label === '6:00 am');
+        const freeBefore2 = before2 ? before2.free : 6;
 
         const sentResched = [];
         const sockResched = makeSock(sentResched);
         await send(sockResched, ctxResched, reschedJid, '2'); // reagendar
-        await send(sockResched, ctxResched, reschedJid, 'viernes');
-        await send(sockResched, ctxResched, reschedJid, '2'); // 6am viernes
+        await send(sockResched, ctxResched, reschedJid, reschedDay2);
+        await send(sockResched, ctxResched, reschedJid, '2'); // 6am
         await send(sockResched, ctxResched, reschedJid, 'si');
         assert.ok(/reagendada/i.test(sentResched.join(' ')), 'debe confirmar el reagendamiento');
 
-        const afterRelease = pilcFlow._internal.getOfferedSlots(lunesDateISO).find(s => s.label === '5:00 am');
-        assert.strictEqual(afterRelease.free, 6, 'el cupo viejo (lunes 5am) debe liberarse por completo tras reagendar — nunca dejar un hueco fantasma');
+        const afterRelease1 = pilcFlow._internal.getOfferedSlots(day1DateISO).find(s => s.label === '5:00 am');
+        const freeAfterRelease1 = afterRelease1 ? afterRelease1.free : 6;
+        assert.strictEqual(freeAfterRelease1, freeBefore1, 'el cupo viejo debe liberarse por completo tras reagendar — nunca dejar un hueco fantasma');
+
+        const afterBook2 = pilcFlow._internal.getOfferedSlots(day2DateISO).find(s => s.label === '6:00 am');
+        const freeAfterBook2 = afterBook2 ? afterBook2.free : 6;
+        assert.strictEqual(freeAfterBook2, freeBefore2 - 1, 'el cupo nuevo debe quedar exactamente 1 menos que antes');
         console.log('OK: reagendar libera el cupo viejo y crea el nuevo en el mismo paso');
 
         // 3) Hablar con Bri: corta el flujo y notifica.

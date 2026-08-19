@@ -54,8 +54,26 @@ function initPilc(userSession) {
     return userSession.pilc;
 }
 
+const DAY_DOW = { lunes: 1, miercoles: 3, viernes: 5 }; // 0=domingo..6=sabado
+
+/**
+ * Dias de ESTA semana (lunes-domingo, hoy incluido) que todavia no han
+ * pasado. Se agenda semana a semana: un dia que ya paso esta semana no se
+ * ofrece (la campana de sabados es la que arma la agenda de la siguiente).
+ */
+function getDaysAvailableThisWeek() {
+    const todayDow = new Date().getDay();
+    return DAY_ORDER.filter(k => DAY_DOW[k] >= todayDow);
+}
+
+/** true si ese dia ya paso esta semana (no se ofrece via agendar directo). */
+function hasDayPassedThisWeek(dayKey) {
+    return DAY_DOW[dayKey] < new Date().getDay();
+}
+
 function daysListText() {
-    return DAY_ORDER.map(k => AVAILABLE_DAYS[k]).join(', ');
+    const available = getDaysAvailableThisWeek();
+    return (available.length ? available : DAY_ORDER).map(k => AVAILABLE_DAYS[k]).join(', ');
 }
 
 function matchDay(text) {
@@ -319,6 +337,12 @@ async function startAgendar(sock, jid, userSession, ctx, pil) {
         `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
     if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
 
+    if (getDaysAvailableThisWeek().length === 0) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `😅 Esta semana ya no quedan días disponibles para agendar por acá. El sábado te escribo para armar la agenda de la próxima semana.`, ctx);
+        return;
+    }
+
     pil.mode = 'agendar';
     userSession.phase = PHASE.PILC_ASK_DAY;
     await say(sock, jid, `¡Con gusto! ¿Qué día prefieres? (${daysListText()})`, ctx);
@@ -358,6 +382,15 @@ async function handleAskDay(sock, jid, t, userSession, ctx, pil, isReschedule) {
             return;
         }
         return await handleFallback(sock, jid, t, userSession, ctx, `los días disponibles son *${daysListText()}*`);
+    }
+    if (hasDayPassedThisWeek(day)) {
+        const stillAvailable = getDaysAvailableThisWeek();
+        if (stillAvailable.length === 0) {
+            await say(sock, jid, `😅 Esta semana ya no quedan días disponibles para agendar por acá. El sábado te escribo para armar la agenda de la próxima semana.`, ctx);
+            return;
+        }
+        await say(sock, jid, `😅 Ese día ya pasó esta semana (se agenda solo semana a semana). Los días que quedan esta semana son *${daysListText()}*. ¿Cuál prefieres?`, ctx);
+        return;
     }
     resetNotUnderstood(pil);
     const dateISO = nextDateForDay(day);
@@ -433,6 +466,11 @@ async function startReschedule(sock, jid, userSession, ctx, pil) {
 
     const active = pilatesStore.getActiveBookingByJid(jid);
     if (active.length === 0) {
+        if (getDaysAvailableThisWeek().length === 0) {
+            userSession.phase = PHASE.PILC_MENU;
+            await say(sock, jid, `No tienes ninguna clase agendada, y esta semana ya no quedan días disponibles 😅 El sábado te escribo para armar la agenda de la próxima semana.`, ctx);
+            return;
+        }
         pil.mode = 'agendar';
         userSession.phase = PHASE.PILC_ASK_DAY;
         await say(sock, jid, `No tienes ninguna clase agendada todavía 🧘‍♀️ ¿Qué día prefieres para agendar una? (${daysListText()})`, ctx);
@@ -658,5 +696,8 @@ module.exports = {
     isFlowPhase: (phase) => PILC_PHASES.includes(phase),
     getPhases: () => PILC_PHASES,
     // Expuestos para pilatesCampaign.js (envio del mensaje de sabados).
-    _internal: { AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList, commitBooking, slotKey, extractTimeKey, matchDay }
+    _internal: {
+        AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList,
+        commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek
+    }
 };
