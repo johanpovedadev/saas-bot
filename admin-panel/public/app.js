@@ -101,6 +101,7 @@ async function refreshLogs(card) {
 async function refreshLeads(card) {
     const viewer = card.querySelector('[data-leads-viewer]');
     const key = card.dataset.key;
+    const hasCreditoForm = !!card.querySelector('[data-credito-telefono]');
     try {
         const data = await api(`/businesses/${key}/leads`);
         if (!data.available) {
@@ -113,9 +114,15 @@ async function refreshLeads(card) {
         }
         viewer.innerHTML = `
             <table class="leads-table">
-                <thead><tr><th>Nombre</th><th>Teléfono</th><th>Detalle</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Nombre</th><th>Teléfono</th><th>Detalle</th><th>Estado</th>${hasCreditoForm ? '<th></th>' : ''}</tr></thead>
                 <tbody>
-                    ${data.leads.map(l => `<tr><td>${escapeHtml(l.nombre)}</td><td>${escapeHtml(l.telefono)}</td><td>${escapeHtml(l.detalle)}</td><td>${escapeHtml(l.estado)}</td></tr>`).join('')}
+                    ${data.leads.map(l => `<tr>
+                        <td>${escapeHtml(l.nombre)}</td>
+                        <td>${escapeHtml(l.telefono)}</td>
+                        <td>${escapeHtml(l.detalle)}</td>
+                        <td>${escapeHtml(l.estado)}</td>
+                        ${hasCreditoForm ? `<td><button type="button" class="btn btn-link" data-edit-credito data-telefono="${escapeHtml(l.telefono)}" data-nombre="${escapeHtml(l.nombre)}" data-clases="${l.allotment != null ? l.allotment : ''}">✏️ Editar</button></td>` : ''}
+                    </tr>`).join('')}
                 </tbody>
             </table>
         `;
@@ -185,6 +192,25 @@ function wireCard(card) {
                 clases.value = '';
                 refreshLeads(card);
             } catch (e) { alert(e.message); }
+        });
+    }
+
+    // Boton "Editar" por fila en la tabla de creditos: precarga el form de
+    // arriba con los datos de esa clienta. Delegado en el contenedor (la
+    // tabla se reemplaza entera en cada refresh, un listener por boton se
+    // perderia).
+    const leadsViewer = card.querySelector('[data-leads-viewer]');
+    if (leadsViewer) {
+        leadsViewer.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-edit-credito]');
+            if (!btn) return;
+            const telefono = card.querySelector('[data-credito-telefono]');
+            const nombre = card.querySelector('[data-credito-nombre]');
+            const clases = card.querySelector('[data-credito-clases]');
+            if (telefono) telefono.value = btn.dataset.telefono || '';
+            if (nombre) nombre.value = btn.dataset.nombre || '';
+            if (clases) clases.value = btn.dataset.clases || '';
+            if (telefono) telefono.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
     }
 }

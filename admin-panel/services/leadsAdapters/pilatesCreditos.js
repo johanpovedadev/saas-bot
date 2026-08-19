@@ -16,7 +16,8 @@ async function getLeads({ limit = 100 } = {}) {
         telefono: c.telefono,
         detalle: `${c.usedThisMonth}/${c.allotment} clases tomadas`,
         estado: c.remaining > 0 ? `${c.remaining} restantes` : 'Sin cupo este mes',
-        fecha: ''
+        fecha: '',
+        allotment: c.allotment // crudo, para precargar el form de "Cargar clienta" al editar
     }));
 }
 
