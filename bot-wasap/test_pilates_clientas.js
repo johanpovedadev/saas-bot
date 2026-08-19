@@ -85,6 +85,23 @@ function cleanup() {
         assert.ok(!offeredAfterFull.some(s => s.label === '5:00 pm'), 'el slot de 5pm ya no debe ofrecerse una vez lleno (6/6)');
         console.log('OK: tope de cupo respetado (5:00 pm desaparece de la oferta al llegar a 6)');
 
+        // 1b) Cupos restantes visibles + urgencia en los ultimos 3 cupos
+        // (se prueba en miercoles, aparte de lunes/viernes que usan las
+        // pruebas 1 y 2 para no contaminar sus sesiones).
+        const dateISOmiercoles = pilcFlow._internal.nextDateForDay('miercoles');
+        await bookClient(makeCtx(), 101, 'miercoles', '1');
+        await bookClient(makeCtx(), 102, 'miercoles', '1');
+        const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 am');
+        assert.strictEqual(partial.free, 4, 'tras 2 reservas deben quedar 4 cupos libres');
+        const partialText = pilcFlow._internal.formatSlotsList([partial]);
+        assert.ok(/quedan 4 cupos.*ya hay 2 clientas agendadas/i.test(partialText), 'debe mostrar cupos restantes y cuantas ya se agendaron');
+        for (let i = 0; i < 3; i++) await bookClient(makeCtx(), 103 + i, 'miercoles', '1');
+        const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 am');
+        assert.strictEqual(urgent.free, 1, 'debe quedar 1 cupo tras 5 reservas');
+        const urgentText = pilcFlow._internal.formatSlotsList([urgent]);
+        assert.ok(/🔥.*[uú]ltimo 1 cupo/i.test(urgentText), 'con 3 o menos cupos libres debe mostrar urgencia');
+        console.log('OK: se ven los cupos restantes cuando ya hay agendadas, y aparece urgencia en los ultimos 3');
+
         // 2) Reagendar: libera el cupo viejo y lo deja en 6 libres de nuevo.
         const ctxResched = makeCtx();
         const { jid: reschedJid } = await bookClient(ctxResched, 100, 'lunes', '1');

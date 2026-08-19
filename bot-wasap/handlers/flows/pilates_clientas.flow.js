@@ -101,12 +101,25 @@ function getOfferedSlots(dateISO) {
         const session = availability[slot.start];
         const bookedCount = session ? session.booked_count : 0;
         const capacity = session ? session.capacity : CAPACITY;
-        return { ...slot, free: Math.max(0, capacity - bookedCount) };
+        return { ...slot, free: Math.max(0, capacity - bookedCount), bookedCount };
     }).filter(s => s.free > 0);
 }
 
+// A partir de este numero de cupos libres, se muestra con urgencia ("ultimos
+// cupos") para empujar la decision — nunca se oculta el cupo real, solo se
+// resalta cuando ya se esta agotando.
+const URGENCY_THRESHOLD = 3;
+
 function formatSlotsList(slots) {
-    return slots.map((s, i) => `${i + 1}️⃣ ${s.label} (${s.free} cupo${s.free === 1 ? '' : 's'} libre${s.free === 1 ? '' : 's'})`).join('\n');
+    return slots.map((s, i) => {
+        if (s.free <= URGENCY_THRESHOLD) {
+            return `${i + 1}️⃣ ${s.label} — 🔥 ¡Últim${s.free === 1 ? 'o' : 'os'} ${s.free} cupo${s.free === 1 ? '' : 's'}!`;
+        }
+        if (s.bookedCount > 0) {
+            return `${i + 1}️⃣ ${s.label} — quedan ${s.free} cupos (ya hay ${s.bookedCount} clientas agendadas)`;
+        }
+        return `${i + 1}️⃣ ${s.label} (${s.free} cupos disponibles)`;
+    }).join('\n');
 }
 
 /** Clave canonica de un horario a partir de su hora 24h de inicio (ej. "17:00" -> "5pm"). */
