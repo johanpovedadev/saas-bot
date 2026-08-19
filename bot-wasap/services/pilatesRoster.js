@@ -115,4 +115,18 @@ async function getCreditsSummary() {
     });
 }
 
-module.exports = { isConfigured, getActiveRegulars, getCreditsSummary, phoneToJid };
+/**
+ * Cupo mensual de UNA clienta puntual (para "ver mis clases" en el flow).
+ * null si no aparece en el roster (ej. escribio sin que Bri la haya
+ * registrado todavia con su cupo mensual).
+ */
+async function getClientCredit(jid) {
+    const rows = await getRosterRows();
+    const row = rows.find(r => phoneToJid(r.telefono) === jid);
+    if (!row) return null;
+    const usedThisMonth = pilatesStore.countBookingsThisMonth(jid);
+    const allotment = row.clasesPorMes;
+    return { allotment, usedThisMonth, remaining: Math.max(0, allotment - usedThisMonth) };
+}
+
+module.exports = { isConfigured, getActiveRegulars, getCreditsSummary, getClientCredit, phoneToJid };

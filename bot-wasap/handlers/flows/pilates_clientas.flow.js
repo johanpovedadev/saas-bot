@@ -19,6 +19,7 @@ const { logger } = require('../../utils/logger');
 const pilatesStore = require('../../services/pilatesStore');
 const calendarService = require('../../services/calendarService');
 const pilatesAi = require('../../services/pilatesAi');
+const pilatesRoster = require('../../services/pilatesRoster');
 const userStore = require('../../services/userStore');
 
 const PILC_PHASES = [
@@ -221,7 +222,8 @@ async function showMenu(sock, jid, ctx, name) {
         `¡Hola${name ? ` ${name}` : ''}! 🧘‍♀️ ¿Qué necesitás hoy?\n\n` +
         `1️⃣ Agendar una clase\n` +
         `2️⃣ Reagendar una clase\n` +
-        `3️⃣ Hablar con Bri`,
+        `3️⃣ Hablar con Bri\n` +
+        `4️⃣ Ver mis clases`,
         ctx);
 }
 
@@ -271,7 +273,36 @@ async function handleMenu(sock, jid, t, userSession, ctx, pil) {
     if (/^3|hablar|bri|humano|asesor/.test(low)) {
         return await handleTalkToBri(sock, jid, t, userSession, ctx, pil);
     }
-    await handleFallback(sock, jid, t, userSession, ctx, `¿Qué necesitás? 1) Agendar 2) Reagendar 3) Hablar con Bri`);
+    if (/^4|ver mis clases|mis clases|cupo|creditos|clases restantes/.test(low)) {
+        return await handleMyClasses(sock, jid, userSession, ctx);
+    }
+    await handleFallback(sock, jid, t, userSession, ctx, `¿Qué necesitás? 1) Agendar 2) Reagendar 3) Hablar con Bri 4) Ver mis clases`);
+}
+
+/**
+ * "Ver mis clases": cupo mensual (el número de clases es MENSUAL aunque
+ * cada clase se agenda por semana) + las clases ya agendadas a futuro.
+ */
+async function handleMyClasses(sock, jid, userSession, ctx) {
+    const credit = await pilatesRoster.getClientCredit(jid);
+    const active = pilatesStore.getActiveBookingByJid(jid);
+
+    const lines = [];
+    if (credit) {
+        lines.push(`📅 Cupo mensual: *${credit.usedThisMonth}/${credit.allotment}* clases tomadas este mes (te quedan *${credit.remaining}*).`);
+    } else {
+        lines.push(`📅 No encontré tu cupo mensual registrado — pregúntale a Bri si ya te anotó.`);
+    }
+
+    if (active.length === 0) {
+        lines.push(`\n🧘‍♀️ No tienes clases agendadas por ahora.`);
+    } else {
+        lines.push(`\n🧘‍♀️ Clases agendadas:`);
+        for (const b of active) lines.push(`• ${b.day} a las ${b.time_label}`);
+    }
+
+    await say(sock, jid, lines.join('\n'), ctx);
+    userSession.phase = PHASE.PILC_MENU;
 }
 
 async function handleAskDay(sock, jid, t, userSession, ctx, pil, isReschedule) {
