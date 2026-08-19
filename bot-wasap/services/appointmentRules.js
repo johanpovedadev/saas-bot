@@ -42,4 +42,20 @@ function resetNotUnderstood(state) {
     state.notUnderstoodCount = 0;
 }
 
-module.exports = { requireRegisteredClient, trackNotUnderstood, resetNotUnderstood };
+/** Umbral por defecto: cambios de ultimo momento (menos de 2h) no se auto-gestionan. */
+const DEFAULT_CUTOFF_HOURS = 2;
+
+/**
+ * Regla basica para cualquier bot de citas: no tiene sentido reagendar o
+ * cancelar (ni ofrecer como disponible) un horario que ya paso o esta a
+ * menos de `cutoffHours` de distancia — para cambios de ultimo momento hay
+ * que escribirle a la persona encargada directo, no auto-gestionarlo por
+ * WhatsApp. Devuelve true si `targetDateTime` esta dentro de esa ventana
+ * (o ya paso).
+ */
+function isWithinCutoff(targetDateTime, cutoffHours = DEFAULT_CUTOFF_HOURS) {
+    const hoursUntil = (targetDateTime.getTime() - Date.now()) / 3600000;
+    return hoursUntil < cutoffHours;
+}
+
+module.exports = { requireRegisteredClient, trackNotUnderstood, resetNotUnderstood, isWithinCutoff, DEFAULT_CUTOFF_HOURS };

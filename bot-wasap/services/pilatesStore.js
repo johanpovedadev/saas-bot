@@ -373,6 +373,17 @@ function upsertLocalClient(jid, nombre, telefono, allotment) {
     }
 }
 
+function getSessionById(id) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        return database.prepare(`SELECT * FROM pilates_sessions WHERE id = ?`).get(id) || null;
+    } catch (err) {
+        logger.error(`pilatesStore: getSessionById error: ${err.message}`);
+        return null;
+    }
+}
+
 /** Reservas confirmadas/pendientes de una sesion — para mandar el recordatorio de clase. */
 function getBookingsForSession(sessionId) {
     const database = getDb();
@@ -436,5 +447,5 @@ module.exports = {
     getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
     upsertLocalClient, getLocalClients,
-    getBookingsForSession, getSessionsNeedingReminder, markSessionReminded
+    getBookingsForSession, getSessionsNeedingReminder, markSessionReminded, getSessionById
 };

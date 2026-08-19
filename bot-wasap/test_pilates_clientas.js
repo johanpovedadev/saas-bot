@@ -20,6 +20,7 @@ const flowRegistry = require('./handlers/flowRegistry');
 const pilcFlow = require('./handlers/flows/pilates_clientas.flow.js');
 const pilatesRoster = require('./services/pilatesRoster');
 const pilatesStore = require('./services/pilatesStore');
+const appointmentRules = require('./services/appointmentRules');
 const pilatesCampaign = require('./services/pilatesCampaign');
 const notificationService = require('./services/notificationService');
 
@@ -96,31 +97,47 @@ function cleanup() {
     } catch (e) { /* users.db puede no existir aun */ }
 }
 
+/**
+ * Escoge un horario ofrecido para probar contra, evitando (si se puede) uno
+ * que ya tenga reservas reales de por medio. Nunca hardcodea un slot por
+ * numero/nombre fijo — la lista de ofrecidos cambia segun la hora del dia
+ * en que corra el test (el cutoff de 2h saca los que ya pasaron/estan por
+ * pasar), asi que siempre hay que preguntarle a getOfferedSlots primero.
+ */
+function pickTestSlot(dateISO) {
+    const offered = pilcFlow._internal.getOfferedSlots(dateISO);
+    return offered.find(s => s.bookedCount === 0) || offered[0] || null;
+}
+
 (async () => {
     try {
         cleanup(); // por si quedo basura de una corrida anterior interrumpida
 
-        // 1) Tope de cupo: llenar viernes 5pm (slot 3) a 6 reservas.
-        for (let i = 1; i <= 6; i++) {
-            await bookClient({ sessions: {}, mutedChats: new Set(), carts: {}, lastSent: {}, botEnabled: true, order: {}, geminiKey: null, geminiAvailable: false, productsCache: [] }, i, 'viernes', '3');
-        }
+        // 1) Tope de cupo: llenar un horario de viernes a 6 reservas.
         const dateISO = pilcFlow._internal.nextDateForDay('viernes');
+        const targetSlot1 = pickTestSlot(dateISO);
+        assert.ok(targetSlot1, 'debe haber al menos un horario ofrecido el viernes para esta prueba');
+        for (let i = 1; i <= 6; i++) {
+            await bookClient({ sessions: {}, mutedChats: new Set(), carts: {}, lastSent: {}, botEnabled: true, order: {}, geminiKey: null, geminiAvailable: false, productsCache: [] }, i, 'viernes', targetSlot1.label);
+        }
         const offeredAfterFull = pilcFlow._internal.getOfferedSlots(dateISO);
-        assert.ok(!offeredAfterFull.some(s => s.label === '5:00 pm'), 'el slot de 5pm ya no debe ofrecerse una vez lleno (6/6)');
-        console.log('OK: tope de cupo respetado (5:00 pm desaparece de la oferta al llegar a 6)');
+        assert.ok(!offeredAfterFull.some(s => s.label === targetSlot1.label), `el slot de ${targetSlot1.label} ya no debe ofrecerse una vez lleno (6/6)`);
+        console.log(`OK: tope de cupo respetado (${targetSlot1.label} desaparece de la oferta al llegar a 6)`);
 
         // 1b) Cupos restantes visibles + urgencia en los ultimos 3 cupos
-        // (se prueba en miercoles 6pm, un slot que ninguna otra prueba toca).
+        // (dia y horario distintos al de la prueba 1, para no pisarse).
         // Mide en base a lo que YA habia antes de este test (nunca asume que
         // parte de 6/6 — podria haber reservas reales previas de verdad).
         const dateISOmiercoles = pilcFlow._internal.nextDateForDay('miercoles');
-        const before1b = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
-        const freeBefore1b = before1b ? before1b.free : 6;
-        const bookedBefore1b = before1b ? before1b.bookedCount : 0;
+        const before1b = pickTestSlot(dateISOmiercoles);
+        assert.ok(before1b, 'debe haber al menos un horario ofrecido el miercoles para esta prueba');
+        const targetLabel1b = before1b.label;
+        const freeBefore1b = before1b.free;
+        const bookedBefore1b = before1b.bookedCount;
 
-        await bookClient(makeCtx(), 101, 'miercoles', '3');
-        await bookClient(makeCtx(), 102, 'miercoles', '3');
-        const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
+        await bookClient(makeCtx(), 101, 'miercoles', targetLabel1b);
+        await bookClient(makeCtx(), 102, 'miercoles', targetLabel1b);
+        const partial = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === targetLabel1b);
         assert.strictEqual(partial.free, freeBefore1b - 2, 'tras 2 reservas deben quedar 2 cupos menos que antes');
         const partialText = pilcFlow._internal.formatSlotsList([partial]);
         assert.ok(new RegExp(`quedan ${partial.free} cupos.*ya hay ${bookedBefore1b + 2} clientas agendadas`, 'i').test(partialText),
@@ -128,10 +145,10 @@ function cleanup() {
 
         // Sigue reservando hasta llegar a 3 o menos libres, para probar la urgencia.
         let n = 103;
-        while (pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm').free > URGENCY_TEST_THRESHOLD) {
-            await bookClient(makeCtx(), n++, 'miercoles', '3');
+        while (pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === targetLabel1b).free > URGENCY_TEST_THRESHOLD) {
+            await bookClient(makeCtx(), n++, 'miercoles', targetLabel1b);
         }
-        const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === '5:00 pm');
+        const urgent = pilcFlow._internal.getOfferedSlots(dateISOmiercoles).find(s => s.label === targetLabel1b);
         assert.ok(urgent.free <= URGENCY_TEST_THRESHOLD, 'debe haber llegado a 3 cupos o menos');
         const urgentText = pilcFlow._internal.formatSlotsList([urgent]);
         assert.ok(new RegExp(`🔥.*[uú]ltim${urgent.free === 1 ? 'o' : 'os'} ${urgent.free} cupo`, 'i').test(urgentText),
@@ -161,43 +178,49 @@ function cleanup() {
 
         // 2) Reagendar: libera el cupo viejo y ocupa el nuevo en el mismo paso.
         // Usa el primer dia disponible ESTA semana (nunca hardcoded 'lunes' —
-        // podria ya haber pasado) y mide todo en deltas relativos, nunca
-        // asumiendo que un slot parte de 6/6 (podria haber reservas reales).
+        // podria ya haber pasado) y horarios elegidos dinamicamente segun lo
+        // que este ofrecido en ese momento (el cutoff de 2h puede excluir
+        // horarios ya pasados/proximos, asi que nunca se hardcodea "5am").
         const availableForResched = pilcFlow._internal.getDaysAvailableThisWeek();
         const reschedDay1 = availableForResched[0];
         const reschedDay2 = availableForResched.length > 1 ? availableForResched[1] : availableForResched[0];
         const day1DateISO = pilcFlow._internal.nextDateForDay(reschedDay1);
         const day2DateISO = pilcFlow._internal.nextDateForDay(reschedDay2);
 
-        const before1 = pilcFlow._internal.getOfferedSlots(day1DateISO).find(s => s.label === '5:00 am');
-        const freeBefore1 = before1 ? before1.free : 6;
+        const day1OfferedInitial = pilcFlow._internal.getOfferedSlots(day1DateISO);
+        assert.ok(day1OfferedInitial.length > 0, 'debe haber al menos un horario ofrecido en el primer dia disponible para reagendar');
+        const slot1Label = day1OfferedInitial[0].label;
+        const freeBefore1 = day1OfferedInitial[0].free;
+
+        const day2OfferedInitial = (reschedDay1 === reschedDay2) ? day1OfferedInitial : pilcFlow._internal.getOfferedSlots(day2DateISO);
+        const slot2Info = day2OfferedInitial.find(s => s.label !== slot1Label);
+        assert.ok(slot2Info, 'debe haber un horario distinto disponible para reagendar (se necesitan 2+ horarios ofrecidos)');
+        const slot2Label = slot2Info.label;
+        const freeBefore2 = slot2Info.free;
 
         const ctxResched = makeCtx();
-        const { jid: reschedJid } = await bookClient(ctxResched, 100, reschedDay1, '1'); // 5am del dia 1
-
-        const before2 = pilcFlow._internal.getOfferedSlots(day2DateISO).find(s => s.label === '6:00 am');
-        const freeBefore2 = before2 ? before2.free : 6;
+        const { jid: reschedJid } = await bookClient(ctxResched, 100, reschedDay1, slot1Label);
 
         const sentResched = [];
         const sockResched = makeSock(sentResched);
         await send(sockResched, ctxResched, reschedJid, '2'); // reagendar
         await send(sockResched, ctxResched, reschedJid, reschedDay2);
-        await send(sockResched, ctxResched, reschedJid, '2'); // 6am
+        await send(sockResched, ctxResched, reschedJid, slot2Label);
         await send(sockResched, ctxResched, reschedJid, 'si');
         assert.ok(/reagendada/i.test(sentResched.join(' ')), 'debe confirmar el reagendamiento');
 
-        const afterRelease1 = pilcFlow._internal.getOfferedSlots(day1DateISO).find(s => s.label === '5:00 am');
+        const afterRelease1 = pilcFlow._internal.getOfferedSlots(day1DateISO).find(s => s.label === slot1Label);
         const freeAfterRelease1 = afterRelease1 ? afterRelease1.free : 6;
         assert.strictEqual(freeAfterRelease1, freeBefore1, 'el cupo viejo debe liberarse por completo tras reagendar — nunca dejar un hueco fantasma');
 
-        const afterBook2 = pilcFlow._internal.getOfferedSlots(day2DateISO).find(s => s.label === '6:00 am');
+        const afterBook2 = pilcFlow._internal.getOfferedSlots(day2DateISO).find(s => s.label === slot2Label);
         const freeAfterBook2 = afterBook2 ? afterBook2.free : 6;
         assert.strictEqual(freeAfterBook2, freeBefore2 - 1, 'el cupo nuevo debe quedar exactamente 1 menos que antes');
         console.log('OK: reagendar libera el cupo viejo y crea el nuevo en el mismo paso');
 
         // 2b) Maximo 1 clase por dia: no debe dejar agendar 2 veces el mismo dia.
         const ctxMax1 = makeCtx();
-        const { jid: max1Jid } = await bookClient(ctxMax1, 200, reschedDay1, '1');
+        const { jid: max1Jid } = await bookClient(ctxMax1, 200, reschedDay1, slot1Label);
         const sentMax1 = []; const sockMax1 = makeSock(sentMax1);
         await send(sockMax1, ctxMax1, max1Jid, '1'); // intenta agendar otra vez
         await send(sockMax1, ctxMax1, max1Jid, reschedDay1);
@@ -206,7 +229,7 @@ function cleanup() {
 
         // 2c) Opcion "eliminar" dentro de reagendar: cancela sin crear una nueva.
         const ctxDel = makeCtx();
-        const { jid: delJid } = await bookClient(ctxDel, 201, reschedDay1, '1');
+        const { jid: delJid } = await bookClient(ctxDel, 201, reschedDay1, slot1Label);
         const sentDel = []; const sockDel = makeSock(sentDel);
         await send(sockDel, ctxDel, delJid, '2'); // reagendar
         await send(sockDel, ctxDel, delJid, 'eliminar');
@@ -237,6 +260,36 @@ function cleanup() {
         notificationService.notifySystemAlert = originalNotifyForLimit;
         console.log('OK: sin cupo mensual no deja agendar, y solo escala a Bri si el cliente confirma');
 
+        // 2e) Regla basica de citas (reusable, vive en appointmentRules.js):
+        // no se reagenda/cancela una clase a menos de 2h de su horario.
+        assert.strictEqual(appointmentRules.isWithinCutoff(new Date(Date.now() - 30 * 60000)), true,
+            'una clase que ya paso debe estar dentro del cutoff');
+        assert.strictEqual(appointmentRules.isWithinCutoff(new Date(Date.now() + 90 * 60000)), true,
+            'una clase en 90 min (menos de 2h) debe estar dentro del cutoff');
+        assert.strictEqual(appointmentRules.isWithinCutoff(new Date(Date.now() + 150 * 60000)), false,
+            'una clase en 150 min (mas de 2h) NO debe estar dentro del cutoff');
+
+        // Integracion: una reserva ya pasada no se puede reagendar/eliminar,
+        // se indica que hay que escribirle a Bri directo.
+        const cutoffNow = new Date();
+        const cutoffPast = new Date(cutoffNow.getTime() - 30 * 60000);
+        const cutoffDateISO = `${cutoffPast.getFullYear()}-${String(cutoffPast.getMonth() + 1).padStart(2, '0')}-${String(cutoffPast.getDate()).padStart(2, '0')}`;
+        const cutoffStartTime = `${String(cutoffPast.getHours()).padStart(2, '0')}:${String(cutoffPast.getMinutes()).padStart(2, '0')}`;
+        const cutoffSession = pilatesStore.findOrCreateSession('miercoles', cutoffDateISO, cutoffStartTime, cutoffStartTime);
+        pilatesStore.incrementSessionCount(cutoffSession.id);
+        const cutoffJid = testJid(203);
+        pilatesStore.saveBooking({
+            id: 'cutoff_test_booking', jid: cutoffJid, name: 'Cutoff Test', phone: cutoffJid.split('@')[0],
+            day: 'Miércoles', timeLabel: cutoffStartTime, status: 'confirmada', sessionId: cutoffSession.id
+        });
+        const sentCutoff = []; const sockCutoff = makeSock(sentCutoff);
+        const ctxCutoff = makeCtx();
+        await send(sockCutoff, ctxCutoff, cutoffJid, 'hola');
+        await send(sockCutoff, ctxCutoff, cutoffJid, 'Cutoff Test');
+        await send(sockCutoff, ctxCutoff, cutoffJid, '2'); // intenta reagendar una clase ya pasada
+        assert.ok(/menos de 2 horas|ya pas[oó]/i.test(sentCutoff.join(' ')), 'debe bloquear reagendar una clase a menos de 2h o ya pasada');
+        console.log('OK: no se reagenda/cancela una clase a menos de 2h de su horario (o ya pasada)');
+
         // 3) Hablar con Bri: corta el flujo y notifica.
         let notified = false;
         const originalNotify = notificationService.notifySystemAlert;
@@ -256,14 +309,23 @@ function cleanup() {
         notificationService.notifySystemAlert = originalNotify;
         console.log('OK: "hablar con Bri" corta el flujo automatico y notifica');
 
-        // 4) Campana de sabados: las 3 opciones.
+        // 4) Campana de sabados: las 3 opciones. En la vida real esto siempre
+        // corre en sabado preguntando por la semana siguiente (nunca hoy
+        // mismo), asi que el dia habitual mockeado tiene que resolver a una
+        // fecha FUTURA (no hoy) — si no, el cutoff de 2h podria excluirlo
+        // sin que sea un bug real, solo un artefacto de correr el test hoy.
+        const todayISOForCamp = (() => {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        })();
+        const campaignDay = pilcFlow._internal.DAY_ORDER.find(d => pilcFlow._internal.nextDateForDay(d) !== todayISOForCamp);
         const ctxCamp = makeCtx();
         const originalGetActiveRegulars = pilatesRoster.getActiveRegulars;
         const jidA = testJid(300), jidB = testJid(301), jidC = testJid(302);
         pilatesRoster.getActiveRegulars = async () => ([
-            { nombre: 'Camp Igual', telefono: jidA.split('@')[0], dia: 'miercoles', hora: '5:00 am', clasesPorMes: 8, jid: jidA },
-            { nombre: 'Camp Cambia', telefono: jidB.split('@')[0], dia: 'miercoles', hora: '6:00 am', clasesPorMes: 8, jid: jidB },
-            { nombre: 'Camp Pausa', telefono: jidC.split('@')[0], dia: 'miercoles', hora: '5:00 pm', clasesPorMes: 8, jid: jidC }
+            { nombre: 'Camp Igual', telefono: jidA.split('@')[0], dia: campaignDay, hora: '5:00 am', clasesPorMes: 8, jid: jidA },
+            { nombre: 'Camp Cambia', telefono: jidB.split('@')[0], dia: campaignDay, hora: '6:00 am', clasesPorMes: 8, jid: jidB },
+            { nombre: 'Camp Pausa', telefono: jidC.split('@')[0], dia: campaignDay, hora: '5:00 pm', clasesPorMes: 8, jid: jidC }
         ]);
         const sentCamp = [];
         const sockCamp = makeSock(sentCamp);

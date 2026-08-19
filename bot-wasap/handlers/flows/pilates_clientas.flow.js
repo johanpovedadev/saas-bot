@@ -21,7 +21,7 @@ const calendarService = require('../../services/calendarService');
 const pilatesAi = require('../../services/pilatesAi');
 const pilatesRoster = require('../../services/pilatesRoster');
 const userStore = require('../../services/userStore');
-const { requireRegisteredClient, trackNotUnderstood, resetNotUnderstood } = require('../../services/appointmentRules');
+const { requireRegisteredClient, trackNotUnderstood, resetNotUnderstood, isWithinCutoff } = require('../../services/appointmentRules');
 
 /** true si el jid esta en la lista de clientas de Bri (Sheet + panel). */
 async function isRegisteredClient(jid) {
@@ -113,6 +113,11 @@ function nextDateForDay(dayKey) {
  * Cupos reales libres de un dia concreto — nunca una lista estatica.
  * Cruza los 3 horarios fijos con lo que ya hay reservado en pilatesStore.
  */
+/** Fecha/hora exacta (Date) de un horario de una fecha concreta. */
+function slotDateTime(dateISO, startTime) {
+    return new Date(`${dateISO}T${startTime}:00`);
+}
+
 function getOfferedSlots(dateISO) {
     const availability = pilatesStore.getSessionAvailability(dateISO);
     return SLOTS.map(slot => {
@@ -120,7 +125,15 @@ function getOfferedSlots(dateISO) {
         const bookedCount = session ? session.booked_count : 0;
         const capacity = session ? session.capacity : CAPACITY;
         return { ...slot, free: Math.max(0, capacity - bookedCount), bookedCount };
-    }).filter(s => s.free > 0);
+    }).filter(s => s.free > 0 && !isWithinCutoff(slotDateTime(dateISO, s.start)));
+}
+
+/** true si una reserva ya activa esta a menos de 2h de su horario (o ya paso). */
+function isBookingWithinCutoff(booking) {
+    if (!booking || !booking.session_id) return false;
+    const session = pilatesStore.getSessionById(booking.session_id);
+    if (!session) return false;
+    return isWithinCutoff(slotDateTime(session.date_iso, session.start_time));
 }
 
 // A partir de este numero de cupos libres, se muestra con urgencia ("ultimos
@@ -418,6 +431,11 @@ async function handleDeleteBooking(sock, jid, userSession, ctx, pil) {
         await say(sock, jid, `No encontré esa clase para eliminar 😅`, ctx);
         return;
     }
+    if (isBookingWithinCutoff(booking)) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `😅 Esta clase ya está a menos de 2 horas (o ya pasó) — para cancelarla ahora escríbele a Bri directo.`, ctx);
+        return;
+    }
     await releaseBooking(booking);
     pilatesStore.cancelBooking(booking.id);
     resetNotUnderstood(pil);
@@ -524,7 +542,16 @@ async function startReschedule(sock, jid, userSession, ctx, pil) {
 
     if (await checkCreditLimitOrEscalate(sock, jid, userSession, ctx, pil)) return;
 
-    const active = pilatesStore.getActiveBookingByJid(jid);
+    const allActive = pilatesStore.getActiveBookingByJid(jid);
+    // Regla basica de citas: no se reagenda/cancela por aca una clase a
+    // menos de 2h de su horario (o que ya paso) — para eso hay que
+    // escribirle a Bri directo.
+    const active = allActive.filter(b => !isBookingWithinCutoff(b));
+    if (active.length === 0 && allActive.length > 0) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `😅 Tu clase más próxima ya está a menos de 2 horas (o ya pasó) — para cambios de último momento escríbele a Bri directo.`, ctx);
+        return;
+    }
     if (active.length === 0) {
         if (getDaysAvailableThisWeek().length === 0) {
             userSession.phase = PHASE.PILC_MENU;
@@ -597,6 +624,13 @@ async function handleRescheduleConfirm(sock, jid, t, userSession, ctx, pil) {
     }
 
     const oldBooking = pilatesStore.getBookingById(pil.rescheduleBookingId);
+    // Reverifica el cutoff justo antes de confirmar (pudo pasar tiempo desde
+    // que se eligio la clase a reagendar).
+    if (oldBooking && isBookingWithinCutoff(oldBooking)) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `😅 Tu clase actual ya está a menos de 2 horas (o ya pasó) — para cambios de último momento escríbele a Bri directo.`, ctx);
+        return;
+    }
     // Libera el cupo viejo y crea/asigna el nuevo en el mismo paso — nunca
     // deja un cupo viejo bloqueado sin razon (hueco fantasma).
     if (oldBooking) await releaseBooking(oldBooking);
@@ -760,6 +794,6 @@ module.exports = {
     _internal: {
         AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList,
         commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek,
-        hasActiveBookingOnDay
+        hasActiveBookingOnDay, isBookingWithinCutoff, slotDateTime
     }
 };
