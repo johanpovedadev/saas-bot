@@ -122,8 +122,10 @@ input {
 .card-section { border-top: 1px solid var(--border); padding-top: 12px; }
 .card-section h3 { font-size: 0.85rem; margin: 0 0 8px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
 
-.inline-form { display: flex; gap: 8px; margin-bottom: 8px; }
-.inline-form input { flex: 1; }
+.inline-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.inline-form input { flex: 1 1 120px; min-width: 0; }
+.inline-form input.input-narrow { flex: 0 1 90px; }
+.inline-form .btn { flex: 0 0 auto; }
 
 .muted-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--text-dim); max-height: 100px; overflow-y: auto; }
 .muted-note { color: var(--text-dim); font-size: 0.85rem; }
