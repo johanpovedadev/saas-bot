@@ -21,6 +21,12 @@ const calendarService = require('../../services/calendarService');
 const pilatesAi = require('../../services/pilatesAi');
 const pilatesRoster = require('../../services/pilatesRoster');
 const userStore = require('../../services/userStore');
+const { requireRegisteredClient, trackNotUnderstood, resetNotUnderstood } = require('../../services/appointmentRules');
+
+/** true si el jid esta en la lista de clientas de Bri (Sheet + panel). */
+async function isRegisteredClient(jid) {
+    return (await pilatesRoster.getClientCredit(jid)) !== null;
+}
 
 const PILC_PHASES = [
     PHASE.PILC_ASK_NAME, PHASE.PILC_MENU, PHASE.PILC_ASK_DAY, PHASE.PILC_ASK_TIME,
@@ -64,6 +70,16 @@ function mentionsUnavailableDay(text) {
     return other.some(d => t.includes(d));
 }
 
+// Fecha ISO (YYYY-MM-DD) en hora LOCAL — nunca toISOString() aqui, que
+// convierte a UTC y en Colombia (UTC-5) devuelve el dia siguiente cada vez
+// que se llama despues de las 7pm hora local.
+function toLocalISODate(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 // Convierte "lunes"/"miercoles"/"viernes" a la fecha ISO (YYYY-MM-DD) mas
 // proxima de ese dia de la semana (hoy incluido).
 function nextDateForDay(dayKey) {
@@ -72,7 +88,7 @@ function nextDateForDay(dayKey) {
     const diff = (targetDow - now.getDay() + 7) % 7;
     const target = new Date(now);
     target.setDate(now.getDate() + diff);
-    return target.toISOString().split('T')[0];
+    return toLocalISODate(target);
 }
 
 /**
@@ -262,21 +278,37 @@ async function handleAskName(sock, jid, t, userSession, ctx, pil) {
 async function handleMenu(sock, jid, t, userSession, ctx, pil) {
     const low = stripAccents(t).toLowerCase();
     if (/^1|agend|reserv|clase nueva/.test(low)) {
-        pil.mode = 'agendar';
-        userSession.phase = PHASE.PILC_ASK_DAY;
-        await say(sock, jid, `¡Con gusto! ¿Qué día prefieres? (${daysListText()})`, ctx);
-        return;
+        resetNotUnderstood(pil);
+        return await startAgendar(sock, jid, userSession, ctx, pil);
     }
     if (/^2|reagend|cambiar/.test(low)) {
+        resetNotUnderstood(pil);
         return await startReschedule(sock, jid, userSession, ctx, pil);
     }
     if (/^3|hablar|bri|humano|asesor/.test(low)) {
+        resetNotUnderstood(pil);
         return await handleTalkToBri(sock, jid, t, userSession, ctx, pil);
     }
     if (/^4|ver mis clases|mis clases|cupo|creditos|clases restantes/.test(low)) {
+        resetNotUnderstood(pil);
         return await handleMyClasses(sock, jid, userSession, ctx);
     }
     await handleFallback(sock, jid, t, userSession, ctx, `¿Qué necesitás? 1) Agendar 2) Reagendar 3) Hablar con Bri 4) Ver mis clases`);
+}
+
+/**
+ * Solo clientas registradas (Sheet o panel, ver pilatesRoster) pueden
+ * agendar — si no aparece en la lista, se corta y se conecta con Bri en
+ * vez de dejarla reservar un cupo sin que Bri sepa quien es.
+ */
+async function startAgendar(sock, jid, userSession, ctx, pil) {
+    const ok = await requireRegisteredClient(sock, jid, ctx, isRegisteredClient,
+        `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
+    if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
+
+    pil.mode = 'agendar';
+    userSession.phase = PHASE.PILC_ASK_DAY;
+    await say(sock, jid, `¡Con gusto! ¿Qué día prefieres? (${daysListText()})`, ctx);
 }
 
 /**
@@ -314,6 +346,7 @@ async function handleAskDay(sock, jid, t, userSession, ctx, pil, isReschedule) {
         }
         return await handleFallback(sock, jid, t, userSession, ctx, `los días disponibles son *${daysListText()}*`);
     }
+    resetNotUnderstood(pil);
     const dateISO = nextDateForDay(day);
     const offered = getOfferedSlots(dateISO);
     if (offered.length === 0) {
@@ -333,6 +366,7 @@ async function handleAskTime(sock, jid, t, userSession, ctx, pil, isReschedule) 
     if (!slot) {
         return await handleFallback(sock, jid, t, userSession, ctx, `elige uno de los horarios de la lista que te mostré`);
     }
+    resetNotUnderstood(pil);
     pil.newSlot = slot;
     userSession.phase = isReschedule ? PHASE.PILC_RESCHEDULE_CONFIRM : PHASE.PILC_CONFIRM;
     const name = (userStore.getUser(jid) || {}).name || '';
@@ -346,13 +380,14 @@ async function handleConfirm(sock, jid, t, userSession, ctx, pil) {
     const low = stripAccents(t).toLowerCase();
     if (!/^(si|sip|sep|dale|claro|confirmo|1)/i.test(low)) {
         if (/^(no|nop|nope|2)/i.test(low)) {
+            resetNotUnderstood(pil);
             userSession.phase = PHASE.PILC_ASK_DAY;
             await say(sock, jid, `Sin problema, ajustemos. ¿Qué día prefieres? (${daysListText()})`, ctx);
             return;
         }
-        await say(sock, jid, `¿Confirmamos la clase? Responde *sí* o *no*.`, ctx);
-        return;
+        return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `¿Confirmamos la clase? Responde *sí* o *no*.`);
     }
+    resetNotUnderstood(pil);
 
     const name = (userStore.getUser(jid) || {}).name || '';
     const phone = String(jid).split('@')[0];
@@ -379,6 +414,10 @@ async function handleConfirm(sock, jid, t, userSession, ctx, pil) {
 }
 
 async function startReschedule(sock, jid, userSession, ctx, pil) {
+    const ok = await requireRegisteredClient(sock, jid, ctx, isRegisteredClient,
+        `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
+    if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
+
     const active = pilatesStore.getActiveBookingByJid(jid);
     if (active.length === 0) {
         pil.mode = 'agendar';
@@ -401,13 +440,25 @@ async function startReschedule(sock, jid, userSession, ctx, pil) {
     await say(sock, jid, `Tienes varias clases activas, ¿cuál quieres reagendar?\n\n${list}`, ctx);
 }
 
+/**
+ * Reprompt normal en la primera falla; en la segunda falla seguida, corta
+ * y conecta con Bri en vez de seguir preguntando (regla de 2 intentos).
+ */
+async function escalateOrReprompt(sock, jid, userSession, ctx, pil, repromptMessage) {
+    if (trackNotUnderstood(pil)) {
+        await say(sock, jid, `Parece que no logro entenderte bien 😅 te conecto directo con Bri para que te ayude.`, ctx);
+        return await handleTalkToBri(sock, jid, repromptMessage, userSession, ctx, pil);
+    }
+    await say(sock, jid, repromptMessage, ctx);
+}
+
 async function handleRescheduleFind(sock, jid, t, userSession, ctx, pil) {
     const options = pil.rescheduleOptions || [];
     const num = parseInt(t.trim(), 10);
     if (!(num >= 1 && num <= options.length)) {
-        await say(sock, jid, `Escribe el número de la clase que quieres reagendar.`, ctx);
-        return;
+        return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `Escribe el número de la clase que quieres reagendar.`);
     }
+    resetNotUnderstood(pil);
     pil.rescheduleBookingId = options[num - 1].id;
     userSession.phase = PHASE.PILC_RESCHEDULE_DAY;
     await say(sock, jid, `¿Para cuándo la quieres pasar? (${daysListText()})`, ctx);
@@ -416,14 +467,15 @@ async function handleRescheduleFind(sock, jid, t, userSession, ctx, pil) {
 async function handleRescheduleConfirm(sock, jid, t, userSession, ctx, pil) {
     const low = stripAccents(t).toLowerCase();
     if (/^(no|nop|nope|2)/i.test(low)) {
+        resetNotUnderstood(pil);
         userSession.phase = PHASE.PILC_RESCHEDULE_DAY;
         await say(sock, jid, `Sin problema, ajustemos. ¿Para cuándo la quieres pasar? (${daysListText()})`, ctx);
         return;
     }
     if (!/^(si|sip|sep|dale|claro|confirmo|1)/i.test(low)) {
-        await say(sock, jid, `¿Confirmamos el cambio? Responde *sí* o *no*.`, ctx);
-        return;
+        return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `¿Confirmamos el cambio? Responde *sí* o *no*.`);
     }
+    resetNotUnderstood(pil);
 
     const fresh = getOfferedSlots(pil.newDateISO).find(s => s.start === pil.newSlot.start);
     if (!fresh) {
@@ -469,23 +521,32 @@ async function handleTalkToBri(sock, jid, text, userSession, ctx, pil) {
  * (mismo patron hibrido usado en los demas bots).
  */
 async function handleFallback(sock, jid, text, userSession, ctx, pendingQuestion) {
+    const pil = initPilc(userSession);
     const name = (userStore.getUser(jid) || {}).name || '';
     const result = await pilatesAi.classifyFreeText(text, { pendingQuestion, clientName: name });
+
+    const understood = !!result && result.intent !== 'not_understood';
+    if (understood) {
+        resetNotUnderstood(pil);
+    } else if (trackNotUnderstood(pil)) {
+        // Segundo mensaje seguido sin entender: corta y conecta con Bri en
+        // vez de seguir preguntando/reintentando.
+        await say(sock, jid, `Parece que no logro entenderte bien 😅 te conecto directo con Bri para que te ayude.`, ctx);
+        return await handleTalkToBri(sock, jid, text, userSession, ctx, pil);
+    }
+
     if (!result) {
         await say(sock, jid, `No entendí bien 😅 ¿Puedes repetirlo? (${pendingQuestion})`, ctx);
         return;
     }
     if (result.intent === 'human') {
-        return await handleTalkToBri(sock, jid, text, userSession, ctx, initPilc(userSession));
+        return await handleTalkToBri(sock, jid, text, userSession, ctx, pil);
     }
     if (result.intent === 'agendar' && userSession.phase !== PHASE.PILC_ASK_DAY) {
-        initPilc(userSession).mode = 'agendar';
-        userSession.phase = PHASE.PILC_ASK_DAY;
-        await say(sock, jid, result.reply || `¿Qué día prefieres? (${daysListText()})`, ctx);
-        return;
+        return await startAgendar(sock, jid, userSession, ctx, pil);
     }
     if (result.intent === 'reagendar' && userSession.phase !== PHASE.PILC_RESCHEDULE_DAY) {
-        return await startReschedule(sock, jid, userSession, ctx, initPilc(userSession));
+        return await startReschedule(sock, jid, userSession, ctx, pil);
     }
     await say(sock, jid, result.reply || `No entendí bien 😅 ¿Puedes repetirlo? (${pendingQuestion})`, ctx);
 }
@@ -497,6 +558,7 @@ async function handleFallback(sock, jid, text, userSession, ctx, pendingQuestion
  */
 async function handleSaturdayReply(sock, jid, t, userSession, ctx, pil) {
     const low = stripAccents(t).toLowerCase();
+    if (/^1|igual|mismo|^2|cambiar|^3|no|salt|pausa/.test(low)) resetNotUnderstood(pil);
     if (/^1|igual|mismo/.test(low)) {
         const day = pil.saturdayDay;
         const timeKey = extractTimeKey(pil.saturdayTime || '');
@@ -538,7 +600,7 @@ async function handleSaturdayReply(sock, jid, t, userSession, ctx, pil) {
         await say(sock, jid, `Entendido, esta semana no te agendo. ¡Nos vemos la próxima! 🙌`, ctx);
         return;
     }
-    await say(sock, jid, `Responde *1* (igual que siempre), *2* (cambiar horario) o *3* (esta semana no).`, ctx);
+    return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `Responde *1* (igual que siempre), *2* (cambiar horario) o *3* (esta semana no).`);
 }
 
 module.exports = {
@@ -572,7 +634,13 @@ module.exports = {
     },
     handle,
     showWelcome,
-    startSaturdayCampaign: (sock, ctx) => require('../../services/pilatesCampaign').startSaturdayCampaign(sock, ctx),
+    // Punto unico de arranque de todos los jobs programados de este bot
+    // (campana de sabados + recordatorios de clase) — ver el hook generico
+    // en index.js, reusable por cualquier otro bot de citas a futuro.
+    startScheduledJobs: (sock, ctx) => {
+        require('../../services/pilatesCampaign').startSaturdayCampaign(sock, ctx);
+        require('../../services/pilatesReminders').startClassReminders(sock, ctx);
+    },
     getInitialPhase: () => PHASE.PILC_ASK_NAME,
     isFlowPhase: (phase) => PILC_PHASES.includes(phase),
     getPhases: () => PILC_PHASES,

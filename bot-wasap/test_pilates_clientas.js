@@ -3,9 +3,11 @@
  * Regresion del bot de clientas recurrentes de Bri Pilates
  * (pilates_clientas.flow.js + pilatesStore sessions + pilatesCampaign).
  * Cubre: tope de cupo (6), reagendar libera el cupo viejo y crea el nuevo,
- * "hablar con Bri" corta el flujo, y la campana de sabados con sus 3
- * opciones. Corre contra la DB real usando jids marcados como TEST (mismo
- * patron que _regress_pescaderia.js) y limpia todo lo que crea al final.
+ * "hablar con Bri" corta el flujo, la campana de sabados con sus 3
+ * opciones, el candado de "solo clientas registradas pueden agendar", y la
+ * escalada automatica a Bri tras 2 mensajes seguidos sin entender. Corre
+ * contra la DB real usando jids marcados como TEST (mismo patron que
+ * _regress_pescaderia.js) y limpia todo lo que crea al final.
  * Uso: node test_pilates_clientas.js
  */
 const assert = require('assert');
@@ -19,6 +21,15 @@ const pilcFlow = require('./handlers/flows/pilates_clientas.flow.js');
 const pilatesRoster = require('./services/pilatesRoster');
 const pilatesCampaign = require('./services/pilatesCampaign');
 const notificationService = require('./services/notificationService');
+
+// Las clientas de las pruebas 1/2 (tope de cupo, reagendar) necesitan estar
+// "registradas" para poder agendar — se mockea como si todas las jids de
+// prueba (57300099xxxx) ya tuvieran cupo, salvo donde se prueba el candado.
+const originalGetClientCredit = pilatesRoster.getClientCredit;
+pilatesRoster.getClientCredit = async (jid) => {
+    if (String(jid).startsWith('57300099')) return { allotment: 30, usedThisMonth: 0, remaining: 30 };
+    return null;
+};
 
 flowRegistry.register('pilates_clientas', pilcFlow);
 flowRegistry.register('PILATES_RECURRENTE', pilcFlow);
@@ -57,7 +68,7 @@ function cleanup() {
     db.prepare(`DELETE FROM pilates_sessions WHERE id LIKE 'sess_%'`).run();
     try {
         const dbu = new Database(path.join(__dirname, 'data', 'users.db'));
-        dbu.prepare(`DELETE FROM users WHERE jid LIKE '57300099%'`).run();
+        dbu.prepare(`DELETE FROM users WHERE jid LIKE '57300099%' OR jid = '573999880400@c.us' OR jid LIKE '5739998804%'`).run();
     } catch (e) { /* users.db puede no existir aun */ }
 }
 
@@ -123,7 +134,7 @@ function cleanup() {
         ]);
         const sentCamp = [];
         const sockCamp = makeSock(sentCamp);
-        await pilatesCampaign.runSaturdayCampaign(sockCamp, ctxCamp);
+        await pilatesCampaign.runSaturdayCampaign(sockCamp, ctxCamp, { minDelayMs: 0, maxDelayMs: 5 });
         assert.strictEqual(sentCamp.length, 3, 'debe mandar el mensaje a las 3 clientas activas');
 
         const sentA = []; const sockA = makeSock(sentA);
@@ -141,12 +152,54 @@ function cleanup() {
         pilatesRoster.getActiveRegulars = originalGetActiveRegulars;
         console.log('OK: campana de sabados maneja las 3 opciones (igual/cambiar/pausar)');
 
+        // 4b) El texto del mensaje de campana varia (no siempre la misma frase).
+        const texts = new Set();
+        for (let i = 0; i < 20; i++) {
+            texts.add(pilatesCampaign.buildCampaignMessage({ nombre: 'Ana' }, 'Viernes', '5:00 pm'));
+        }
+        assert.ok(texts.size > 1, 'el mensaje de campana debe variar la redaccion entre envios, no ser siempre identico');
+        console.log(`OK: el mensaje de campana varia (${texts.size} redacciones distintas en 20 intentos)`);
+
+        // 5) Candado de registro: una jid que NO esta en el roster no puede agendar.
+        // (prefijo distinto a 57300099xxxx a proposito, para no calzar con el mock de "registrada" de arriba)
+        const jidUnreg = '573999880400@c.us';
+        const sentUnreg = []; const sockUnreg = makeSock(sentUnreg);
+        const ctxUnreg = makeCtx();
+        let notifiedUnreg = false;
+        notificationService.notifySystemAlert = async () => { notifiedUnreg = true; };
+        await send(sockUnreg, ctxUnreg, jidUnreg, 'hola');
+        await send(sockUnreg, ctxUnreg, jidUnreg, 'No Registrada');
+        await send(sockUnreg, ctxUnreg, jidUnreg, '1'); // intenta agendar
+        assert.ok(/no te encuentro en la lista/i.test(sentUnreg.join(' ')), 'debe avisar que no esta en la lista');
+        assert.ok(notifiedUnreg, 'debe escalar a Bri automaticamente en vez de dejarla agendar');
+        assert.strictEqual(ctxUnreg.sessions[jidUnreg].phase, require('./utils/phases').PILC_HUMAN, 'debe quedar en fase de espera a Bri');
+        notificationService.notifySystemAlert = originalNotify;
+        console.log('OK: clienta fuera de la lista no puede agendar, se escala directo a Bri');
+
+        // 6) Escalada tras 2 mensajes seguidos sin entender.
+        const jidEsc = testJid(401);
+        const sentEsc = []; const sockEsc = makeSock(sentEsc);
+        const ctxEsc = makeCtx();
+        let notifiedEsc = false;
+        notificationService.notifySystemAlert = async () => { notifiedEsc = true; };
+        await send(sockEsc, ctxEsc, jidEsc, 'hola');
+        await send(sockEsc, ctxEsc, jidEsc, 'Escalada Test');
+        sentEsc.length = 0;
+        await send(sockEsc, ctxEsc, jidEsc, 'asdkjfhaskjdfh'); // 1er mensaje sin sentido
+        assert.strictEqual(notifiedEsc, false, 'el primer mensaje sin entender NO debe escalar todavia');
+        await send(sockEsc, ctxEsc, jidEsc, 'qweqweqwe'); // 2do mensaje sin sentido seguido
+        assert.ok(notifiedEsc, 'el segundo mensaje seguido sin entender SI debe escalar a Bri');
+        assert.strictEqual(ctxEsc.sessions[jidEsc].phase, require('./utils/phases').PILC_HUMAN, 'debe quedar en fase de espera a Bri');
+        notificationService.notifySystemAlert = originalNotify;
+        console.log('OK: 2do mensaje seguido sin entender escala automaticamente a Bri');
+
         console.log('\nTodos los tests pasaron.');
         process.exitCode = 0;
     } catch (e) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
+        pilatesRoster.getClientCredit = originalGetClientCredit;
         cleanup();
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }

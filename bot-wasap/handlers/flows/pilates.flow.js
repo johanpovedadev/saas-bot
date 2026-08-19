@@ -221,6 +221,16 @@ async function bookAndConfirm(sock, jid, userSession, ctx, pil) {
         ctx);
 }
 
+// Fecha ISO (YYYY-MM-DD) en hora LOCAL — nunca toISOString() aqui, que
+// convierte a UTC y en Colombia (UTC-5) devuelve el dia siguiente cada vez
+// que se llama despues de las 7pm hora local.
+function toLocalISODate(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 // Convierte "lunes"/"miercoles"/"viernes" a la fecha ISO (YYYY-MM-DD) más
 // próxima de ese día de la semana (hoy incluido).
 function nextDateForDay(dayKey) {
@@ -229,7 +239,7 @@ function nextDateForDay(dayKey) {
     const diff = (targetDow - now.getDay() + 7) % 7;
     const target = new Date(now);
     target.setDate(now.getDate() + diff);
-    return target.toISOString().split('T')[0];
+    return toLocalISODate(target);
 }
 
 function timeRangeFor(timeLabel) {

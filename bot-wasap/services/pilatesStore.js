@@ -77,6 +77,12 @@ function getDb() {
         if (!cols.includes('session_id')) {
             db.exec(`ALTER TABLE pilates_bookings ADD COLUMN session_id TEXT`);
         }
+        // Migracion aditiva: marca si ya se le mando recordatorio de 30-45min
+        // antes de clase a esta sesion (para no mandarlo dos veces).
+        const sessionCols = db.prepare(`PRAGMA table_info(pilates_sessions)`).all().map(c => c.name);
+        if (!sessionCols.includes('reminded')) {
+            db.exec(`ALTER TABLE pilates_sessions ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0`);
+        }
         logger.info(`pilatesStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -367,6 +373,51 @@ function upsertLocalClient(jid, nombre, telefono, allotment) {
     }
 }
 
+/** Reservas confirmadas/pendientes de una sesion — para mandar el recordatorio de clase. */
+function getBookingsForSession(sessionId) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(
+            `SELECT * FROM pilates_bookings WHERE session_id = ? AND status IN ('pendiente','confirmada')`
+        ).all(sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: getBookingsForSession error: ${err.message}`);
+        return [];
+    }
+}
+
+/**
+ * Sesiones con al menos 1 reserva que empiezan entre minMinutesAhead y
+ * maxMinutesAhead desde ahora, y que aun no se les mando recordatorio.
+ */
+function getSessionsNeedingReminder(minMinutesAhead, maxMinutesAhead) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        const rows = database.prepare(`SELECT * FROM pilates_sessions WHERE reminded = 0 AND booked_count > 0`).all();
+        const now = Date.now();
+        return rows.filter(r => {
+            const classTime = new Date(`${r.date_iso}T${r.start_time}:00`).getTime();
+            const minutesAhead = (classTime - now) / 60000;
+            return minutesAhead >= minMinutesAhead && minutesAhead <= maxMinutesAhead;
+        });
+    } catch (err) {
+        logger.error(`pilatesStore: getSessionsNeedingReminder error: ${err.message}`);
+        return [];
+    }
+}
+
+function markSessionReminded(sessionId) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`UPDATE pilates_sessions SET reminded = 1 WHERE id = ?`).run(sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: markSessionReminded error: ${err.message}`);
+    }
+}
+
 /** Roster local completo (clientas cargadas desde el panel, no el Sheet). */
 function getLocalClients() {
     const database = getDb();
@@ -384,5 +435,6 @@ module.exports = {
     findOrCreateSession, setSessionCalendarEvent, incrementSessionCount, decrementSessionCount,
     getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
-    upsertLocalClient, getLocalClients
+    upsertLocalClient, getLocalClients,
+    getBookingsForSession, getSessionsNeedingReminder, markSessionReminded
 };

@@ -12,46 +12,64 @@ const { logger } = require('../utils/logger');
 const sessionService = require('./sessionService');
 const pilatesRoster = require('./pilatesRoster');
 const PHASE = require('../utils/phases');
+const { sendStaggered, pickRandom } = require('./humanBroadcast');
+
+// Variantes de redaccion del mismo mensaje — nunca el mismo texto exacto
+// para todas, para no verse como un blast identico de bot.
+const MESSAGE_VARIANTS = [
+    (nombre, dayLabel, timeLabel) =>
+        `¡Hola ${nombre}! 🧘‍♀️ Para armar la agenda de la próxima semana, ¿mantenemos tu horario habitual (${dayLabel} ${timeLabel}), lo cambiamos, o esta semana la saltamos?`,
+    (nombre, dayLabel, timeLabel) =>
+        `¡Hola ${nombre}! 🧘‍♀️ Estoy armando el horario de la próxima semana — ¿seguimos con ${dayLabel} ${timeLabel} como siempre, cambiamos el horario, o esta semana te la saltas?`,
+    (nombre, dayLabel, timeLabel) =>
+        `Hola ${nombre} 🙌 Antes de cerrar la agenda de la semana que viene, cuéntame: ¿tu clase de ${dayLabel} ${timeLabel} sigue igual, la cambiamos, o esta semana no vienes?`,
+    (nombre, dayLabel, timeLabel) =>
+        `¡Hola ${nombre}! 🧘‍♀️ ¿Cómo vamos con la próxima semana? ¿${dayLabel} ${timeLabel} de siempre, otro horario, o la saltamos esta vez?`
+];
+
+function buildCampaignMessage(client, dayLabel, timeLabel) {
+    const variant = pickRandom(MESSAGE_VARIANTS);
+    return `${variant(client.nombre || '', dayLabel, timeLabel)}\n\n` +
+        `1️⃣ Igual que siempre\n` +
+        `2️⃣ Cambiar horario\n` +
+        `3️⃣ Esta semana no`;
+}
 
 /**
  * Recorre las clientas activas del roster y les manda el mensaje de la
- * campana, dejando su sesion lista para recibir la respuesta (1/2/3) en
+ * campana en orden aleatorio, espaciado de 1 a 5 minutos entre cada una
+ * (nunca todas al tiempo, para no verse como un bot), dejando su sesion
+ * lista para recibir la respuesta (1/2/3) en
  * pilates_clientas.flow.js#handleSaturdayReply.
+ *
+ * `opts` permite overridear el rango de espera (usado por los tests para
+ * no esperar minutos reales) — en produccion se usa el default de
+ * sendStaggered (1-5 min).
  */
-async function runSaturdayCampaign(sock, ctx) {
+async function runSaturdayCampaign(sock, ctx, opts = {}) {
     const pilcFlow = require('../handlers/flows/pilates_clientas.flow.js');
     const { AVAILABLE_DAYS, SLOTS, matchDay, slotKey, extractTimeKey } = pilcFlow._internal;
 
     const regulars = await pilatesRoster.getActiveRegulars();
     logger.info(`pilatesCampaign: ${regulars.length} clientas activas para la campana de sabados`);
 
-    let sent = 0;
-    for (const client of regulars) {
-        try {
-            const dayKey = matchDay(client.dia);
-            const dayLabel = dayKey ? AVAILABLE_DAYS[dayKey] : (client.dia || 'tu día habitual');
-            const timeKey = extractTimeKey(client.hora);
-            const matchedSlot = timeKey ? SLOTS.find(s => slotKey(s.start) === timeKey) : null;
-            const timeLabel = matchedSlot ? matchedSlot.label : (client.hora || SLOTS[0].label);
+    const result = await sendStaggered(regulars, async (client) => {
+        const dayKey = matchDay(client.dia);
+        const dayLabel = dayKey ? AVAILABLE_DAYS[dayKey] : (client.dia || 'tu día habitual');
+        const timeKey = extractTimeKey(client.hora);
+        const matchedSlot = timeKey ? SLOTS.find(s => slotKey(s.start) === timeKey) : null;
+        const timeLabel = matchedSlot ? matchedSlot.label : (client.hora || SLOTS[0].label);
 
-            sessionService.resetChat(client.jid, ctx);
-            const userSession = ctx.sessions[client.jid];
-            userSession.phase = PHASE.PILC_SATURDAY_REPLY;
-            userSession.pilc = { saturdayDay: dayKey, saturdayTime: timeLabel };
+        sessionService.resetChat(client.jid, ctx);
+        const userSession = ctx.sessions[client.jid];
+        userSession.phase = PHASE.PILC_SATURDAY_REPLY;
+        userSession.pilc = { saturdayDay: dayKey, saturdayTime: timeLabel };
 
-            await say(sock, client.jid,
-                `¡Hola ${client.nombre || ''}! 🧘‍♀️ Para armar la agenda de la próxima semana, ¿mantenemos tu horario habitual (${dayLabel} ${timeLabel}), lo cambiamos, o esta semana la saltamos?\n\n` +
-                `1️⃣ Igual que siempre\n` +
-                `2️⃣ Cambiar horario\n` +
-                `3️⃣ Esta semana no`,
-                ctx);
-            sent++;
-        } catch (e) {
-            logger.error(`pilatesCampaign: error enviando a ${client.jid}: ${e.message}`);
-        }
-    }
-    logger.info(`pilatesCampaign: campana enviada a ${sent}/${regulars.length} clientas`);
-    return { total: regulars.length, sent };
+        await say(sock, client.jid, buildCampaignMessage(client, dayLabel, timeLabel), ctx);
+    }, opts);
+
+    logger.info(`pilatesCampaign: campana enviada a ${result.sent}/${result.total} clientas`);
+    return result;
 }
 
 /**
@@ -67,7 +85,7 @@ function startSaturdayCampaign(sock, ctx) {
         const now = new Date();
         if (now.getDay() !== 6) return; // solo sabados
         if (now.getHours() < 9 || now.getHours() >= 10) return; // ventana 9-10am
-        const todayKey = now.toISOString().split('T')[0];
+        const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         if (ctx._pilatesCampaignLastRun === todayKey) return; // ya se envio hoy
         ctx._pilatesCampaignLastRun = todayKey;
         runSaturdayCampaign(sock, ctx).catch(e => logger.error(`pilatesCampaign: error corriendo la campana: ${e.message}`));
@@ -75,4 +93,4 @@ function startSaturdayCampaign(sock, ctx) {
     logger.info('pilatesCampaign: scheduler de sabados iniciado (ventana 9-10am, revisa cada 15 min)');
 }
 
-module.exports = { runSaturdayCampaign, startSaturdayCampaign };
+module.exports = { runSaturdayCampaign, startSaturdayCampaign, buildCampaignMessage };

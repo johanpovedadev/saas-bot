@@ -561,17 +561,19 @@ const startBot = async () => {
             console.warn('Night reporter no disponible:', e.message);
         }
 
-        // Campana automatica de sabados (Bri Pilates - clientas recurrentes),
+        // Jobs programados del negocio (ej. campana de sabados + recordatorios
+        // de clase de Bri Pilates - clientas recurrentes) — hook generico
+        // reusable por cualquier otro bot de citas que necesite lo mismo,
         // mismo patron opcional que el night reporter de arriba.
         try {
             const flowReg = require('./handlers/flowRegistry');
             const flowMod = flowReg.getFlow(envConfig.business?.type) || flowReg.getFlow(BUSINESS_KEY);
-            if (flowMod && typeof flowMod.startSaturdayCampaign === 'function') {
-                flowMod.startSaturdayCampaign(sock, ctx);
-                console.log('✅ Campaña de sábados iniciada');
+            if (flowMod && typeof flowMod.startScheduledJobs === 'function') {
+                flowMod.startScheduledJobs(sock, ctx);
+                console.log('✅ Jobs programados iniciados');
             }
         } catch (e) {
-            console.warn('Campaña de sábados no disponible:', e.message);
+            console.warn('Jobs programados no disponibles:', e.message);
         }
 
         // Detectar desconexion del browser (caida internet, crash)
