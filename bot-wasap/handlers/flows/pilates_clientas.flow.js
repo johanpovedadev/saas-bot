@@ -41,7 +41,8 @@ const DAY_ORDER = ['lunes', 'miercoles', 'viernes'];
 const SLOTS = [
     { start: '05:00', end: '06:00', label: '5:00 am' },
     { start: '06:00', end: '07:00', label: '6:00 am' },
-    { start: '17:00', end: '18:00', label: '5:00 pm' }
+    { start: '17:00', end: '18:00', label: '5:00 pm' },
+    { start: '19:00', end: '20:00', label: '7:00 pm' }
 ];
 const CAPACITY = 6;
 
