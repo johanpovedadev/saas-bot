@@ -88,7 +88,8 @@ const PHASE = {
     PILC_RESCHEDULE_TIME: 'pilc_reschedule_time',       // Ofrece horarios reales libres del nuevo dia
     PILC_RESCHEDULE_CONFIRM: 'pilc_reschedule_confirm', // Confirma el cambio (libera vieja + crea nueva)
     PILC_HUMAN: 'pilc_human',                           // Esperando que Bri atienda directo
-    PILC_SATURDAY_REPLY: 'pilc_saturday_reply'          // Esperando respuesta a la campaña de sabados
+    PILC_SATURDAY_REPLY: 'pilc_saturday_reply',         // Esperando respuesta a la campaña de sabados
+    PILC_CREDIT_LIMIT_CONFIRM: 'pilc_credit_limit_confirm' // Confirma si quiere que Bri le gestione clases extra (ya agoto el mes)
 };
 
 module.exports = PHASE;

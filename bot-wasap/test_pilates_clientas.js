@@ -19,6 +19,7 @@ const handler = require('./handlers/handler.js');
 const flowRegistry = require('./handlers/flowRegistry');
 const pilcFlow = require('./handlers/flows/pilates_clientas.flow.js');
 const pilatesRoster = require('./services/pilatesRoster');
+const pilatesStore = require('./services/pilatesStore');
 const pilatesCampaign = require('./services/pilatesCampaign');
 const notificationService = require('./services/notificationService');
 
@@ -193,6 +194,48 @@ function cleanup() {
         const freeAfterBook2 = afterBook2 ? afterBook2.free : 6;
         assert.strictEqual(freeAfterBook2, freeBefore2 - 1, 'el cupo nuevo debe quedar exactamente 1 menos que antes');
         console.log('OK: reagendar libera el cupo viejo y crea el nuevo en el mismo paso');
+
+        // 2b) Maximo 1 clase por dia: no debe dejar agendar 2 veces el mismo dia.
+        const ctxMax1 = makeCtx();
+        const { jid: max1Jid } = await bookClient(ctxMax1, 200, reschedDay1, '1');
+        const sentMax1 = []; const sockMax1 = makeSock(sentMax1);
+        await send(sockMax1, ctxMax1, max1Jid, '1'); // intenta agendar otra vez
+        await send(sockMax1, ctxMax1, max1Jid, reschedDay1);
+        assert.ok(/ya tienes una clase agendada ese d[ií]a/i.test(sentMax1.join(' ')), 'no debe permitir 2 clases el mismo dia');
+        console.log('OK: maximo 1 clase por dia por clienta');
+
+        // 2c) Opcion "eliminar" dentro de reagendar: cancela sin crear una nueva.
+        const ctxDel = makeCtx();
+        const { jid: delJid } = await bookClient(ctxDel, 201, reschedDay1, '1');
+        const sentDel = []; const sockDel = makeSock(sentDel);
+        await send(sockDel, ctxDel, delJid, '2'); // reagendar
+        await send(sockDel, ctxDel, delJid, 'eliminar');
+        assert.ok(/elimin[eé]/i.test(sentDel.join(' ')), 'debe confirmar que elimino la clase');
+        assert.strictEqual(pilatesStore.getActiveBookingByJid(delJid).length, 0, 'no debe quedar ninguna clase activa tras eliminar');
+        console.log('OK: opcion "eliminar" dentro de reagendar cancela la clase');
+
+        // 2d) Limite de creditos: sin cupo mensual, no deja agendar/reagendar,
+        // y solo escala a Bri si el cliente confirma que quiere mas clases.
+        const originalGetClientCreditForLimit = pilatesRoster.getClientCredit;
+        pilatesRoster.getClientCredit = async (jid) => (String(jid).startsWith('57300099')
+            ? { allotment: 2, usedThisMonth: 2, remaining: 0 } : null);
+        const jidLimit = testJid(202);
+        const sentLimit = []; const sockLimit = makeSock(sentLimit);
+        const ctxLimit = makeCtx();
+        let notifiedLimit = false;
+        const originalNotifyForLimit = notificationService.notifySystemAlert;
+        notificationService.notifySystemAlert = async () => { notifiedLimit = true; };
+        await send(sockLimit, ctxLimit, jidLimit, 'hola');
+        await send(sockLimit, ctxLimit, jidLimit, 'Limite Test');
+        await send(sockLimit, ctxLimit, jidLimit, '1'); // intenta agendar sin cupo
+        assert.ok(/ya usaste tus.*clases de este mes/i.test(sentLimit.join(' ')), 'debe avisar que se acabaron las clases del mes');
+        assert.strictEqual(notifiedLimit, false, 'no debe escalar automaticamente sin que el cliente confirme');
+        sentLimit.length = 0;
+        await send(sockLimit, ctxLimit, jidLimit, 'si');
+        assert.ok(notifiedLimit, 'debe escalar a Bri cuando el cliente confirma que quiere mas clases');
+        pilatesRoster.getClientCredit = originalGetClientCreditForLimit;
+        notificationService.notifySystemAlert = originalNotifyForLimit;
+        console.log('OK: sin cupo mensual no deja agendar, y solo escala a Bri si el cliente confirma');
 
         // 3) Hablar con Bri: corta el flujo y notifica.
         let notified = false;

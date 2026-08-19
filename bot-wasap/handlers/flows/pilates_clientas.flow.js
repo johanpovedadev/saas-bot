@@ -32,7 +32,7 @@ const PILC_PHASES = [
     PHASE.PILC_ASK_NAME, PHASE.PILC_MENU, PHASE.PILC_ASK_DAY, PHASE.PILC_ASK_TIME,
     PHASE.PILC_CONFIRM, PHASE.PILC_RESCHEDULE_FIND, PHASE.PILC_RESCHEDULE_DAY,
     PHASE.PILC_RESCHEDULE_TIME, PHASE.PILC_RESCHEDULE_CONFIRM, PHASE.PILC_HUMAN,
-    PHASE.PILC_SATURDAY_REPLY
+    PHASE.PILC_SATURDAY_REPLY, PHASE.PILC_CREDIT_LIMIT_CONFIRM
 ];
 
 // Dias y horarios de clase. Ajustar aqui si Bri Pilates cambia la agenda.
@@ -293,6 +293,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         case PHASE.PILC_RESCHEDULE_CONFIRM: return await handleRescheduleConfirm(sock, jid, t, userSession, ctx, pil);
         case PHASE.PILC_HUMAN: return; // Corta el flujo automatico, Bri atiende directo.
         case PHASE.PILC_SATURDAY_REPLY: return await handleSaturdayReply(sock, jid, t, userSession, ctx, pil);
+        case PHASE.PILC_CREDIT_LIMIT_CONFIRM: return await handleCreditLimitConfirm(sock, jid, t, userSession, ctx, pil);
         default: return await showMenu(sock, jid, ctx, (userStore.getUser(jid) || {}).name);
     }
 }
@@ -332,10 +333,39 @@ async function handleMenu(sock, jid, t, userSession, ctx, pil) {
  * agendar — si no aparece en la lista, se corta y se conecta con Bri en
  * vez de dejarla reservar un cupo sin que Bri sepa quien es.
  */
+/**
+ * Si ya se acabaron las clases del mes, corta el flujo y pregunta si quiere
+ * que se le conecte con Bri para gestionar clases adicionales — nunca
+ * escala automatico, solo si el cliente confirma que quiere mas. Devuelve
+ * true si bloqueo (el caller debe detenerse ahi).
+ */
+async function checkCreditLimitOrEscalate(sock, jid, userSession, ctx, pil) {
+    const credit = await pilatesRoster.getClientCredit(jid);
+    if (!credit || credit.remaining > 0) return false;
+    userSession.phase = PHASE.PILC_CREDIT_LIMIT_CONFIRM;
+    await say(sock, jid, `😅 Ya usaste tus *${credit.allotment}* clases de este mes. ¿Quieres que te conecte con Bri para gestionar clases adicionales? Responde *sí* o *no*.`, ctx);
+    return true;
+}
+
+async function handleCreditLimitConfirm(sock, jid, t, userSession, ctx, pil) {
+    const low = stripAccents(t).toLowerCase();
+    if (/^(si|sip|sep|dale|claro|1)/i.test(low)) {
+        return await handleTalkToBri(sock, jid, 'Quiere gestionar clases adicionales (ya agotó su cupo mensual)', userSession, ctx, pil);
+    }
+    if (/^(no|nop|nope|2)/i.test(low)) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `Entendido, sin problema 🙏`, ctx);
+        return;
+    }
+    await say(sock, jid, `¿Quieres que te conecte con Bri para gestionar clases adicionales? Responde *sí* o *no*.`, ctx);
+}
+
 async function startAgendar(sock, jid, userSession, ctx, pil) {
     const ok = await requireRegisteredClient(sock, jid, ctx, isRegisteredClient,
         `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
     if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
+
+    if (await checkCreditLimitOrEscalate(sock, jid, userSession, ctx, pil)) return;
 
     if (getDaysAvailableThisWeek().length === 0) {
         userSession.phase = PHASE.PILC_MENU;
@@ -374,7 +404,31 @@ async function handleMyClasses(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.PILC_MENU;
 }
 
+/** true si la clienta ya tiene una clase activa ese dia (max 1 clase por dia). */
+function hasActiveBookingOnDay(jid, dayLabel, excludeBookingId) {
+    const active = pilatesStore.getActiveBookingByJid(jid);
+    return active.some(b => b.day === dayLabel && b.id !== excludeBookingId);
+}
+
+/** Cancela la clase que se esta reagendando — opcion "eliminar" dentro de reagendar. */
+async function handleDeleteBooking(sock, jid, userSession, ctx, pil) {
+    const booking = pilatesStore.getBookingById(pil.rescheduleBookingId);
+    if (!booking) {
+        userSession.phase = PHASE.PILC_MENU;
+        await say(sock, jid, `No encontré esa clase para eliminar 😅`, ctx);
+        return;
+    }
+    await releaseBooking(booking);
+    pilatesStore.cancelBooking(booking.id);
+    resetNotUnderstood(pil);
+    userSession.phase = PHASE.PILC_MENU;
+    await say(sock, jid, `Listo ✅ eliminé tu clase de *${booking.day}* a las *${booking.time_label}*.`, ctx);
+}
+
 async function handleAskDay(sock, jid, t, userSession, ctx, pil, isReschedule) {
+    if (isReschedule && /\b(eliminar|cancelar|borrar|quitar)\b/i.test(stripAccents(t).toLowerCase())) {
+        return await handleDeleteBooking(sock, jid, userSession, ctx, pil);
+    }
     const day = matchDay(t);
     if (!day) {
         if (mentionsUnavailableDay(t)) {
@@ -390,6 +444,10 @@ async function handleAskDay(sock, jid, t, userSession, ctx, pil, isReschedule) {
             return;
         }
         await say(sock, jid, `😅 Ese día ya pasó esta semana (se agenda solo semana a semana). Los días que quedan esta semana son *${daysListText()}*. ¿Cuál prefieres?`, ctx);
+        return;
+    }
+    if (hasActiveBookingOnDay(jid, AVAILABLE_DAYS[day], isReschedule ? pil.rescheduleBookingId : null)) {
+        await say(sock, jid, `😅 Ya tienes una clase agendada ese día — solo se puede una clase por día. ¿Otro día? (${daysListText()})`, ctx);
         return;
     }
     resetNotUnderstood(pil);
@@ -464,6 +522,8 @@ async function startReschedule(sock, jid, userSession, ctx, pil) {
         `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
     if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
 
+    if (await checkCreditLimitOrEscalate(sock, jid, userSession, ctx, pil)) return;
+
     const active = pilatesStore.getActiveBookingByJid(jid);
     if (active.length === 0) {
         if (getDaysAvailableThisWeek().length === 0) {
@@ -481,7 +541,8 @@ async function startReschedule(sock, jid, userSession, ctx, pil) {
         userSession.phase = PHASE.PILC_RESCHEDULE_DAY;
         await say(sock, jid,
             `Tu clase actual es: *${active[0].day}* a las *${active[0].time_label}*.\n\n` +
-            `¿Para cuándo la quieres pasar? (${daysListText()})`,
+            `¿Para cuándo la quieres pasar? (${daysListText()})\n\n` +
+            `_Escribe *eliminar* si prefieres cancelarla._`,
             ctx);
         return;
     }
@@ -698,6 +759,7 @@ module.exports = {
     // Expuestos para pilatesCampaign.js (envio del mensaje de sabados).
     _internal: {
         AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList,
-        commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek
+        commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek,
+        hasActiveBookingOnDay
     }
 };
