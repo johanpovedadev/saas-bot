@@ -12,7 +12,7 @@ const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
 
 const FIN_PHASES = [
-    PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
+    PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
     PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_FEEDBACK
 ];
 
@@ -272,6 +272,9 @@ async function notifyNewUser(sock, jid, userSession, ctx) {
 
 async function showPremiumRequired(sock, jid, ctx) {
     const payment = financeAdmin.getPaymentInfo();
+    const waLink = payment.adminWhatsapp
+        ? `https://wa.me/${payment.adminWhatsapp}?text=${encodeURIComponent('Quiero pagar mi Leo Pro')}`
+        : '';
     await say(sock, jid,
         `🦁 *Tu plan Gratis no incluye IA.*\n\n` +
         `Para registrar con IA (texto, fotos de facturas y notas de voz), elegí un plan:\n\n` +
@@ -284,7 +287,8 @@ async function showPremiumRequired(sock, jid, ctx) {
         `📲 *Cómo pagar:*\n` +
         `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
         (payment.bancolombia ? `2️⃣ Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : `2️⃣ Bancolombia: (configurar)\n`) +
-        `3️⃣ Enviá la *captura del pago* por este chat.\n` +
+        `3️⃣ Enviá la *captura del pago* por este chat` +
+        (waLink ? `, o por WhatsApp acá (ya te lleva con el mensaje listo): ${waLink}\n` : '.\n') +
         `4️⃣ Te activamos tu plan en minutos. 🦁\n\n` +
         `_Escribí "Actualizar a Pro" cuando hayas pagado._`, ctx);
 }
@@ -631,6 +635,11 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleSettingsCurrency(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Preguntando si tiene codigo de invitacion (apenas entra, justo tras el nombre)
+    if (userSession.phase === PHASE.FIN_REFERRAL_ONBOARDING) {
+        return await handleReferralOnboarding(sock, jid, t, userSession, ctx, fin);
+    }
+
     // Diagnostic phase
     if (userSession.phase === PHASE.FIN_DIAGNOSTIC) {
         return await handleDiagnostic(sock, jid, t, userSession, ctx, fin);
@@ -671,14 +680,10 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
     if (!fin.name) {
         fin.name = text.trim();
         financeStore.saveFinance(jid, fin);
-        userSession.phase = PHASE.FIN_DIAGNOSTIC;
+        userSession.phase = PHASE.FIN_REFERRAL_ONBOARDING;
         fin.trialStart = Date.now();
         await say(sock, jid,
-            `🦁 Un gusto, *${fin.name}*. Antes de arrancar, contame: ¿qué es lo que quieres lograr con tus finanzas ahorita?\n\n` +
-            `1️⃣ Ahorrar para algo importante\n` +
-            `2️⃣ Salir de mis deudas y respirar tranquilo\n` +
-            `3️⃣ Tener el control total de mi plata\n` +
-            `4️⃣ Simplemente empezar a organizarme`,
+            `🦁 Un gusto, *${fin.name}*. Antes de arrancar: ¿alguien te invitó a Leo? Si tenés un código (empieza con "LEO"), escribilo. Si no, escribí *no* 🦁`,
             ctx);
         return;
     }
@@ -693,6 +698,40 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
         `• Hablar de metas\n` +
         `• Anotar un préstamo (dado o recibido)`,
         ctx);
+}
+
+async function askDiagnosticQuestion(sock, jid, ctx) {
+    await say(sock, jid,
+        `Contame: ¿qué es lo que quieres lograr con tus finanzas ahorita?\n\n` +
+        `1️⃣ Ahorrar para algo importante\n` +
+        `2️⃣ Salir de mis deudas y respirar tranquilo\n` +
+        `3️⃣ Tener el control total de mi plata\n` +
+        `4️⃣ Simplemente empezar a organizarme`,
+        ctx);
+}
+
+/**
+ * Pregunta apenas entra un usuario nuevo (justo despues del nombre, antes
+ * del diagnostico) si alguien lo invito - asi el codigo se aplica de una vez
+ * en vez de depender de que el usuario lo escriba por su cuenta mas tarde.
+ * Cualquier respuesta que no sea un codigo valido se toma como "no" y sigue.
+ */
+async function handleReferralOnboarding(sock, jid, text, userSession, ctx, fin) {
+    const codeMatch = text.trim().match(/\bLEO\d{4,6}\b/i);
+    if (codeMatch) {
+        const result = financeReferral.applyCode(jid, codeMatch[0]);
+        if (result.success) {
+            fin.invitedBy = result.code;
+            financeStore.saveFinance(jid, fin);
+            await say(sock, jid,
+                `🦁 ¡Genial, quedó anotado! Cuando registres tu primer movimiento, tanto vos como quien te invitó ganan *+15 MOVIMIENTOS CON IA*. 🎉`,
+                ctx);
+        } else {
+            await say(sock, jid, `🦁 ${result.message}`, ctx);
+        }
+    }
+    userSession.phase = PHASE.FIN_DIAGNOSTIC;
+    await askDiagnosticQuestion(sock, jid, ctx);
 }
 
 async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {

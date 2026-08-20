@@ -47,6 +47,7 @@ const PHASE = {
     // 🦁 FASES FLUJO FINANCE LEO (conversacional)
     // ===================================
     FIN_ONBOARDING: 'fin_onboarding',
+    FIN_REFERRAL_ONBOARDING: 'fin_referral_onboarding', // Preguntando si tiene codigo de invitacion (apenas entra)
     FIN_DIAGNOSTIC: 'fin_diagnostic',
     FIN_GOAL_ONBOARDING: 'fin_goal_onboarding',
     FIN_GOALS: 'fin_goals',

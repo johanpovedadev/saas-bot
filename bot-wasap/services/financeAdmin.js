@@ -19,7 +19,8 @@ const CONFIG_DEFAULTS = {
     pago_bancolombia_nombre: '',
     precio_basic: '15000',
     precio_master: '30000',
-    limite_basic: '60'
+    limite_basic: '60',
+    admin_whatsapp: '573138777115'
 };
 
 // Tiers: free (sin IA), basic (cupo mensual), master (ilimitado).
@@ -416,7 +417,8 @@ function getPaymentInfo() {
         bancolombiaName: getConfig('pago_bancolombia_nombre', CONFIG_DEFAULTS.pago_bancolombia_nombre),
         basicPrice: intConfig('precio_basic', parseInt(CONFIG_DEFAULTS.precio_basic, 10)),
         masterPrice: intConfig('precio_master', parseInt(CONFIG_DEFAULTS.precio_master, 10)),
-        limitBasic: intConfig('limite_basic', parseInt(CONFIG_DEFAULTS.limite_basic, 10))
+        limitBasic: intConfig('limite_basic', parseInt(CONFIG_DEFAULTS.limite_basic, 10)),
+        adminWhatsapp: getConfig('admin_whatsapp', CONFIG_DEFAULTS.admin_whatsapp)
     };
 }
 
