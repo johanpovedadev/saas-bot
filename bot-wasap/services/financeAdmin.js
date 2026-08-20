@@ -79,7 +79,8 @@ function getDb() {
             tier: "TEXT NOT NULL DEFAULT 'free'",
             ai_usage_month: 'INTEGER NOT NULL DEFAULT 0',
             ai_usage_month_key: "TEXT NOT NULL DEFAULT ''",
-            last_active: 'INTEGER NOT NULL DEFAULT 0'
+            last_active: 'INTEGER NOT NULL DEFAULT 0',
+            ai_credits: 'INTEGER NOT NULL DEFAULT 0'
         });
         // Migración de datos: usuarios que ya eran premium pasan a Master
         // (conservando su vigencia actual) en vez de quedar en Gratis.
@@ -272,55 +273,91 @@ function getAiUsage(jid) {
 }
 
 /**
+ * Créditos de IA por invitación (bolsa aparte del plan): 15 movimientos con
+ * IA para quien invita y quien es invitado, sin límite de tiempo. Se usan
+ * como último recurso cuando el plan (free/basic agotado/master vencido) no
+ * habilita IA — así que quedan "guardados" mientras el usuario paga un plan.
+ */
+function getAiCredits(jid) {
+    const u = getUser(jid);
+    return (u && u.ai_credits) || 0;
+}
+
+function addAiCredits(jid, amount) {
+    const d = getDb();
+    if (!d || !jid || !(amount > 0)) return 0;
+    try {
+        d.prepare(`
+            INSERT INTO admin_users (jid, ai_credits) VALUES (?, ?)
+            ON CONFLICT(jid) DO UPDATE SET ai_credits = ai_credits + excluded.ai_credits
+        `).run(jid, amount);
+        return getAiCredits(jid);
+    } catch (err) {
+        logger.error(`financeAdmin.addAiCredits(${jid}): ${err.message}`);
+        return getAiCredits(jid);
+    }
+}
+
+function consumeAiCredit(jid) {
+    const d = getDb();
+    if (!d || !jid) return false;
+    try {
+        const info = d.prepare('UPDATE admin_users SET ai_credits = ai_credits - 1 WHERE jid = ? AND ai_credits > 0').run(jid);
+        return info.changes > 0;
+    } catch (err) {
+        logger.error(`financeAdmin.consumeAiCredit(${jid}): ${err.message}`);
+        return false;
+    }
+}
+
+/**
  * ¿Puede consumir IA ahora mismo? (gate principal, también para media)
  */
 function canConsumeAi(jid) {
     const t = getTier(jid);
-    if (t.tier === TIER_MASTER) return t.premiumUntil > Date.now();
-    if (t.tier === TIER_BASIC) {
-        if (!(t.premiumUntil > Date.now())) return false;
+    if (t.tier === TIER_MASTER && t.premiumUntil > Date.now()) return true;
+    if (t.tier === TIER_BASIC && t.premiumUntil > Date.now()) {
         const usage = getAiUsage(jid);
-        return usage.used < usage.limit;
+        if (usage.used < usage.limit) return true;
     }
-    return false;
+    return getAiCredits(jid) > 0;
 }
 
 /**
- * Registra una interacción de IA. Para Basic cuenta contra el cupo mensual y
- * devuelve allowed=false cuando ya se agotó. Para Master/Free no consume cupo
- * (free nunca llega aquí porque el gate lo bloquea).
+ * Registra una interacción de IA. Master/Basic consumen su cupo normal; si
+ * no tienen (o no tienen plan), se descuenta de los créditos de invitación
+ * como último recurso.
  */
 function consumeAiUsage(jid) {
     const t = getTier(jid);
-    if (t.tier === TIER_MASTER) {
-        return { allowed: t.premiumUntil > Date.now(), used: 0, remaining: Infinity };
+    if (t.tier === TIER_MASTER && t.premiumUntil > Date.now()) {
+        return { allowed: true, used: 0, remaining: Infinity, source: 'master' };
     }
-    if (t.tier !== TIER_BASIC) {
-        return { allowed: false, used: 0, remaining: 0 };
+    if (t.tier === TIER_BASIC && t.premiumUntil > Date.now()) {
+        const u = getAiUsage(jid);
+        if (u.used < u.limit) {
+            try {
+                const d = getDb();
+                const monthKey = currentMonthKey();
+                d.prepare(`
+                    INSERT INTO admin_users (jid, ai_usage_month, ai_usage_month_key)
+                    VALUES (?, 1, ?)
+                    ON CONFLICT(jid) DO UPDATE SET
+                        ai_usage_month = CASE WHEN ai_usage_month_key = ? THEN ai_usage_month + 1 ELSE 1 END,
+                        ai_usage_month_key = ?
+                `).run(jid, monthKey, monthKey, monthKey);
+                const after = getAiUsage(jid);
+                return { allowed: true, used: after.used, remaining: after.remaining, source: 'basic' };
+            } catch (err) {
+                logger.error(`financeAdmin.consumeAiUsage(${jid}): ${err.message}`);
+                return { allowed: true, used: u.used, remaining: u.remaining, source: 'basic' };
+            }
+        }
     }
-    if (!(t.premiumUntil > Date.now())) {
-        return { allowed: false, used: getAiUsage(jid).used, remaining: 0 };
+    if (consumeAiCredit(jid)) {
+        return { allowed: true, used: 0, remaining: getAiCredits(jid), source: 'referral_credit' };
     }
-    const u = getAiUsage(jid);
-    if (u.used >= u.limit) {
-        return { allowed: false, used: u.used, remaining: 0 };
-    }
-    try {
-        const d = getDb();
-        const monthKey = currentMonthKey();
-        d.prepare(`
-            INSERT INTO admin_users (jid, ai_usage_month, ai_usage_month_key)
-            VALUES (?, 1, ?)
-            ON CONFLICT(jid) DO UPDATE SET
-                ai_usage_month = CASE WHEN ai_usage_month_key = ? THEN ai_usage_month + 1 ELSE 1 END,
-                ai_usage_month_key = ?
-        `).run(jid, monthKey, monthKey, monthKey);
-        const after = getAiUsage(jid);
-        return { allowed: true, used: after.used, remaining: after.remaining };
-    } catch (err) {
-        logger.error(`financeAdmin.consumeAiUsage(${jid}): ${err.message}`);
-        return { allowed: true, used: u.used, remaining: u.remaining };
-    }
+    return { allowed: false, used: 0, remaining: 0 };
 }
 
 function getStats() {
@@ -415,6 +452,8 @@ module.exports = {
     canConsumeAi,
     getAiUsage,
     consumeAiUsage,
+    getAiCredits,
+    addAiCredits,
     getStats,
     getConfig,
     setConfig,

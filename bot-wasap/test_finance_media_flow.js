@@ -44,6 +44,15 @@ function makeAudioMsg(from) {
     };
 }
 
+function makeImageMsg(from) {
+    return {
+        id: { _serialized: 'msg-' + Math.random() },
+        from,
+        type: 'image',
+        downloadMedia: async () => ({ data: 'ZmFrZS1yZWNlaXB0LWRhdGE=', mimetype: 'image/jpeg' })
+    };
+}
+
 async function testFinanceAudioIsProcessed() {
     const sock = makeSock();
     const ctx = { sessions: {} };
@@ -83,6 +92,80 @@ async function testFinanceAudioIsProcessed() {
     }
 }
 
+async function testFinanceImageForwardsReceiptToAdmin() {
+    const sock = makeSock();
+    const ctx = { sessions: {} };
+    handler.setupSocketHandlers(sock, ctx);
+
+    const originalInterpretImage = financeAi.interpretImage;
+    financeAi.interpretImage = async (imageBase64, userSession, mimeType) => {
+        return 'Compré Almacén Éxito por 45000 pesos';
+    };
+
+    const originalHandle = financeFlow.handle;
+    let handleCalledWith = null;
+    financeFlow.handle = async (...args) => { handleCalledWith = args; };
+
+    const originalNotifyAdminReceipt = financeFlow.notifyAdminReceipt;
+    let notifyCalledWith = null;
+    let notifyCalledBeforeHandle = false;
+    financeFlow.notifyAdminReceipt = async (...args) => {
+        notifyCalledWith = args;
+        notifyCalledBeforeHandle = handleCalledWith === null;
+    };
+
+    try {
+        sock.listeners['message'](makeImageMsg('573005556666@c.us'));
+        await ctx._chatQueues.get('573005556666@c.us');
+
+        assert.ok(notifyCalledWith, 'notifyAdminReceipt debe haberse invocado para una imagen');
+        assert.strictEqual(notifyCalledWith[0], sock);
+        assert.strictEqual(notifyCalledWith[1], '573005556666@c.us');
+        assert.strictEqual(notifyCalledWith[4], 'ZmFrZS1yZWNlaXB0LWRhdGE=', 'debe pasar los bytes base64 de la imagen');
+        assert.strictEqual(notifyCalledWith[5], 'image/jpeg');
+        assert.strictEqual(notifyCalledWith[6], 'Compré Almacén Éxito por 45000 pesos', 'debe pasar lo que la IA leyó');
+        assert.ok(notifyCalledBeforeHandle, 'debe reenviar la foto al admin antes de procesar el texto en el flow');
+
+        assert.ok(handleCalledWith, 'currentFlow.handle debe haberse invocado con el texto transcrito');
+        assert.strictEqual(handleCalledWith[2], 'Compré Almacén Éxito por 45000 pesos');
+
+        console.log('OK: la foto de un recibo se reenvia al admin antes de procesar el texto transcrito');
+    } finally {
+        financeAi.interpretImage = originalInterpretImage;
+        financeFlow.handle = originalHandle;
+        financeFlow.notifyAdminReceipt = originalNotifyAdminReceipt;
+    }
+}
+
+async function testFinanceImageNotifyFailureDoesNotBlockFlow() {
+    const sock = makeSock();
+    const ctx = { sessions: {} };
+    handler.setupSocketHandlers(sock, ctx);
+
+    const originalInterpretImage = financeAi.interpretImage;
+    financeAi.interpretImage = async () => 'Compré Almacén Éxito por 45000 pesos';
+
+    const originalHandle = financeFlow.handle;
+    let handleCalledWith = null;
+    financeFlow.handle = async (...args) => { handleCalledWith = args; };
+
+    const originalNotifyAdminReceipt = financeFlow.notifyAdminReceipt;
+    financeFlow.notifyAdminReceipt = async () => { throw new Error('Jarvis caído (simulado)'); };
+
+    try {
+        sock.listeners['message'](makeImageMsg('573007778888@c.us'));
+        await ctx._chatQueues.get('573007778888@c.us');
+
+        assert.ok(handleCalledWith, 'el flow debe seguir procesando el texto aunque falle el reenvio al admin');
+        assert.strictEqual(handleCalledWith[2], 'Compré Almacén Éxito por 45000 pesos');
+        console.log('OK: si notifyAdminReceipt falla, no bloquea el registro del gasto del usuario');
+    } finally {
+        financeAi.interpretImage = originalInterpretImage;
+        financeFlow.handle = originalHandle;
+        financeFlow.notifyAdminReceipt = originalNotifyAdminReceipt;
+    }
+}
+
 async function testNonFinanceMediaIgnoredSilently() {
     // Simula un tenant sin flow especial (ej. mascotas) -> no debe intentar usar financeAi
     // ni lanzar excepcion; debe ignorar el media en silencio.
@@ -115,6 +198,8 @@ async function testNonFinanceMediaIgnoredSilently() {
 (async () => {
     try {
         await testFinanceAudioIsProcessed();
+        await testFinanceImageForwardsReceiptToAdmin();
+        await testFinanceImageNotifyFailureDoesNotBlockFlow();
         await testNonFinanceMediaIgnoredSilently();
         console.log('\nTodos los tests pasaron.');
         process.exitCode = 0;

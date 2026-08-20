@@ -809,6 +809,15 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
                     await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');
                     return;
                 }
+                // Reenviar la foto del recibo al admin (capability opcional del flow,
+                // hoy solo la implementa finance.flow.js) - no bloquea el flujo si falla.
+                if (!isAudio && currentFlow && typeof currentFlow.notifyAdminReceipt === 'function') {
+                    try {
+                        await currentFlow.notifyAdminReceipt(sock, messageData.from, userSession, ctx, media.data, media.mimetype, transcribed);
+                    } catch (notifyErr) {
+                        logger.error(`[${messageData.from}] Error reenviando recibo al admin: ${notifyErr.message}`);
+                    }
+                }
                 // Enrutar el texto transcrito a través del flow
                 await currentFlow.handle(sock, messageData.from, transcribed, userSession, ctx);
                 return;

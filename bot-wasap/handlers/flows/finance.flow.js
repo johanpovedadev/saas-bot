@@ -214,6 +214,52 @@ async function notifyAdmin(sock, ctx, text) {
     }
 }
 
+async function sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption) {
+    const token = process.env.HERMES_BOT_TOKEN;
+    if (!token) return false;
+    try {
+        const buf = Buffer.from(base64Data, 'base64');
+        const form = new FormData();
+        form.append('chat_id', String(chatId));
+        if (caption) form.append('caption', caption);
+        form.append('photo', new Blob([buf], { type: mimetype || 'image/jpeg' }), 'recibo.jpg');
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!data.ok) {
+            logger.error(`[sendTelegramPhotoViaJarvis] API: ${data.description}`);
+            return false;
+        }
+        return true;
+    } catch (e) {
+        logger.error(`[sendTelegramPhotoViaJarvis] ${e.message}`);
+        return false;
+    }
+}
+
+/**
+ * Reenvia al admin (Johan) la foto de un recibo/factura que un usuario le
+ * mandó a Leo, junto con lo que la IA entendió (monto/categoria) — para que
+ * pueda auditar. Se llama SIEMPRE que un usuario manda una imagen (no solo
+ * cuando falla la lectura), vía el mismo canal (Jarvis) que el resto de
+ * notificaciones a admin.
+ */
+async function notifyAdminReceipt(sock, jid, userSession, ctx, base64Data, mimetype, summaryText) {
+    const label = getTelegramLabel(userSession, jid);
+    const caption = `🧾 *Recibo de Leo Financiero* 🦁\n\n👤 Usuario: ${label}\n🆔 ID: ${String(jid).split('@')[0]}\n\n${summaryText || '(sin lectura de la IA)'}`;
+    for (const adminJid of getAdminJids()) {
+        try {
+            if (String(adminJid).endsWith('@telegram')) {
+                const chatId = String(adminJid).split('@')[0];
+                const sent = await sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption);
+                if (sent) continue;
+            }
+            await sock.sendMessage(adminJid, { data: base64Data, mimetype: mimetype || 'image/jpeg', filename: 'recibo.jpg' }, { caption });
+        } catch (e) {
+            logger.error(`[notifyAdminReceipt] Error notificando a ${adminJid}: ${e.message}`);
+        }
+    }
+}
+
 async function notifyNewUser(sock, jid, userSession, ctx) {
     const label = getTelegramLabel(userSession, jid);
     await notifyAdmin(sock, ctx,
@@ -1107,35 +1153,24 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
 
     fin.trialLastShown = Date.now();
 
-    // Referral reward: first real transaction triggers +15 days Master for both
+    // Referral reward: first real transaction triggers +15 movimientos con IA
+    // para ambos (sin límite de tiempo para usarlos, ver financeAdmin.addAiCredits).
     if (!prevFin.firstTransactionDone && fin.invitedBy) {
         const reward = financeReferral.checkAndReward(jid);
         if (reward.rewarded) {
-            const now = Date.now();
-            financeAdmin.setTier(jid, 'master', 15);
-            fin.premiumUntil = Math.max(fin.premiumUntil || 0, now) + 15 * 86400000;
-            fin.isPremium = true;
-            fin.tier = 'master';
-            // Reward inviter too
-            financeAdmin.setTier(reward.inviterJid, 'master', 15);
-            const inviterFin = ctx?.sessions?.[reward.inviterJid]?.finance;
-            if (inviterFin) {
-                inviterFin.premiumUntil = Math.max(inviterFin.premiumUntil || 0, now) + 15 * 86400000;
-                inviterFin.isPremium = true;
-                inviterFin.tier = 'master';
-                financeStore.saveFinance(reward.inviterJid, inviterFin);
-            }
+            financeAdmin.addAiCredits(jid, 15);
+            financeAdmin.addAiCredits(reward.inviterJid, 15);
             await say(sock, jid,
                 `🎉 *¡GRAN NOTICIA!* 🎉\n\n` +
                 `Completaste tu primer movimiento y activaste la recompensa por invitación.\n\n` +
-                `Tanto vos como *quien te invitó* ganan +15 DÍAS DE MASTER (IA sin límites) cada une. 🦁🔥`,
+                `Tanto vos como *quien te invitó* ganan *+15 MOVIMIENTOS CON IA* cada une, para usar cuando quieran (sin vencimiento). 🦁🔥`,
                 ctx);
             // Notify inviter if online
             if (ctx?.sessions?.[reward.inviterJid]) {
                 await say(sock, reward.inviterJid,
                     `🎉 *¡Alguien usó tu código!* 🎉\n\n` +
                     `Una persona que invitaste acaba de registrar su primer movimiento.\n` +
-                    `¡Ganaste +15 DÍAS DE MASTER (IA sin límites)! 🦁🔥`,
+                    `¡Ganaste *+15 MOVIMIENTOS CON IA*! 🦁🔥`,
                     ctx);
             }
         }
@@ -1476,11 +1511,13 @@ async function handleReferralInfo(sock, jid, fin, ctx) {
     if (!fin.referralCode) fin.referralCode = code;
     const inviteeCount = financeReferral.getInviteeCount(jid);
     const rewardedCount = financeReferral.getRewardedCount(jid);
+    const creditsLeft = financeAdmin.getAiCredits(jid);
     await say(sock, jid,
         `🦁 *Tu código de invitación:* ${code}\n\n` +
-        `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 DÍAS DE MASTER* (IA sin límites)! 🎉\n\n` +
+        `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 MOVIMIENTOS CON IA* (sin vencimiento)! 🎉\n\n` +
         `📊 Personas invitadas: ${inviteeCount}\n` +
-        `🏆 Días Master ganados: ${rewardedCount * 15}\n\n` +
+        `🏆 Movimientos con IA ganados: ${rewardedCount * 15}\n` +
+        `🎟️ Te quedan: ${creditsLeft}\n\n` +
         `Para invitar, decile a un amigue que escriba tu código en Leo 🦁`,
         ctx);
 }
@@ -1497,7 +1534,7 @@ async function handleReferralConfirmation(sock, jid, text, userSession, ctx, fin
             fin.invitedBy = ref.code;
             financeStore.saveFinance(jid, fin);
             await say(sock, jid,
-                `🦁 ¡Excelente! Ahora cuando registres tu primer movimiento, tanto vos como quien te invitó ganan +15 DÍAS DE MASTER (IA sin límites). 🎉`,
+                `🦁 ¡Excelente! Ahora cuando registres tu primer movimiento, tanto vos como quien te invitó ganan +15 MOVIMIENTOS CON IA (sin vencimiento). 🎉`,
                 ctx);
         } else {
             await say(sock, jid, `🦁 ${result.message}`, ctx);
@@ -1576,6 +1613,7 @@ module.exports = {
     handle,
     handleUnknown,
     showWelcome,
+    notifyAdminReceipt,
     generateNightReport,
     startNightReporter,
     isPremiumBlocked,
