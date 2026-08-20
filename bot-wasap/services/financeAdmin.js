@@ -78,7 +78,8 @@ function getDb() {
         ensureColumns(db, 'admin_users', {
             tier: "TEXT NOT NULL DEFAULT 'free'",
             ai_usage_month: 'INTEGER NOT NULL DEFAULT 0',
-            ai_usage_month_key: "TEXT NOT NULL DEFAULT ''"
+            ai_usage_month_key: "TEXT NOT NULL DEFAULT ''",
+            last_active: 'INTEGER NOT NULL DEFAULT 0'
         });
         // Migración de datos: usuarios que ya eran premium pasan a Master
         // (conservando su vigencia actual) en vez de quedar en Gratis.
@@ -111,6 +112,41 @@ function registerUser(jid, username) {
     } catch (err) {
         logger.error(`financeAdmin.registerUser(${jid}): ${err.message}`);
         return { registered: false };
+    }
+}
+
+/**
+ * Marca que este usuario mando un mensaje justo ahora — barato (un UPDATE),
+ * se llama en cada mensaje entrante. Base de "usuarios activos" del panel.
+ */
+function touchUser(jid) {
+    const d = getDb();
+    if (!d || !jid) return;
+    try {
+        d.prepare('UPDATE admin_users SET last_active = ? WHERE jid = ?').run(Date.now(), jid);
+    } catch (err) {
+        logger.error(`financeAdmin.touchUser(${jid}): ${err.message}`);
+    }
+}
+
+/**
+ * Usuarios activos (mandaron al menos 1 mensaje) en ventanas rodantes de
+ * 24h / 7 dias / 30 dias — para el panel de administracion.
+ */
+function getActiveUserCounts() {
+    const d = getDb();
+    if (!d) return { today: 0, thisWeek: 0, thisMonth: 0 };
+    try {
+        const now = Date.now();
+        const countSince = (ms) => d.prepare('SELECT COUNT(*) AS c FROM admin_users WHERE last_active >= ?').get(now - ms).c;
+        return {
+            today: countSince(DAY_MS),
+            thisWeek: countSince(7 * DAY_MS),
+            thisMonth: countSince(30 * DAY_MS)
+        };
+    } catch (err) {
+        logger.error(`financeAdmin.getActiveUserCounts: ${err.message}`);
+        return { today: 0, thisWeek: 0, thisMonth: 0 };
     }
 }
 
@@ -368,6 +404,8 @@ module.exports = {
     TIER_BASIC,
     TIER_MASTER,
     registerUser,
+    touchUser,
+    getActiveUserCounts,
     getUser,
     listUsers,
     getTier,

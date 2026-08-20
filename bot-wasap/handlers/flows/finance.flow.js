@@ -9,8 +9,12 @@ const financeScore = require('../../services/financeScore');
 const { generateCard, getNewMilestones, getGoalType } = require('../../services/financeCard');
 const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
+const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
 
-const FIN_PHASES = [PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS, PHASE.FIN_CHECKIN, PHASE.FIN_MAIN];
+const FIN_PHASES = [
+    PHASE.FIN_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
+    PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_FEEDBACK
+];
 
 const CONFIRM_VARIANTS = [
     'Anotado 🦁 Vamos sumando.',
@@ -27,7 +31,9 @@ const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
     `5️⃣ Mis metas de ahorro\n` +
     `6️⃣ Invitar amigos (código)\n` +
     `7️⃣ Planes y actualizar a Pro\n` +
-    `8️⃣ Préstamos (quién me debe / qué debo)`;
+    `8️⃣ Préstamos (quién me debe / qué debo)\n` +
+    `9️⃣ Apóyanos ☕\n` +
+    `🔟 Mejoras y configuración`;
 
 const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
 
@@ -60,9 +66,12 @@ function initFinance(userSession) {
             pendingReferral: null,
             premiumUntil: 0,
             loans: [],
-            pendingLoanList: null
+            pendingLoanList: null,
+            currency: 'COP',
+            pendingFeedback: false
         };
     }
+    if (!userSession.finance.currency) userSession.finance.currency = 'COP';
     if (!Array.isArray(userSession.finance.loans)) userSession.finance.loans = [];
     const today = new Date().toDateString();
     if (userSession.finance.lastResetDate !== today) {
@@ -486,14 +495,16 @@ async function handle(sock, jid, text, userSession, ctx) {
         if (!userSession.finance || !userSession.finance.name) {
             userSession.finance = persisted;
         } else {
-            // Merge: keep in-memory name/pendingConfirm, use DB for everything else
+            // Merge: keep in-memory name/pendingConfirm/pendingFeedback, use DB for everything else
             const currentName = userSession.finance.name;
             const pending = userSession.finance.pendingConfirm;
             const pendingLoans = userSession.finance.pendingLoanList;
+            const pendingFb = userSession.finance.pendingFeedback;
             userSession.finance = persisted;
             userSession.finance.name = currentName;
             userSession.finance.pendingConfirm = pending;
             userSession.finance.pendingLoanList = pendingLoans;
+            userSession.finance.pendingFeedback = pendingFb;
         }
     }
     const fin = initFinance(userSession);
@@ -507,6 +518,7 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (reg.registered) {
         await notifyNewUser(sock, jid, userSession, ctx);
     }
+    financeAdmin.touchUser(jid);
     syncPremiumFromAdmin(jid, fin);
 
     // Comandos de navegación
@@ -558,6 +570,19 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Pending referral confirmation
     if (fin.pendingReferral) {
         return await handleReferralConfirmation(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Pending feedback (esperando el texto que se reenvia a Johan)
+    if (fin.pendingFeedback) {
+        return await handleFeedbackText(sock, jid, t, userSession, ctx, fin);
+    }
+
+    // Menu de mejoras/configuracion
+    if (userSession.phase === PHASE.FIN_SETTINGS) {
+        return await handleSettingsMenu(sock, jid, t, userSession, ctx, fin);
+    }
+    if (userSession.phase === PHASE.FIN_SETTINGS_CURRENCY) {
+        return await handleSettingsCurrency(sock, jid, t, userSession, ctx, fin);
     }
 
     // Diagnostic phase
@@ -670,7 +695,7 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     await say(sock, jid,
         `🦁 *${fin.goalName}* — ¡me gusta esa meta! ` +
         (fin.goalTarget > 0
-            ? `Vamos a trabajar para juntar $${fin.goalTarget.toLocaleString('es-CO')}. Paso a paso.\n\n`
+            ? `Vamos a trabajar para juntar ${formatMoney(fin.goalTarget, fin)}. Paso a paso.\n\n`
             : `Cuando quieras decime cuánta plata necesitás y te ayudo a hacer el plan.\n\n`) +
         `Podés empezar con frases como:\n\n` +
         `_"Compré 18 mil en almuerzo"_\n` +
@@ -688,13 +713,13 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     const txCount = fin.transactions.length;
     const goalLine = fin.goalName && fin.goalTarget
-        ? `🎯 Avance de meta "${fin.goalName}": $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}\n`
+        ? `🎯 Avance de meta "${fin.goalName}": ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
         : '';
     await say(sock, jid,
         `🦁 ¡Qué bueno verte de nuevo, *${fin.name}*!\n\n` +
         (txCount > 0
             ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
-              `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n` +
+              `💵 Balance: ${formatMoney(fin.balance, fin)}\n` +
               goalLine +
               `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n`
             : `Todavía no has registrado nada.\n\n`),
@@ -760,7 +785,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 }
                 financeStore.saveFinance(jid, fin);
                 await say(sock, jid,
-                    `🎯 *Meta guardada!* Vas a ahorrar $${val.toLocaleString('es-CO')} para "${fin.goalName}".\n\n` +
+                    `🎯 *Meta guardada!* Vas a ahorrar ${formatMoney(val, fin)} para "${fin.goalName}".\n\n` +
                     `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
                     `Podés registrar tu primer movimiento:\n` +
                     `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
@@ -877,6 +902,14 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             await say(sock, jid, result.response, ctx);
             break;
 
+        case 'apoyar':
+            await handleSupportRequest(sock, jid, ctx);
+            break;
+
+        case 'configuracion':
+            await showSettingsMenu(sock, jid, userSession, ctx);
+            break;
+
         default:
             await say(sock, jid, result.response || `😅 No entendí. Escribí un número de la lista o decime algo como _"Compré 18 mil en almuerzo"_.`, ctx);
     }
@@ -889,7 +922,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
  * bloquear al usuario con el upsell de premium.
  */
 async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
-    const option = t.match(/^([1-8])$/);
+    const option = t.match(/^(10|[1-9])$/);
     if (option) {
         switch (option[1]) {
             case '1':
@@ -909,7 +942,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
             case '3': {
                 const res = await financeAi.interpret('resumen', userSession, true);
                 await say(sock, jid, res?.response ||
-                    `📊 *Tu estado, ${fin.name}:*\n\n💵 Saldo: $${(fin.balance || 0).toLocaleString('es-CO')}\n💸 Hoy: $${(fin.todaySpending || 0).toLocaleString('es-CO')}`, ctx);
+                    `📊 *Tu estado, ${fin.name}:*\n\n💵 Saldo: ${formatMoney(fin.balance || 0, fin)}\n💸 Hoy: ${formatMoney(fin.todaySpending || 0, fin)}`, ctx);
                 return;
             }
             case '4':
@@ -930,6 +963,12 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                 return;
             case '8':
                 await handleQueryLoans(sock, jid, fin, ctx);
+                return;
+            case '9':
+                await handleSupportRequest(sock, jid, ctx);
+                return;
+            case '10':
+                await showSettingsMenu(sock, jid, userSession, ctx);
                 return;
         }
         return;
@@ -994,12 +1033,12 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         await say(sock, jid, `✅ ${cancelMsg}`, ctx);
     } else if (confirm.type === 'loan') {
         const verb = confirm.direction === 'me_deben' ? 'Te debe' : 'Le debés a';
-        await say(sock, jid, `🤝 ${verb} *${confirm.counterparty}* $${confirm.amount.toLocaleString('es-CO')}\n\n¿Es correcto? (sí/no)`, ctx);
+        await say(sock, jid, `🤝 ${verb} *${confirm.counterparty}* ${formatMoney(confirm.amount, fin)}\n\n¿Es correcto? (sí/no)`, ctx);
     } else {
         const rePrompt = [
-            `¿Es correcto?\n\n💸 Compra: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
-            `Confirmación:\n\n💰 $${confirm.amount.toLocaleString('es-CO')} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? (sí/no)`,
-            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso'}: $${confirm.amount.toLocaleString('es-CO')}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
+            `¿Es correcto?\n\n💸 Compra: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
+            `Confirmación:\n\n💰 ${formatMoney(confirm.amount, fin)} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? (sí/no)`,
+            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso'}: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
         ][Math.floor(Math.random() * 3)];
         await say(sock, jid, rePrompt, ctx);
     }
@@ -1037,11 +1076,11 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
     const balanceLine = !hasIncome && fin.balance < 0
-        ? `💸 Comprado hoy: $${fin.todaySpending.toLocaleString('es-CO')}`
-        : `💵 Saldo: $${fin.balance.toLocaleString('es-CO')}`;
+        ? `💸 Comprado hoy: ${formatMoney(fin.todaySpending, fin)}`
+        : `💵 Saldo: ${formatMoney(fin.balance, fin)}`;
 
     const todayMsg = fin.todaySpending > 0
-        ? `📊 Hoy: $${fin.todaySpending.toLocaleString('es-CO')}\n`
+        ? `📊 Hoy: ${formatMoney(fin.todaySpending, fin)}\n`
         : '';
     const streakMsg = fin.streak >= 2 ? `🔥 ${fin.streak} días seguidos\n` : '';
     const milestoneMsg = fin.streak === 5 ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 ? `🏆 10 días! Imparable.\n` : '';
@@ -1055,7 +1094,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     await say(sock, jid,
         `✅ *${type === 'expense' ? 'Compra registrada' : 'Ingreso registrado'}!*\n` +
         confirmMsg + '\n\n' +
-        `${type === 'expense' ? '💸' : '💰'} $${amount.toLocaleString('es-CO')} — ${description}\n` +
+        `${type === 'expense' ? '💸' : '💰'} ${formatMoney(amount, fin)} — ${description}\n` +
         `🏷️ ${category}\n\n` +
         balanceLine + '\n' +
         todayMsg +
@@ -1115,7 +1154,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
                 if (mId.startsWith('goal-') && fin.goalName) {
                     const pct = mId.replace('goal-', '');
                     caption = `🎉 ${goalType.emoji} *¡${pct}% de tu meta "${fin.goalName}"!*\n` +
-                        `Llevás $${fin.balance.toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}. ¡Seguí así! 🦁`;
+                        `Llevás ${formatMoney(fin.balance, fin)} de ${formatMoney(fin.goalTarget, fin)}. ¡Seguí así! 🦁`;
                 }
                 await sendImage(sock, jid, imgPath, caption, ctx);
                 fin.milestonesSent.push(mId);
@@ -1150,8 +1189,8 @@ async function saveLoanAndConfirm(sock, jid, counterparty, amount, direction, fi
     const verb = direction === 'me_deben' ? 'Vas a recuperar' : 'Te falta pagarle a';
     const nombre = direction === 'me_deben' ? counterparty : counterparty;
     const msg = direction === 'me_deben'
-        ? `🤝 ¡Anotado! *${counterparty}* te debe $${amount.toLocaleString('es-CO')}. ${verb} esa plata — yo te ayudo a no perderle el rastro.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`
-        : `🤝 ¡Anotado! Le debés $${amount.toLocaleString('es-CO')} a *${counterparty}*. ${verb} ${nombre} cuando puedas — ya quedó registrado para que no se te olvide.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`;
+        ? `🤝 ¡Anotado! *${counterparty}* te debe ${formatMoney(amount, fin)}. ${verb} esa plata — yo te ayudo a no perderle el rastro.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`
+        : `🤝 ¡Anotado! Le debés ${formatMoney(amount, fin)} a *${counterparty}*. ${verb} ${nombre} cuando puedas — ya quedó registrado para que no se te olvide.\n\nEscribí *"préstamos"* cuando quieras ver el resumen.`;
     await say(sock, jid, msg, ctx);
     logger.info({ jid, counterparty, amount, direction }, 'Finance loan saved');
 }
@@ -1181,14 +1220,14 @@ async function handleQueryLoans(sock, jid, fin, ctx) {
     let text = `🤝 *Tus préstamos*\n`;
     if (meDeben.length) {
         const total = meDeben.reduce((s, l) => s + l.amount, 0);
-        text += `\n💰 *Te deben* (vas a recuperar $${total.toLocaleString('es-CO')}):\n`;
-        text += meDeben.map(l => `${++n}. ${l.counterparty} — $${l.amount.toLocaleString('es-CO')}`).join('\n');
+        text += `\n💰 *Te deben* (vas a recuperar ${formatMoney(total, fin)}):\n`;
+        text += meDeben.map(l => `${++n}. ${l.counterparty} — ${formatMoney(l.amount, fin)}`).join('\n');
         text += '\n';
     }
     if (debo.length) {
         const total = debo.reduce((s, l) => s + l.amount, 0);
-        text += `\n📤 *Debés* (te falta pagar $${total.toLocaleString('es-CO')}):\n`;
-        text += debo.map(l => `${++n}. ${l.counterparty} — $${l.amount.toLocaleString('es-CO')}`).join('\n');
+        text += `\n📤 *Debés* (te falta pagar ${formatMoney(total, fin)}):\n`;
+        text += debo.map(l => `${++n}. ${l.counterparty} — ${formatMoney(l.amount, fin)}`).join('\n');
         text += '\n';
     }
     text += `\nEscribí el *número* cuando alguno se pague, y lo marco como listo ✅`;
@@ -1205,9 +1244,105 @@ async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
     loan.status = 'pagado';
     financeStore.saveFinance(jid, fin);
     const msg = loan.direction === 'me_deben'
-        ? `✅ ¡Bien! *${loan.counterparty}* ya te pagó los $${loan.amount.toLocaleString('es-CO')}. Un pendiente menos 🦁`
-        : `✅ ¡Listo! Ya le pagaste a *${loan.counterparty}* los $${loan.amount.toLocaleString('es-CO')}. Un pendiente menos 🦁`;
+        ? `✅ ¡Bien! *${loan.counterparty}* ya te pagó los ${formatMoney(loan.amount, fin)}. Un pendiente menos 🦁`
+        : `✅ ¡Listo! Ya le pagaste a *${loan.counterparty}* los ${formatMoney(loan.amount, fin)}. Un pendiente menos 🦁`;
     await say(sock, jid, msg, ctx);
+}
+
+/**
+ * "Apóyanos" — reusa los mismos datos de pago del flujo de Pro (Nequi/
+ * Bancolombia/Bre-B, ya configurados en financeAdmin), pero con redaccion
+ * calida y SIN monto fijo — que el aporte "nazca" del usuario, asi sea poco.
+ * Es de una sola respuesta, no necesita fase nueva.
+ */
+async function handleSupportRequest(sock, jid, ctx) {
+    const payment = financeAdmin.getPaymentInfo();
+    await say(sock, jid,
+        `💙 Si Leo te ha servido para ponerle orden a tus finanzas, me encantaría que me invites lo que sientas justo — así sea poquito, de corazón 🙏\n\n` +
+        `📲 *Cómo apoyar:*\n` +
+        `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
+        (payment.bancolombia ? `2️⃣ Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : '') +
+        `\nCualquier cosita ayuda a que Leo siga creciendo 🦁✨ ¡Gracias por estar!`,
+        ctx);
+}
+
+/**
+ * Menu de "Mejoras y configuración" — hoy: cambiar moneda de visualizacion
+ * y enviar feedback. Se llama tanto desde el menu numerado (opcion 10) como
+ * desde texto libre en planes pagos (intent "configuracion").
+ */
+async function showSettingsMenu(sock, jid, userSession, ctx) {
+    userSession.phase = PHASE.FIN_SETTINGS;
+    await say(sock, jid,
+        `⚙️ *Mejoras y configuración*\n\n` +
+        `1️⃣ Cambiar moneda\n` +
+        `2️⃣ Enviar feedback (qué te gusta / qué mejoraría)\n` +
+        `3️⃣ Volver al menú`,
+        ctx);
+}
+
+async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
+    const low = t.trim().toLowerCase();
+    if (/^1$|moneda/.test(low)) {
+        userSession.phase = PHASE.FIN_SETTINGS_CURRENCY;
+        const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
+        await say(sock, jid,
+            `💱 ¿En qué moneda querés ver tus montos? (esto solo cambia cómo se muestran, tu saldo real no cambia)\n\n${options}`,
+            ctx);
+        return;
+    }
+    if (/^2$|feedback|sugerencia/.test(low)) {
+        fin.pendingFeedback = true;
+        await say(sock, jid, `💬 Contame qué te gusta de Leo o qué te gustaría que mejore — te leo con toda la atención 🦁`, ctx);
+        return;
+    }
+    if (/^3$|volver|menu/.test(low)) {
+        userSession.phase = PHASE.FIN_MAIN;
+        await showQuickMenu(sock, jid, fin, ctx);
+        return;
+    }
+    await say(sock, jid, `Elegí una opción: 1) Cambiar moneda 2) Enviar feedback 3) Volver al menú`, ctx);
+}
+
+async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
+    const trimmed = t.trim();
+    const num = parseInt(trimmed, 10);
+    let chosen = null;
+    if (num >= 1 && num <= SUPPORTED_CURRENCIES.length) {
+        chosen = SUPPORTED_CURRENCIES[num - 1];
+    } else {
+        const upper = trimmed.toUpperCase();
+        chosen = SUPPORTED_CURRENCIES.find(c => c === upper) || null;
+    }
+    if (!chosen) {
+        const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
+        await say(sock, jid, `No reconocí esa moneda. Elegí una opción:\n\n${options}`, ctx);
+        return;
+    }
+    fin.currency = chosen;
+    financeStore.saveFinance(jid, fin);
+    userSession.phase = PHASE.FIN_MAIN;
+    await say(sock, jid,
+        `Listo ✅ tus montos ahora se ven en *${CURRENCY_LABELS[chosen]}* — esto es solo visual, tu saldo real no cambia.\n\n` +
+        `Ejemplo: tu saldo ahora se ve así → ${formatMoney(fin.balance || 0, fin)}`,
+        ctx);
+}
+
+/**
+ * Captura el texto libre pedido por showSettingsMenu (opcion 2) y lo
+ * reenvia a Johan con el mismo mecanismo que ya usan notifyNewUser /
+ * handleUpgradeRequest (notifyAdmin -> Telegram via Jarvis o WhatsApp).
+ */
+async function handleFeedbackText(sock, jid, text, userSession, ctx, fin) {
+    fin.pendingFeedback = false;
+    const label = getTelegramLabel(userSession, jid);
+    await notifyAdmin(sock, ctx,
+        `💬 *Feedback de Leo Financiero* 🦁\n\n` +
+        `👤 Usuario: ${label}\n` +
+        `🆔 ID: ${String(jid).split('@')[0]}\n\n` +
+        `"${text.trim()}"`);
+    userSession.phase = PHASE.FIN_MAIN;
+    await say(sock, jid, `¡Gracias! 🙏 Se lo compartí a Johan directo — tu opinión nos ayuda a mejorar Leo.`, ctx);
 }
 
 async function showWelcome(sock, jid, ctx) {
@@ -1224,6 +1359,7 @@ async function showWelcome(sock, jid, ctx) {
     if (reg.registered) {
         await notifyNewUser(sock, jid, userSession, ctx);
     }
+    financeAdmin.touchUser(jid);
     syncPremiumFromAdmin(jid, fin);
     if (fin?.name) {
         // Check-in every 48h
@@ -1247,7 +1383,7 @@ async function showWelcome(sock, jid, ctx) {
             `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.${notif}` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
-                  `💵 Balance: $${fin.balance.toLocaleString('es-CO')}\n\n`
+                  `💵 Balance: ${formatMoney(fin.balance, fin)}\n\n`
                 : `Todavía no registraste nada. Podés arrancar cuando quieras.\n\n`),
             ctx);
         if (!canUseAi(jid)) {
@@ -1281,6 +1417,7 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     if (reg.registered) {
         await notifyNewUser(sock, jid, userSession, ctx);
     }
+    financeAdmin.touchUser(jid);
     syncPremiumFromAdmin(jid, fin);
     if (fin.name) {
         userSession.phase = PHASE.FIN_MAIN;
@@ -1314,7 +1451,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
     const empty = 10 - filled;
     const goalLine = fin.goalName
         ? (fin.goalTarget > 0
-            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — $${(fin.balance || 0).toLocaleString('es-CO')} de $${fin.goalTarget.toLocaleString('es-CO')}\n`
+            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
@@ -1322,12 +1459,12 @@ async function generateNightReport(sock, jid, fin, ctx) {
     await say(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         `📊 *Hoy con Leo:*\n` +
-        `💸 Compraste: $${todayExpense.toLocaleString('es-CO')}\n` +
-        `💰 Te entró: $${todayIncome.toLocaleString('es-CO')}\n` +
+        `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
+        `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
         (todayIncome - todayExpense !== 0
-            ? `📈 Balance del día: $${(todayIncome - todayExpense).toLocaleString('es-CO')}\n`
+            ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
             : '') +
-        `💵 Saldo total: $${(fin.balance || 0).toLocaleString('es-CO')}\n` +
+        `💵 Saldo total: ${formatMoney((fin.balance || 0), fin)}\n` +
         streakLine +
         goalLine +
         `\nVas bien, seguí contándome 🦁`,

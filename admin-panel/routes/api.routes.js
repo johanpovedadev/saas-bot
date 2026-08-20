@@ -85,6 +85,14 @@ router.post('/businesses/:key/pilates-credito', requireBusinessScope, async (req
     res.status(result.ok ? 200 : 400).json(result);
 });
 
+// Usuarios activos de Leo Financiero (hoy / esta semana / este mes) — ventanas
+// rodantes de 24h/7d/30d contando quien mando al menos 1 mensaje.
+router.get('/businesses/:key/finance-stats', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'finance') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const financeAdmin = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'financeAdmin'));
+    res.json(financeAdmin.getActiveUserCounts());
+});
+
 // Estado del QR (sin bajar la imagen) - para que el frontend decida si
 // mostrar el <img> o un mensaje de "sin QR disponible ahora mismo".
 router.get('/businesses/:key/qr-status', requireBusinessScope, (req, res) => {

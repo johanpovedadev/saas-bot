@@ -2,6 +2,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
+const { formatMoney } = require('../utils/financeMoney');
 
 function buildFinanceContext(userSession) {
     const fin = userSession.finance || {};
@@ -43,7 +44,7 @@ Contexto del usuario:
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use",
+  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use" | "apoyar" | "configuracion",
   "amount": <número en COP, 0 si no aplica>,
   "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
   "subcategory": "<subcategoría>",
@@ -68,6 +69,8 @@ Conceptos clave:
 - upgrade: cuando pregunta por premium o suscripción
 - referral_info: cuando pregunta por su código de invitación, cómo invitar amigos ("referido", "invitar", "código de invitación", "compartir", "amigue")
 - referral_use: cuando escribe un código de invitación como "LEO77115"
+- apoyar: cuando quiere apoyar/donar/invitar algo a Leo ("apoyar", "donar", "invitarte un café", "quiero ayudar al proyecto")
+- configuracion: cuando quiere cambiar ajustes, cambiar de moneda, o dar feedback/sugerencias ("configuración", "ajustes", "cambiar moneda", "quiero dar feedback", "tengo una sugerencia")
 
 Reglas de personalidad:
 1. NUNCA uses miedo o culpa. Usa esperanza, control, pequeñas victorias.
@@ -300,12 +303,12 @@ function parseAmount(text) {
     return 0;
 }
 
-function goalProgressBar(current, target) {
+function goalProgressBar(current, target, fin) {
     if (!target || target <= 0) return '';
     const pct = Math.min(100, Math.round((current / target) * 100));
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
-    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — llevás $${current.toLocaleString('es-CO')} de $${target.toLocaleString('es-CO')}`;
+    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — llevás ${formatMoney(current, fin)} de ${formatMoney(target, fin)}`;
 }
 
 function fallbackInterpret(message, userSession) {
@@ -339,7 +342,7 @@ function fallbackInterpret(message, userSession) {
                 category: categorizeExpense(desc),
                 description: desc,
                 needs_confirmation: true,
-                response: `📝 *Registrado:* $${amount.toLocaleString('es-CO')} en ${desc}\n\n¿Es correcto? (sí/no)`
+                response: `📝 *Registrado:* ${formatMoney(amount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -358,7 +361,7 @@ function fallbackInterpret(message, userSession) {
                 category: categorizeIncome(desc),
                 description: desc,
                 needs_confirmation: true,
-                response: `💰 *Registrado:* $${amount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
+                response: `💰 *Registrado:* ${formatMoney(amount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -392,7 +395,7 @@ function fallbackInterpret(message, userSession) {
                 loan_counterparty: counterparty,
                 loan_direction: loanDirection,
                 needs_confirmation: true,
-                response: `🤝 *Registrado:* ${verb} *${counterparty}* $${amount.toLocaleString('es-CO')}\n\n¿Es correcto? (sí/no)`
+                response: `🤝 *Registrado:* ${verb} *${counterparty}* ${formatMoney(amount, fin)}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -415,6 +418,26 @@ function fallbackInterpret(message, userSession) {
             amount: 0, category: '', description: code,
             needs_confirmation: true,
             response: `🦁 ¿Te invitó alguien con el código *${code.toUpperCase()}*?\n\nResponde *sí* para aceptar o *no* para cancelar.`
+        };
+    }
+
+    // Apoyar/donar: quiere invitar algo a Leo o apoyar el proyecto
+    if (/\b(apoyar|apoyanos|donar|donaci[oó]n|invitar(?:me|te)?\s+un\s+cafe|ayudar\s+al\s+proyecto)\b/i.test(t)) {
+        return {
+            intent: 'apoyar',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: 'apoyar'
+        };
+    }
+
+    // Configuracion: cambiar moneda, ajustes, feedback/sugerencias
+    if (/\b(configuraci[oó]n|ajustes|cambiar\s+moneda|mi\s+moneda|dar\s+feedback|enviar\s+feedback|una\s+sugerencia|dejar\s+una\s+sugerencia)\b/i.test(t)) {
+        return {
+            intent: 'configuracion',
+            amount: 0, category: '', description: '',
+            needs_confirmation: false,
+            response: 'configuracion'
         };
     }
 
@@ -446,8 +469,8 @@ function fallbackInterpret(message, userSession) {
                 description: desc,
                 needs_confirmation: true,
                 response: isIncome
-                    ? `💰 *Registrado:* $${anyAmount.toLocaleString('es-CO')} - ${desc}\n\n¿Es correcto? (sí/no)`
-                    : `📝 *Registrado:* $${anyAmount.toLocaleString('es-CO')} en ${desc}\n\n¿Es correcto? (sí/no)`
+                    ? `💰 *Registrado:* ${formatMoney(anyAmount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
+                    : `📝 *Registrado:* ${formatMoney(anyAmount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -456,7 +479,7 @@ function fallbackInterpret(message, userSession) {
     if (/mi meta|como voy con mi meta|cuanto (me falta|falta|voy)|progreso/i.test(t)) {
         if (fin.goalName) {
             if (fin.goalTarget > 0) {
-                const bar = goalProgressBar(fin.balance || 0, fin.goalTarget);
+                const bar = goalProgressBar(fin.balance || 0, fin.goalTarget, fin);
                 return { intent: 'goal_query', amount: 0, category: '', description: '', needs_confirmation: false,
                     response: `🎯 *Meta: ${fin.goalName}*\n${bar}\n\nVas bien, seguí así 🦁` };
             }
@@ -495,7 +518,7 @@ function fallbackInterpret(message, userSession) {
         const today = fin.todaySpending || 0;
         const goalLine = fin.goalName
             ? (fin.goalTarget > 0
-                ? `🎯 Meta: ${fin.goalName}\n${goalProgressBar(balance, fin.goalTarget)}\n`
+                ? `🎯 Meta: ${fin.goalName}\n${goalProgressBar(balance, fin.goalTarget, fin)}\n`
                 : `🎯 Meta: ${fin.goalName} (sin monto aún — decime "mi meta" para ponérselo)\n`)
             : `💡 ¿Ya tenés una meta de ahorro? Decime "metas" y la creamos juntos 🦁\n`;
         return {
@@ -504,7 +527,7 @@ function fallbackInterpret(message, userSession) {
             category: '',
             description: '',
             needs_confirmation: false,
-            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: $${balance.toLocaleString('es-CO')}\n💸 Comprado hoy: $${today.toLocaleString('es-CO')}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
+            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: ${formatMoney(balance, fin)}\n💸 Comprado hoy: ${formatMoney(today, fin)}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
         };
     }
 

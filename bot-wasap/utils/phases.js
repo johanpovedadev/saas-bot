@@ -52,6 +52,9 @@ const PHASE = {
     FIN_GOALS: 'fin_goals',
     FIN_CHECKIN: 'fin_checkin',
     FIN_MAIN: 'fin_main',
+    FIN_SETTINGS: 'fin_settings',                 // Menu de mejoras/configuracion
+    FIN_SETTINGS_CURRENCY: 'fin_settings_currency', // Esperando elegir moneda
+    FIN_FEEDBACK: 'fin_feedback',                  // Esperando el texto del feedback
 
     // ===================================
     // 🍦 FASES FLUJO GUIADO MUNDO HELADOS

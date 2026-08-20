@@ -95,7 +95,8 @@ function rowToFinance(row) {
         referralCode: extra.referralCode || '',
         invitedBy: extra.invitedBy || '',
         premiumUntil: extra.premiumUntil || 0,
-        loans
+        loans,
+        currency: extra.currency || 'COP'
     };
 }
 
@@ -136,7 +137,8 @@ function financeToRow(jid, fin) {
             referralCode: fin.referralCode || '',
             invitedBy: fin.invitedBy || '',
             premiumUntil: fin.premiumUntil || 0,
-            loans: loansEnc
+            loans: loansEnc,
+            currency: fin.currency || 'COP'
         })
     };
 }

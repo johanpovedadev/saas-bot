@@ -42,6 +42,7 @@ async function refreshCardDetails(card) {
     await refreshMuted(card);
     await refreshLogs(card);
     await refreshLeads(card);
+    await refreshFinanceStats(card);
 }
 
 async function refreshQr(card) {
@@ -95,6 +96,20 @@ async function refreshLogs(card) {
         viewer.scrollTop = viewer.scrollHeight;
     } catch (e) {
         viewer.textContent = `Error: ${e.message}`;
+    }
+}
+
+async function refreshFinanceStats(card) {
+    const box = card.querySelector('[data-finance-stats]');
+    if (!box) return; // solo la tarjeta de finance tiene esta seccion
+    const key = card.dataset.key;
+    try {
+        const { today, thisWeek, thisMonth } = await api(`/businesses/${key}/finance-stats`);
+        card.querySelector('[data-finance-today]').textContent = today;
+        card.querySelector('[data-finance-week]').textContent = thisWeek;
+        card.querySelector('[data-finance-month]').textContent = thisMonth;
+    } catch (e) {
+        console.error('refreshFinanceStats', e);
     }
 }
 

@@ -54,6 +54,17 @@
   </div>
   <% } %>
 
+  <% if (business.key === 'finance') { %>
+  <div class="card-section">
+    <h3>Usuarios activos</h3>
+    <div class="card-row" data-finance-stats>
+      <span>Hoy: <span data-finance-today>—</span></span>
+      <span>Esta semana: <span data-finance-week>—</span></span>
+      <span>Este mes: <span data-finance-month>—</span></span>
+    </div>
+  </div>
+  <% } %>
+
   <div class="card-section">
     <h3><%= business.leadsLabel || 'Leads' %></h3>
     <div class="leads-viewer" data-leads-viewer>—</div>
