@@ -214,6 +214,23 @@ async function notifyAdmin(sock, ctx, text) {
     }
 }
 
+/**
+ * Capability que usa el manejo global de errores/frustracion en handler.js
+ * (flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation')) para
+ * avisar a Johan cuando pasa algo raro (error real, loop, mensaje fuera de
+ * tema) — vía notifyAdmin (Telegram-consciente). A diferencia de los demas
+ * bots (WhatsApp), Leo NUNCA se apaga/silencia para el usuario: solo se le
+ * avisa a Johan y Leo sigue respondiendo normal.
+ */
+async function notifyHumanEscalation(sock, jid, reason, ctx) {
+    const label = getTelegramLabel(ctx?.sessions?.[jid], jid);
+    await notifyAdmin(sock, ctx,
+        `🚨 *Leo necesita revisión* 🦁\n\n` +
+        `👤 Usuario: ${label}\n` +
+        `🆔 ID: ${String(jid).split('@')[0]}\n\n` +
+        `${reason}`);
+}
+
 async function sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption) {
     const token = process.env.HERMES_BOT_TOKEN;
     if (!token) return false;
@@ -878,6 +895,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 return;
             }
         }
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
             `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"`,
             ctx);
@@ -902,8 +920,27 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
  * Aplica el resultado del interpretador (IA o parser determinista) a la sesión:
  * registra gastos/ingresos, confirma, muestra resumen, salud, metas, etc.
  */
+// Intenciones reconocidas por el switch de abajo - cualquier otra cosa (incluido
+// undefined) cae en el default ("no entendí") y cuenta para la red de seguridad
+// global de handler.js (errorCount -> frustrationService, ver COPILOT_RULES.md).
+const RECOGNIZED_INTENTS = new Set([
+    'register_expense', 'register_income', 'register_loan', 'query_loans', 'query',
+    'chat', 'help', 'goal_query', 'upgrade', 'health_score', 'goals',
+    'referral_info', 'referral_use', 'apoyar', 'configuracion'
+]);
+
 async function applyIntent(sock, jid, result, userSession, ctx, fin) {
+    if (RECOGNIZED_INTENTS.has(result.intent) || result.intent === 'off_topic') {
+        userSession.errorCount = 0;
+    }
     switch (result.intent) {
+        case 'off_topic':
+            // Mensaje claramente ajeno a finanzas personales -> se avisa a Johan
+            // de una (sin esperar a que se repita), pero Leo sigue respondiendo
+            // normal - Leo/Telegram nunca se apaga para el usuario.
+            await notifyHumanEscalation(sock, jid, `Mensaje fuera de tema: "${(result.description || '').trim()}"`, ctx);
+            await say(sock, jid, `🦁 Soy Leo, tu asistente financiero — ¿en qué te ayudo con tus gastos, ingresos o metas?`, ctx);
+            break;
         case 'register_expense':
         case 'register_income': {
             const type = result.intent === 'register_expense' ? 'expense' : 'income';
@@ -996,6 +1033,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             break;
 
         default:
+            userSession.errorCount = (userSession.errorCount || 0) + 1;
             await say(sock, jid, result.response || `😅 No entendí. Escribí un número de la lista o decime algo como _"Compré 18 mil en almuerzo"_.`, ctx);
     }
 }
@@ -1085,6 +1123,7 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     const result = await financeAi.interpret(text, userSession);
 
     if (!result) {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
             `😅 No entendí bien. ¿Puedes decirlo de otra forma?\n\nPor ejemplo: _"Compré 18 mil en almuerzo"_ o _"¿Cuánto tengo?"_`,
             ctx);
@@ -1653,6 +1692,7 @@ module.exports = {
     handleUnknown,
     showWelcome,
     notifyAdminReceipt,
+    notifyHumanEscalation,
     generateNightReport,
     startNightReporter,
     isPremiumBlocked,

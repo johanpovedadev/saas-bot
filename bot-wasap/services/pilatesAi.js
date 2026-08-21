@@ -60,7 +60,7 @@ Clasifica la intención de fondo y da una respuesta corta (máx 2 líneas) que:
 
 Devuelve EXCLUSIVAMENTE un JSON válido (sin texto antes ni después):
 {
-  "intent": "agendar" | "reagendar" | "human" | "chat" | "not_understood",
+  "intent": "agendar" | "reagendar" | "human" | "chat" | "not_understood" | "off_topic",
   "reply": "<tu respuesta corta en español>"
 }
 
@@ -69,7 +69,8 @@ Reglas de intent:
 - "reagendar": quiere cambiar una clase ya agendada.
 - "human": pide explícitamente hablar con Bri o una persona.
 - "chat": pregunta o comentario casual que ya resolviste en "reply".
-- "not_understood": genuinamente no se entiende qué quiere.`;
+- "not_understood": genuinamente no se entiende qué quiere.
+- "off_topic": mensaje que NO tiene NADA que ver con las clases de pilates ni con el negocio (ej. chistes, clima, deportes, noticias). NO es off_topic un saludo ni una pregunta sobre las clases.`;
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({

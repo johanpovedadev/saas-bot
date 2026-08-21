@@ -368,7 +368,7 @@ function pickTestSlot(dateISO) {
         await send(sockUnreg, ctxUnreg, jidUnreg, '1'); // intenta agendar
         assert.ok(/no te encuentro en la lista/i.test(sentUnreg.join(' ')), 'debe avisar que no esta en la lista');
         assert.ok(notifiedUnreg, 'debe escalar a Bri automaticamente en vez de dejarla agendar');
-        assert.strictEqual(ctxUnreg.sessions[jidUnreg].phase, require('./utils/phases').PILC_HUMAN, 'debe quedar en fase de espera a Bri');
+        assert.strictEqual(ctxUnreg.sessions[jidUnreg].phase, require('./utils/phases').WAITING_HUMAN, 'debe quedar en fase de espera a Bri');
         notificationService.notifySystemAlert = originalNotify;
         console.log('OK: clienta fuera de la lista no puede agendar, se escala directo a Bri');
 
@@ -385,7 +385,7 @@ function pickTestSlot(dateISO) {
         assert.strictEqual(notifiedEsc, false, 'el primer mensaje sin entender NO debe escalar todavia');
         await send(sockEsc, ctxEsc, jidEsc, 'qweqweqwe'); // 2do mensaje sin sentido seguido
         assert.ok(notifiedEsc, 'el segundo mensaje seguido sin entender SI debe escalar a Bri');
-        assert.strictEqual(ctxEsc.sessions[jidEsc].phase, require('./utils/phases').PILC_HUMAN, 'debe quedar en fase de espera a Bri');
+        assert.strictEqual(ctxEsc.sessions[jidEsc].phase, require('./utils/phases').WAITING_HUMAN, 'debe quedar en fase de espera a Bri');
         notificationService.notifySystemAlert = originalNotify;
         console.log('OK: 2do mensaje seguido sin entender escala automaticamente a Bri');
 

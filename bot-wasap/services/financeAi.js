@@ -44,7 +44,7 @@ Contexto del usuario:
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use" | "apoyar" | "configuracion",
+  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use" | "apoyar" | "configuracion" | "off_topic",
   "amount": <número en COP, 0 si no aplica>,
   "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
   "subcategory": "<subcategoría>",
@@ -71,6 +71,7 @@ Conceptos clave:
 - referral_use: cuando escribe un código de invitación como "LEO77115"
 - apoyar: cuando quiere apoyar/donar/invitar algo a Leo ("apoyar", "donar", "invitarte un café", "quiero ayudar al proyecto")
 - configuracion: cuando quiere cambiar ajustes, cambiar de moneda, o dar feedback/sugerencias ("configuración", "ajustes", "cambiar moneda", "quiero dar feedback", "tengo una sugerencia")
+- off_topic: mensajes que NO tienen NADA que ver con finanzas personales ni con Leo (ej. "cuéntame un chiste", "quién ganó el partido", "qué hora es", preguntas de tarea, política, clima). NO es off_topic un saludo, un agradecimiento, una pregunta sobre Leo/la app, ni charla corta relacionada con plata - eso es "chat".
 
 Reglas de personalidad:
 1. NUNCA uses miedo o culpa. Usa esperanza, control, pequeñas victorias.
@@ -542,6 +543,17 @@ function fallbackInterpret(message, userSession) {
                 `💰 *"Recibí 2 millones de sueldo"*\n` +
                 `📊 *"¿Cuánto tengo?"*\n` +
                 `📷 *[foto de factura]*\n\n¿Qué quieres hacer?`
+        };
+    }
+
+    // Fuera de tema: nada que ver con plata ni con Leo. Heurística conservadora
+    // (solo temas claramente ajenos) para no confundir charla real con el bot.
+    if (/\b(chiste|adivinanza|horóscopo|horoscopo|clima|pronostico del tiempo|partido de futbol|resultado del partido|quien gano el partido|hora es|que hora|noticias|pelicula|película|serie de netflix|receta de cocina|tarea de (matematicas|matemáticas|ingles|inglés)|capital de\b)/i.test(t)) {
+        return {
+            intent: 'off_topic',
+            amount: 0, category: '', description: raw,
+            needs_confirmation: false,
+            response: 'off_topic'
         };
     }
 

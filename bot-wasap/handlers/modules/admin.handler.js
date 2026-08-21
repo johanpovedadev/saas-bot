@@ -328,7 +328,13 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
         sess._miaDisabledNotified = false;
         
         if (frustrationService?.isWaitingForHuman?.(sess)) {
-            frustrationService.reactivateBot?.(sess);
+            // reactivateBot solo apaga el flag "esperando humano" - hay que
+            // resetear la fase tambien, si no el bot queda "reactivado" pero
+            // sigue sin responderle automatico a este cliente.
+            const flowRegistry = require('../flowRegistry');
+            const currentFlow = flowRegistry.getTenantFlow();
+            const initialPhase = currentFlow ? currentFlow.getInitialPhase() : require('../../utils/phases').SELECCION_OPCION;
+            frustrationService.reactivateBot?.(sess, initialPhase);
             logger.info(`[${target}] -> Admin reactivó bot después de atender frustración`);
         }
         

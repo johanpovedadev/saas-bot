@@ -104,21 +104,22 @@ function detectFrustration(userSession, text) {
  * @param {Object} ctx - Contexto global
  * @returns {boolean} - True si se detectó frustración y se manejó
  */
-async function detectAndHandleFrustration(sock, jid, text, userSession, ctx) {
+async function detectAndHandleFrustration(sock, jid, text, userSession, ctx, notifyFn) {
     try {
         const isFrustrated = detectFrustration(userSession, text);
-        
+
         if (isFrustrated) {
             await handleFrustration(
-                sock, 
-                jid, 
-                userSession, 
-                ctx, 
-                `errorCount=${userSession.errorCount || 0}`
+                sock,
+                jid,
+                userSession,
+                ctx,
+                `errorCount=${userSession.errorCount || 0}`,
+                notifyFn
             );
             return true;
         }
-        
+
         return false;
     } catch (e) {
         logger.error({ err: e }, '[Frustration] Error en detectAndHandleFrustration');
@@ -133,13 +134,17 @@ async function detectAndHandleFrustration(sock, jid, text, userSession, ctx) {
  * @param {Object} userSession - Sesión del usuario
  * @param {Object} ctx - Contexto global
  * @param {string} reason - Razón de la frustración (para log)
+ * @param {Function} [notifyFn] - Notificador alternativo (sock, jid, mensaje, ctx) =>
+ *   Promise, para transportes que no son WhatsApp (ej. el notificador propio de
+ *   Leo/Telegram vía Jarvis). Por defecto usa notificationService (WhatsApp).
  */
-async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustración detectada') {
+async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustración detectada', notifyFn) {
     try {
         logger.warn(`[${jid}] -> Frustración detectada: ${reason}`);
-        
+
         // Notificar admins sobre el cliente frustrado
-        await notificationService.notifyAdminsAboutCustomerIssue(
+        const notify = notifyFn || notificationService.notifyAdminsAboutCustomerIssue;
+        await notify(
             sock,
             jid,
             `🆘 Cliente frustrado: ${reason}`,
@@ -203,15 +208,23 @@ function isWaitingForHuman(userSession) {
 }
 
 /**
- * Reactiva el bot después de que un humano ha atendido al cliente
+ * Reactiva el bot después de que un humano ha atendido al cliente. Si se pasa
+ * `initialPhase`, también saca la sesión de PHASE.WAITING_HUMAN de una vez —
+ * si no se pasa, el caller es responsable de resetear `userSession.phase`
+ * (si no, el cliente queda "reactivado" pero el bot le sigue sin responder,
+ * porque la fase sigue siendo WAITING_HUMAN).
  * @param {Object} userSession - Sesión del usuario
+ * @param {string} [initialPhase] - Fase a la que volver (ej. currentFlow.getInitialPhase())
  */
-function reactivateBot(userSession) {
+function reactivateBot(userSession, initialPhase) {
     userSession.waitingForHuman = false;
     userSession.errorCount = 0;
     userSession.messageHistory = [];
     delete userSession.frustrationReason;
     delete userSession.frustrationTimestamp;
+    if (initialPhase && userSession.phase === PHASE.WAITING_HUMAN) {
+        userSession.phase = initialPhase;
+    }
     logger.info(`[Frustration] Bot reactivado para sesión`);
 }
 

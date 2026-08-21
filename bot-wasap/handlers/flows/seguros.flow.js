@@ -703,6 +703,6 @@ module.exports = {
     INSURANCE_PHASES,
     // Interfaz estándar para flowRegistry
     getInitialPhase: () => PHASE.INS_SALUDO,
-    isFlowPhase: (phase) => typeof phase === 'string' && phase.toLowerCase().startsWith('ins_'),
+    isFlowPhase: (phase) => typeof phase === 'string' && (phase.toLowerCase().startsWith('ins_') || phase === PHASE.WAITING_HUMAN),
     getPhases: () => INSURANCE_PHASES
 };

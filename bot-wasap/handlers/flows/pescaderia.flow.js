@@ -189,6 +189,18 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🐟', ctx);
             return;
         }
+        case 'off_topic': {
+            // Mensaje sin nada que ver con la pescadería -> se corta de una,
+            // mismo mecanismo de escalada que "human".
+            userSession.phase = PHASE.WAITING_HUMAN;
+            const notificationService = require('../../services/notificationService');
+            try {
+                await notificationService.notifySystemAlert(sock, ctx, '💬', 'MENSAJE FUERA DE TEMA',
+                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
+            } catch (e) { /* ignore */ }
+            await say(sock, jid, '🐟 Te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden.', ctx);
+            return;
+        }
         case 'chat':
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
             return;

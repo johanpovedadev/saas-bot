@@ -80,7 +80,7 @@ El negocio maneja ${c.productType}s con ${c.itemPrimary} y ${c.itemSecondary}.
 Analiza el mensaje del usuario y devuelve SIEMPRE un JSON válido con esta estructura:
 
 {
-  "intent": "order" | "repeat_order" | "checkout" | "custom_order" | "query_menu" | "location" | "hours" | "help" | "human" | "chat" | "not_understood",
+  "intent": "order" | "repeat_order" | "checkout" | "custom_order" | "query_menu" | "location" | "hours" | "help" | "human" | "chat" | "not_understood" | "off_topic",
   "products": [
     {
       "codigo": "<código exacto del producto, ej: AC1>",
@@ -105,6 +105,7 @@ Reglas de intents:
 - chat: conversación casual, saludos, agradecimientos.
 - checkout: el usuario quiere pagar o finalizar el pedido ("ir a pagar", "cómo lo pago", "quiero pagar", "pasar a pagar", "checkout"). Si el carrito tiene productos, el flow mostrará el resumen y pedirá confirmación; si está vacío, dirá que el carrito está vacío y ofrezca el menú.
 - not_understood: NO sabes qué quiere el usuario.
+- off_topic: mensaje que NO tiene NADA que ver con la pescadería (ej. chistes, clima, deportes, noticias, tarea). NO es off_topic un saludo ni una pregunta sobre el negocio.
 
 Reglas:
 1. En "order", usa SIEMPRE el código y nombre EXACTOS del menú.

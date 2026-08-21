@@ -322,15 +322,29 @@ async function processIncomingMessage(sock, messageData, ctx) {
         const frustrationThreshold = isInsurancePhase ? 5 : 2;
         if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
             logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);
-            
-            // Detectar frustración y derivar a admin si es necesario
-            const isFrustrated = await frustrationService.detectAndHandleFrustration(
-                sock, jid, text, userSession, ctx
-            );
-            
-            if (isFrustrated) {
-                logger.info(`[${jid}] ✅ Usuario derivado a admin por frustración global`);
-                return; // Salir del flujo, admin se hará cargo
+
+            const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
+            if (customNotifyFlow) {
+                // Bots que no son de WhatsApp (hoy: Leo/Telegram) nunca se
+                // silencian - solo se avisa al admin, el bot sigue respondiendo.
+                try {
+                    await customNotifyFlow.notifyHumanEscalation(
+                        sock, jid, `Posible loop/no entiende (errorCount=${userSession.errorCount})`, ctx
+                    );
+                } catch (e) {
+                    logger.error(`[${jid}] Error notificando frustración (flow propio): ${e.message}`);
+                }
+                userSession.errorCount = 0;
+            } else {
+                // Detectar frustración y derivar a admin si es necesario
+                const isFrustrated = await frustrationService.detectAndHandleFrustration(
+                    sock, jid, text, userSession, ctx
+                );
+
+                if (isFrustrated) {
+                    logger.info(`[${jid}] ✅ Usuario derivado a admin por frustración global`);
+                    return; // Salir del flujo, admin se hará cargo
+                }
             }
         }
 
@@ -340,6 +354,26 @@ async function processIncomingMessage(sock, messageData, ctx) {
         console.error('Stack trace:', error?.stack || 'No stack available');
         logger.error(`❌ Error procesando mensaje de ${jid}:`, error?.stack || error);
         await messageHandler.handleProcessingError(sock, jid, error, ctx);
+
+        // Error real de verdad (no "no entendí") -> avisar al admin de una, sin
+        // esperar a que se repita. userSession puede no existir si el error pasó
+        // antes de inicializarla (ej. validando el mensaje).
+        try {
+            const userSession = ctx?.sessions?.[jid];
+            if (userSession) {
+                const reason = `Error técnico: ${error?.message || error}`;
+                const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
+                if (customNotifyFlow) {
+                    // Bots que no son de WhatsApp (hoy: Leo/Telegram) NUNCA se
+                    // silencian - solo se avisa al admin, el bot sigue respondiendo.
+                    await customNotifyFlow.notifyHumanEscalation(sock, jid, reason, ctx);
+                } else {
+                    await frustrationService.handleFrustration(sock, jid, userSession, ctx, reason);
+                }
+            }
+        } catch (escalationErr) {
+            logger.error(`[${jid}] Error escalando a humano tras excepción: ${escalationErr.message}`);
+        }
     }
 }
 
@@ -493,12 +527,20 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
         // ===================================
         case PHASE.WAITING_HUMAN:
             logger.info(`[${jid}] Usuario esperando atención humana. Mensaje: "${text.substring(0, 50)}..."`);
-            // Reenviar mensaje del cliente a los admins sistema
+            // Reenviar mensaje del cliente a los admins. Si el flow tiene su propio
+            // notificador (ej. finance/Telegram vía Jarvis - notificationService.js
+            // asume JIDs de WhatsApp y falla en silencio para transportes distintos),
+            // se usa ese en vez del genérico.
             try {
-                const notificationService = require('../services/notificationService');
-                await notificationService.notifySystemAlert(sock, ctx, '💬', `MENSAJE DE CLIENTE EN ESPERA`,
-                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`
-                );
+                const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
+                if (customNotifyFlow) {
+                    await customNotifyFlow.notifyHumanEscalation(sock, jid, text, ctx);
+                } else {
+                    const notificationService = require('../services/notificationService');
+                    await notificationService.notifySystemAlert(sock, ctx, '💬', `MENSAJE DE CLIENTE EN ESPERA`,
+                        `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`
+                    );
+                }
             } catch (_) {}
             break;
 

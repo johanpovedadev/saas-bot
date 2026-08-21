@@ -31,7 +31,7 @@ async function isRegisteredClient(jid) {
 const PILC_PHASES = [
     PHASE.PILC_ASK_NAME, PHASE.PILC_MENU, PHASE.PILC_ASK_DAY, PHASE.PILC_ASK_TIME,
     PHASE.PILC_CONFIRM, PHASE.PILC_RESCHEDULE_FIND, PHASE.PILC_RESCHEDULE_DAY,
-    PHASE.PILC_RESCHEDULE_TIME, PHASE.PILC_RESCHEDULE_CONFIRM, PHASE.PILC_HUMAN,
+    PHASE.PILC_RESCHEDULE_TIME, PHASE.PILC_RESCHEDULE_CONFIRM, PHASE.WAITING_HUMAN,
     PHASE.PILC_SATURDAY_REPLY, PHASE.PILC_CREDIT_LIMIT_CONFIRM
 ];
 
@@ -314,7 +314,8 @@ async function handle(sock, jid, text, userSession, ctx) {
         case PHASE.PILC_RESCHEDULE_DAY: return await handleAskDay(sock, jid, t, userSession, ctx, pil, true);
         case PHASE.PILC_RESCHEDULE_TIME: return await handleAskTime(sock, jid, t, userSession, ctx, pil, true);
         case PHASE.PILC_RESCHEDULE_CONFIRM: return await handleRescheduleConfirm(sock, jid, t, userSession, ctx, pil);
-        case PHASE.PILC_HUMAN: return; // Corta el flujo automatico, Bri atiende directo.
+        // PHASE.WAITING_HUMAN (compartida con los demas bots) ya la intercepta el
+        // switch de handler.js ANTES de llegar acá - nunca se despacha a este handle().
         case PHASE.PILC_SATURDAY_REPLY: return await handleSaturdayReply(sock, jid, t, userSession, ctx, pil);
         case PHASE.PILC_CREDIT_LIMIT_CONFIRM: return await handleCreditLimitConfirm(sock, jid, t, userSession, ctx, pil);
         default: return await showMenu(sock, jid, ctx, (userStore.getUser(jid) || {}).name);
@@ -662,7 +663,7 @@ async function handleRescheduleConfirm(sock, jid, t, userSession, ctx, pil) {
 }
 
 async function handleTalkToBri(sock, jid, text, userSession, ctx, pil) {
-    userSession.phase = PHASE.PILC_HUMAN;
+    userSession.phase = PHASE.WAITING_HUMAN;
     try {
         const notificationService = require('../../services/notificationService');
         await notificationService.notifySystemAlert(sock, ctx, '💬', 'CLIENTA PIDE HABLAR CON BRI',
@@ -696,6 +697,11 @@ async function handleFallback(sock, jid, text, userSession, ctx, pendingQuestion
         return;
     }
     if (result.intent === 'human') {
+        return await handleTalkToBri(sock, jid, text, userSession, ctx, pil);
+    }
+    if (result.intent === 'off_topic') {
+        // Mensaje sin nada que ver con las clases -> se corta de una (sin pasar
+        // por el contador de 2 intentos), pero con el propio mensaje de Bri.
         return await handleTalkToBri(sock, jid, text, userSession, ctx, pil);
     }
     if (result.intent === 'agendar' && userSession.phase !== PHASE.PILC_ASK_DAY) {

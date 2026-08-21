@@ -1241,6 +1241,11 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
             // muy rápido" no lo cumplen y dejaban el audio sin respuesta.
             await handleHumanRequest(sock, jid, text, userSession, ctx, true);
             return;
+        case 'off_topic':
+            // Mensaje sin nada que ver con la heladería -> se corta de una,
+            // reusando el mismo mecanismo de escalada que "human".
+            await handleHumanRequest(sock, jid, text, userSession, ctx, true);
+            return;
         case 'chat':
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
             return;

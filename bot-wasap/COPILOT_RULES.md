@@ -46,6 +46,54 @@ Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegist
    directamente desde `process.env` en cada servicio (`financeAi.js`, etc.), **no** siempre
    respeta el flag `bot.ai.enabled` de la config — no asumas que un flag apagado significa
    que la IA no corre, ni que uno prendido significa que sí (revisa el servicio puntual).
+6. Cablea la escalada a humano (ver sección de abajo "Escalar a humano") — es obligatoria
+   para cualquier bot nuevo, no opcional.
+
+## Escalar a humano (regla fija: errores, loops y mensajes fuera de tema)
+
+Ningún cliente debe quedar atrapado hablándole a una IA confundida indefinidamente. Todo
+bot de este proyecto (los que hay hoy y los que se creen después) **debe**:
+
+1. **Incluir `PHASE.WAITING_HUMAN` en su `isFlowPhase`** (ej. `phase.startsWith('xxx_') ||
+   phase === PHASE.WAITING_HUMAN`, o agregarla a la lista de fases si tu `isFlowPhase` usa
+   una lista en vez de prefijo). Si no la incluís, el chequeo de "fase no pertenece al flow"
+   en `handlers/handler.js` (`processIncomingMessage`, líneas ~221-237) resetea la escalada
+   al primer mensaje siguiente sin que nadie se entere — bug real que tuvieron finanzas y
+   mascotas hasta que se corrigió.
+2. **Alimentar/resetear `userSession.errorCount`** en los caminos de "no entendí" del bot
+   (incrementar cuando no se entiende, resetear a 0 cuando sí se reconoce una intención).
+   El chequeo global en `handlers/handler.js` (paso 10 de `processIncomingMessage`) ya
+   dispara la escalada automáticamente al llegar al umbral (2 por defecto; podés pedir uno
+   más alto tipo mascotas con `ins_*`, 5) — no dupliques esa lógica de umbral en tu propio
+   flow, solo alimentá el contador.
+3. **Agregar una intención `off_topic` al prompt de tu clasificador de IA** (si el bot tiene
+   uno) para distinguir "mensaje sin nada que ver con el negocio" de "no entendí"/"chat" —
+   y escalarla DE UNA en tu router (sin pasar por el contador de 2 intentos), reusando la
+   misma función que ya uses para el intent `human` (ver `handleHumanRequest` en
+   `heladeria.flow.js` como ejemplo).
+4. **Un error real (excepción) escala de una, no espera a que se repita** — esto ya lo cubre
+   el catch global de `processIncomingMessage` en `handlers/handler.js`, no hace falta nada
+   extra en tu flow para esto.
+5. **Si tu bot NO corre por WhatsApp** (hoy: Leo/finanzas por Telegram), exportá
+   `notifyHumanEscalation(sock, jid, mensaje, ctx)` desde tu flow — el `notificationService.js`
+   genérico asume JIDs de WhatsApp (arma links `wa.me/...`) y falla en silencio para otros
+   transportes. `handlers/handler.js` busca esa capability
+   (`flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation')`) antes de usar el
+   notificador genérico. **Importante:** si tu bot exporta `notifyHumanEscalation`, el
+   mecanismo global asume que tu bot NUNCA debe silenciarse (no le pone `WAITING_HUMAN` al
+   cliente, solo avisa al admin y sigue respondiendo) — así se comporta Leo hoy. Si tu bot
+   SÍ debe silenciarse cuando escala (como los de WhatsApp), no exportes esa función y usá
+   `services/frustrationService.js` (`handleFrustration`/`detectAndHandleFrustration`)
+   directamente, que sí pone `PHASE.WAITING_HUMAN`.
+6. **Si tu admin usa el comando "reactivar mia"** para devolverle el chat al bot después de
+   atender a un cliente, revisá que `frustrationService.reactivateBot(sess, initialPhase)`
+   reciba la fase inicial del flow — si no, el cliente queda "reactivado" pero la fase sigue
+   en `WAITING_HUMAN` y el bot le sigue sin responder.
+
+Módulos reusables para todo esto: `services/frustrationService.js` (contador, escalada,
+reactivación), `services/notificationService.js` (notificación genérica a admins de
+WhatsApp), `services/appointmentRules.js` (`trackNotUnderstood`/`resetNotUnderstood`, útil
+si preferís tu propio contador de 2 intentos en vez del `errorCount` genérico).
 
 ## Conexión de WhatsApp (regla fija: siempre por WhatsApp Web / QR)
 
