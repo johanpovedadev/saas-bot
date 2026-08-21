@@ -109,6 +109,82 @@ reactivación), `services/notificationService.js` (notificación genérica a adm
 WhatsApp), `services/appointmentRules.js` (`trackNotUnderstood`/`resetNotUnderstood`, útil
 si preferís tu propio contador de 2 intentos en vez del `errorCount` genérico).
 
+## Flujo de carrito de compras (checkout) — estándar para todo bot con carrito
+
+Todo bot que venda productos con carrito (hoy: heladería, pescadería; mañana:
+cualquiera que se agregue) usa el **mismo módulo compartido**
+`handlers/checkoutHandler.js`, enrutado desde `handlers/handler.js`
+(`processIncomingMessage`, switch de fases). **No dupliques esta lógica en tu
+`flow.js`** — si tu bot vende con carrito, reusá este módulo tal cual;
+si necesitás un comportamiento distinto (ej. confirmar con números en vez de
+palabras), agregalo como opción vía `getCheckoutConfig()` en tu flow (ver
+`heladeria.flow.js` como ejemplo), no como código nuevo.
+
+### Las fases del carrito (en orden)
+
+1. `SELECT_DETAILS` / `SELECT_QUANTITY` / `awaitingField` (`quantity`,
+   `sabores`/`toppings`/`paso1`/`paso2`/`details`, `post_add_options`) — elegir
+   producto, variantes y cantidad. Maneja `selectionHandler.js`.
+2. `PHASE.CONFIRM_ORDER` — confirmar/seguir comprando/editar. Maneja
+   `checkoutHandler.handleConfirmOrderChoice`.
+3. `PHASE.CHECK_DIR` → `CHECK_NAME` → `CHECK_TELEFONO` → `CHECK_PAGO` →
+   `FINALIZE_ORDER` — captura de datos de entrega y resumen final. Maneja
+   `checkoutHandler.handleEnterAddress` / `handleEnterName` /
+   `handleEnterTelefono` / `handleEnterPaymentMethod` / `handleFinalizeOrder`.
+4. `PHASE.EDIT_OPTIONS` / `EDIT_CART_SELECTION` — editar o vaciar el carrito
+   antes de confirmar. Maneja `checkoutHandler.handleEditPhase`.
+
+### Regla fija: CADA rama de fallo sube `errorCount`, CADA éxito lo resetea
+
+Esto es lo que hace que la escalada a humano funcione. **No es opcional y no
+es automático** — cada función del checkout tiene que tocar el contador a
+mano en el punto correcto:
+
+- Al fallar validación / no reconocer la respuesta del cliente:
+  `userSession.errorCount = (userSession.errorCount || 0) + 1;` — **antes**
+  de intentar `delegateToAI` (si tu fase lo usa), no después, para que el
+  intento cuente aunque la IA se haga cargo del mensaje sin resolverlo de
+  verdad (ver `handleEnterPaymentMethod`/`handleFinalizeOrder` como ejemplo).
+- Al validar/avanzar con éxito: `userSession.errorCount = 0;`
+
+El chequeo global (`checkGlobalFrustration` en `handlers/handler.js`) hace el
+resto solo: corre automáticamente después de CUALQUIER salida de
+`processIncomingMessage` (fases normales, `awaitingField`, y checkout) y
+dispara la escalada al llegar al umbral (2 por defecto). **No necesitás
+llamarlo ni duplicar el umbral en tu código de carrito — solo alimentar el
+contador correctamente en cada rama.**
+
+### Si agregás una fase nueva al carrito
+
+1. Agregala a `utils/phases.js`.
+2. Agregala al switch de `handlers/handler.js` (`processIncomingMessage`) para
+   que llegue a `checkoutHandler`.
+3. Agregale un `case` en `checkoutHandler.handleCheckoutPhase` con su propia
+   función — **nunca la dejes caer en el `default`**: aunque el `default` ya
+   tiene un fallback defensivo (sube `errorCount` y responde algo genérico en
+   vez de quedarse en silencio total), eso es solo una red de seguridad, no
+   un reemplazo de un handler real con su propio mensaje y su propia lógica.
+4. Agregala a `isFlowPhase`/`CHECKOUT_PHASES` de cualquier flow que la use, y
+   a `PILC_PHASES`/listas equivalentes si aplica.
+5. Escribí (o extendé) un test estilo `test_cart_checkout_shared_escalation.js`:
+   2 fallos distintos seguidos en la fase nueva deben escalar; un acierto de
+   una no debe escalar; un fallo + un acierto debe resetear el contador sin
+   acumular entre fases.
+
+### Referencia de lo que ya se rompió acá (ver "Bugs ya corregidos" abajo para el detalle completo)
+
+`CONFIRM_ORDER` (vía el fallback propio de heladería), `awaitingField`
+completo, y luego `CHECK_DIR`/`CHECK_TELEFONO`/`FINALIZE_ORDER`/
+`EDIT_OPTIONS` (en el módulo compartido) tuvieron, cada uno por separado,
+el mismo bug: la rama de "no entendí" nunca subía `errorCount`, así que un
+cliente podía quedar atascado ahí indefinidamente sin que el bot escalara
+nunca a un humano. Es un error fácil de reintroducir porque **no truena
+nada** — el bot sigue respondiendo, solo que nunca se rinde y pide ayuda. Por
+eso el checklist de arriba es obligatorio para cualquier fase nueva, y por
+eso conviene, al tocar cualquier función de `checkoutHandler.js`, grep rápido
+de `errorCount` en el archivo para confirmar que la rama que tocaste sigue
+subiendo/bajando el contador como las demás.
+
 ## Conexión de WhatsApp (regla fija: siempre por WhatsApp Web / QR)
 
 Todos los bots de WhatsApp de este proyecto se conectan **por WhatsApp Web**
@@ -206,6 +282,19 @@ teléfono. Esto implica:
   `processIncomingMessage` (cualquier paso, no solo el 8), llamá
   `checkGlobalFrustration` antes de ese `return`** — es fácil reintroducir este mismo
   hueco en otro punto del archivo.
+- **El mismo hueco (rama de "no entendí" sin subir `errorCount`) seguía vivo en el
+  resto del checkout compartido** (`checkoutHandler.js`): `handleEnterAddress`
+  (dirección inválida), `handleEnterTelefono` (teléfono inválido — NO subía
+  `errorCount` en absoluto, ni siquiera 1 vez), `handleFinalizeOrder` (respuesta
+  inválida al resumen final) y `handleEditPhase` (mensaje no reconocido editando el
+  carrito). Como este archivo es compartido por TODOS los bots con carrito, el hueco
+  no era exclusivo de heladería. También se blindó el `default` de
+  `handleCheckoutPhase`: la fase `CHECK_REF` está declarada en `utils/phases.js` y
+  enrutada desde `handlers/handler.js`, pero nunca tuvo `case` propio acá — un
+  cliente que llegara a esa fase se quedaba en silencio total (sin respuesta, sin
+  subir `errorCount`, sin escalar nunca). Fix + tests contra pescadería (no solo
+  heladería) en `test_cart_checkout_shared_escalation.js`. Ver la sección "Flujo de
+  carrito de compras" arriba para el checklist completo al agregar fases nuevas.
 
 ## Recordatorio de aislamiento
 
