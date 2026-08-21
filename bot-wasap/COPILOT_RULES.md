@@ -181,6 +181,31 @@ teléfono. Esto implica:
   loop pero se volvía a prender solo en el mensaje 3. Fix: `greetingDetected` ahora
   es `false` de entrada si `userSession.phase === PHASE.WAITING_HUMAN` — un saludo
   nunca reactiva el flujo automático mientras se espera atención humana.
+- **Una clienta quedó atascada en `CONFIRM_ORDER` (heladería) 32 minutos, 6 mensajes
+  distintos, sin escalar nunca** — encontrado revisando conversaciones reales.
+  `handleCheckoutFallback`/`checkoutFallbackPrompt` en `heladeria.flow.js` (las fases
+  de checkout: `CONFIRM_ORDER`, `CHECK_DIR`, `CHECK_NAME`, `CHECK_TELEFONO`,
+  `CHECK_PAGO`, `FINALIZE_ORDER`, `EDIT_OPTIONS`, `EDIT_CART_SELECTION`) nunca tocaban
+  `userSession.errorCount` — ni al fallar ni (salvo un caso suelto) al acertar — así
+  que el chequeo global de frustración jamás se enteraba de que el cliente estaba
+  confundido en esa fase específica. Fix: `checkoutFallbackPrompt` sube `errorCount`
+  en cada fallo; cada rama de éxito de `handleCheckoutFallback` lo resetea a 0. Ver
+  `test_heladeria_checkout_escalation.js`.
+- **El chequeo global de frustración NUNCA corría para ningún campo pendiente
+  (`awaitingField`), en NINGÚN bot que comparte `handlers/handler.js`** — bug
+  encontrado en vivo, probando justo después del fix anterior, en el paso "¿cuántas
+  unidades quieres?" de heladería. El paso 8 de `processIncomingMessage` (cantidad,
+  sabores/toppings/paso1/paso2/details, `post_add_options`, campos de reserva) hacía
+  `return` apenas procesaba el campo, y el chequeo global vivía solo después del paso
+  9 (`delegateToPhaseHandler`) — así que nunca se alcanzaba. Mucho más grave que el
+  bug anterior: afectaba a cualquier bot en cualquier fase que use `awaitingField`,
+  no solo a heladería en checkout. Fix: el chequeo se extrajo a una función
+  standalone `checkGlobalFrustration(sock, jid, text, userSession, ctx)` que ahora se
+  llama en CADA salida del paso 8, además de después del paso 9. Ver
+  `test_awaiting_field_escalation.js`. **Si agregas un nuevo `return` temprano en
+  `processIncomingMessage` (cualquier paso, no solo el 8), llamá
+  `checkGlobalFrustration` antes de ese `return`** — es fácil reintroducir este mismo
+  hueco en otro punto del archivo.
 
 ## Recordatorio de aislamiento
 
