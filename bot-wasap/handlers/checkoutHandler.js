@@ -258,6 +258,7 @@ async function handleEditPhase(sock, jid, input, userSession, ctx) {
 
     // Volver al resumen del pedido
     if (/^(menu|menú|volver|atras|atrás|inicio|salir)$/.test(clean)) {
+        userSession.errorCount = 0;
         await handleCartSummary(sock, jid, userSession, ctx);
         return;
     }
@@ -267,6 +268,7 @@ async function handleEditPhase(sock, jid, input, userSession, ctx) {
         userSession.order.items = [];
         if (Array.isArray(userSession.carrito)) userSession.carrito = [];
         userSession.phase = PHASE.SELECCION_OPCION;
+        userSession.errorCount = 0;
         await say(sock, jid, '🗑️ Carrito vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
         return;
     }
@@ -293,6 +295,7 @@ async function handleEditPhase(sock, jid, input, userSession, ctx) {
                     subtotal: (i.precio || 0) * (i.cantidad || 1)
                 }));
         }
+        userSession.errorCount = 0;
         await say(sock, jid, `🗑️ Se quitó *${nombre}* de tu pedido.`, ctx);
         if (userSession.order.items.length === 0) {
             userSession.phase = PHASE.SELECCION_OPCION;
@@ -303,7 +306,11 @@ async function handleEditPhase(sock, jid, input, userSession, ctx) {
         return;
     }
 
-    // No entendió → re-mostrar opciones de edición
+    // No entendió → re-mostrar opciones de edición. Cuenta como fallo para el
+    // chequeo global de frustración - antes esta rama nunca subía errorCount,
+    // así que un cliente podía quedar dando vueltas acá indefinidamente sin
+    // escalar nunca (mismo patrón de bug que en el resto del checkout).
+    userSession.errorCount = (userSession.errorCount || 0) + 1;
     await showEditCartOptions(sock, jid, userSession, ctx);
 }
 
@@ -489,6 +496,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     }
 
     if (!address || typeof address !== 'string') {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección válida.', ctx);
         return;
     }
@@ -535,6 +543,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     }
 
     if (!validateInput(raw, 'address')) {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
         return;
     }
@@ -559,10 +568,12 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterTelefono.`);
     const telefono = input.replace(/[^0-9]/g, '').trim();
     if (!validateInput(telefono, 'string', { minLength: 7 })) {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, escribe un número de teléfono válido (mínimo 7 dígitos).', ctx);
         return;
     }
     userSession.order.telefono = telefono;
+    userSession.errorCount = 0;
     await askNextMissingCheckoutField(sock, jid, userSession, ctx);
 }
 
@@ -798,6 +809,11 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
     } else if (validateInput(finalAction, 'edit') || (cfg && cfg.numericConfirm && finalAction === '2')) {
         await say(sock, jid, '✏️ De acuerdo. ¿Qué dato deseas editar? (Dirección, Nombre, Pago)', ctx);
     } else {
+        // Sube errorCount ANTES de intentar la IA: cuenta como intento fallido
+        // sin importar si la IA resuelve el mensaje o no (mismo patrón que
+        // handleEnterPaymentMethod) - así el chequeo global de frustración se
+        // entera aunque la IA "se haga cargo" del mensaje.
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         // Modo híbrido: intentar IA antes del mensaje genérico
         if (await delegateToAI(sock, jid, finalAction, userSession, ctx)) return;
         const invalidHint = (cfg && cfg.numericConfirm)
@@ -925,8 +941,18 @@ async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
             break;
             
         default:
-            const { logger } = require('../utils/logger');
-            logger.warn(`[${jid}] Fase de checkout desconocida: ${userSession.phase}`);
+            // Cualquier fase de checkout declarada en utils/phases.js y en el
+            // switch de handlers/handler.js pero SIN case acá (ej: CHECK_REF,
+            // hoy sin uso) caía en silencio total: sin respuesta al cliente y
+            // sin subir errorCount, así que tampoco escalaba nunca. Fallback
+            // defensivo para que ningún cliente quede varado en una fase de
+            // checkout que se agregue a futuro sin cablear su handler.
+            {
+                const { logger } = require('../utils/logger');
+                logger.warn(`[${jid}] Fase de checkout desconocida: ${userSession.phase}`);
+                userSession.errorCount = (userSession.errorCount || 0) + 1;
+                await say(sock, jid, '❌ No entendí tu respuesta. ¿Puedes intentarlo de nuevo?', ctx);
+            }
             break;
     }
 }
