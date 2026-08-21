@@ -194,8 +194,48 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
 // ===================================
 
 /**
+ * Chequeo global de frustración/escalada — DEBE llamarse siempre después de
+ * procesar un mensaje, sin importar por cuál rama salió processIncomingMessage.
+ * Antes solo se llamaba una vez, al final (después del paso 9), pero los
+ * campos pendientes del paso 8 (cantidad, sabores/toppings, post_add_options,
+ * reservas) hacían `return` ANTES de llegar ahí — así que el chequeo nunca
+ * corría para esos flujos. Bug real encontrado probando en vivo: un cliente
+ * podía fallar la cantidad 2+ veces seguidas sin que el sistema se enterara.
+ */
+async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
+    // Las fases INS_* manejan su propio errorCount, se les da margen mayor
+    const isInsurancePhase = userSession.phase && userSession.phase.toLowerCase().startsWith('ins_');
+    const frustrationThreshold = isInsurancePhase ? 5 : 2;
+    if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
+        logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);
+
+        const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
+        if (customNotifyFlow) {
+            // Bots que no son de WhatsApp (hoy: Leo/Telegram) nunca se
+            // silencian - solo se avisa al admin, el bot sigue respondiendo.
+            try {
+                await customNotifyFlow.notifyHumanEscalation(
+                    sock, jid, `Posible loop/no entiende (errorCount=${userSession.errorCount})`, ctx
+                );
+            } catch (e) {
+                logger.error(`[${jid}] Error notificando frustración (flow propio): ${e.message}`);
+            }
+            userSession.errorCount = 0;
+        } else {
+            // Detectar frustración y derivar a admin si es necesario
+            const isFrustrated = await frustrationService.detectAndHandleFrustration(
+                sock, jid, text, userSession, ctx
+            );
+            if (isFrustrated) {
+                logger.info(`[${jid}] ✅ Usuario derivado a admin por frustración global`);
+            }
+        }
+    }
+}
+
+/**
  * Procesa un mensaje entrante y lo delega al módulo correspondiente
- * 
+ *
  * @param {Object} sock - Cliente de whatsapp-web.js
  * @param {Object} messageData - Datos del mensaje (from, text, key)
  * @param {Object} ctx - Contexto global
@@ -318,61 +358,37 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // 8. Manejar campos pendientes (awaitingField)
         if (userSession.awaitingField) {
             logger.info(`[${jid}] Procesando campo pendiente: ${userSession.awaitingField}`);
-            
+
             // Campos de selección de producto: sabores, toppings, detalles
             if (['sabores', 'toppings', 'paso1', 'paso2', 'details'].includes(userSession.awaitingField)) {
                 await selectionHandler.handleSelectDetails(sock, jid, text, userSession, ctx);
+                await checkGlobalFrustration(sock, jid, text, userSession, ctx);
                 return;
             }
-            
+
             // Campo de cantidad (productos simples sin pasos)
             if (userSession.awaitingField === 'quantity') {
                 await selectionHandler.handleSelectQuantity(sock, jid, text, userSession, ctx);
+                await checkGlobalFrustration(sock, jid, text, userSession, ctx);
                 return;
             }
-            
+
             // Opciones después de agregar al carrito
             if (userSession.awaitingField === 'post_add_options') {
                 await handlePostAddOptions(sock, jid, text, userSession, ctx);
+                await checkGlobalFrustration(sock, jid, text, userSession, ctx);
                 return;
             }
               // Campos de reserva: telefono_reserva, confirm_reserva, etc.
             await reservationsHandler.handleAwaitingField(sock, jid, text, userSession, ctx);
-            return;        }
-        
-        // 9. Delegar según la fase actual (Máquina de Estados)
-        await delegateToPhaseHandler(sock, jid, text, userSession, ctx);        // ✅ 10. VERIFICACIÓN GLOBAL DE FRUSTRACIÓN
-        // Después de procesar cualquier mensaje, verificar si el usuario está frustrado
-        // Las fases INS_* manejan su propio errorCount, se les da margen mayor
-        const isInsurancePhase = userSession.phase && userSession.phase.toLowerCase().startsWith('ins_');
-        const frustrationThreshold = isInsurancePhase ? 5 : 2;
-        if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
-            logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);
-
-            const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
-            if (customNotifyFlow) {
-                // Bots que no son de WhatsApp (hoy: Leo/Telegram) nunca se
-                // silencian - solo se avisa al admin, el bot sigue respondiendo.
-                try {
-                    await customNotifyFlow.notifyHumanEscalation(
-                        sock, jid, `Posible loop/no entiende (errorCount=${userSession.errorCount})`, ctx
-                    );
-                } catch (e) {
-                    logger.error(`[${jid}] Error notificando frustración (flow propio): ${e.message}`);
-                }
-                userSession.errorCount = 0;
-            } else {
-                // Detectar frustración y derivar a admin si es necesario
-                const isFrustrated = await frustrationService.detectAndHandleFrustration(
-                    sock, jid, text, userSession, ctx
-                );
-
-                if (isFrustrated) {
-                    logger.info(`[${jid}] ✅ Usuario derivado a admin por frustración global`);
-                    return; // Salir del flujo, admin se hará cargo
-                }
-            }
+            await checkGlobalFrustration(sock, jid, text, userSession, ctx);
+            return;
         }
+
+        // 9. Delegar según la fase actual (Máquina de Estados)
+        await delegateToPhaseHandler(sock, jid, text, userSession, ctx);
+        // 10. VERIFICACIÓN GLOBAL DE FRUSTRACIÓN
+        await checkGlobalFrustration(sock, jid, text, userSession, ctx);
 
     } catch (error) {
         // Mostrar stack completo para debug
