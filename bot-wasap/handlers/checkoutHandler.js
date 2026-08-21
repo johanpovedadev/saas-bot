@@ -352,6 +352,11 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
     if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+    // Cuenta como "no entendí" para el chequeo global de frustración (handlers/
+    // handler.js paso 10) - si el flow del tenant tiene su propio fallback de
+    // checkout (ej. heladeria.flow.js) que ya suma errorCount, esto es
+    // redundante pero inofensivo (mismo contador, mismo efecto).
+    userSession.errorCount = (userSession.errorCount || 0) + 1;
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
 }
 

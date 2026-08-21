@@ -1823,19 +1823,23 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
 
     if (phase === PHASE.CONFIRM_ORDER) {
         if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
+            userSession.errorCount = 0;
             await checkoutHandler.handleEnterAddress(sock, jid, '', userSession, ctx, true);
             return true;
         }
         if (hasWord(t, ['2', 'seguir', 'comprando', 'mas', 'más', 'agregar'])) {
+            userSession.errorCount = 0;
             userSession.phase = PHASE.SELECCION_OPCION;
             await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
             return true;
         }
         if (hasWord(t, ['3', 'editar', 'editar pedido', 'corregir', 'cambiar', 'cambio'])) {
+            userSession.errorCount = 0;
             await checkoutHandler.startEditCart(sock, jid, userSession, ctx);
             return true;
         }
         if (hasWord(t, ['cancelar', 'cancelar pedido', 'vaciar', 'borrar'])) {
+            userSession.errorCount = 0;
             if (userSession.order) userSession.order.items = [];
             if (Array.isArray(userSession.carrito)) userSession.carrito = [];
             userSession.phase = PHASE.MENU_PRINCIPAL;
@@ -1861,10 +1865,12 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
 
     if (phase === PHASE.FINALIZE_ORDER) {
         if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
+            userSession.errorCount = 0;
             await checkoutHandler.handleFinalizeOrder(sock, jid, '1', userSession, ctx);
             return true;
         }
         if (hasWord(t, CHECKOUT_EDIT_WORDS)) {
+            userSession.errorCount = 0;
             await checkoutHandler.handleFinalizeOrder(sock, jid, '2', userSession, ctx);
             return true;
         }
@@ -1875,6 +1881,12 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
 }
 
 async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
+    // Solo se llega acá cuando handleCheckoutFallback NO logró resolver el
+    // mensaje en ninguna fase de checkout - cuenta como "no entendí" para el
+    // chequeo global de frustración (handlers/handler.js paso 10). Antes esto
+    // nunca subía errorCount, así que un cliente podía quedar dando vueltas en
+    // checkout indefinidamente sin escalar (caso real: 32 min, 6 mensajes).
+    userSession.errorCount = (userSession.errorCount || 0) + 1;
     switch (userSession.phase) {
         case PHASE.CONFIRM_ORDER:
             await say(sock, jid, '❌ Opción no válida. Escribe *1* para confirmar, *2* para seguir comprando o *3* para editar el pedido.', ctx);
