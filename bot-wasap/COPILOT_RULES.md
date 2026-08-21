@@ -52,7 +52,12 @@ Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegist
 ## Escalar a humano (regla fija: errores, loops y mensajes fuera de tema)
 
 Ningún cliente debe quedar atrapado hablándole a una IA confundida indefinidamente. Todo
-bot de este proyecto (los que hay hoy y los que se creen después) **debe**:
+bot de este proyecto — **los que hay hoy y CUALQUIERA que se cree después, sin
+excepción** — debe cumplir esto. En particular (regla explícita del dueño): si el bot
+tiene IA y el **primer mensaje** de una conversación no tiene nada que ver con la
+intención del negocio, el bot se desactiva ahí mismo (no espera a que se repita) para
+que lo atienda un humano, y se manda notificación al admin — ver el punto 3 de abajo
+(`off_topic`), que ya funciona así desde el primer mensaje.
 
 1. **Incluir `PHASE.WAITING_HUMAN` en su `isFlowPhase`** (ej. `phase.startsWith('xxx_') ||
    phase === PHASE.WAITING_HUMAN`, o agregarla a la lista de fases si tu `isFlowPhase` usa
@@ -168,6 +173,14 @@ teléfono. Esto implica:
   errores/fuera de tema (ver sección "Escalar a humano" arriba). Contención de
   emergencia mientras se diagnostica un loop en vivo: `mutedStore.muteChat(businessKey,
   jid)` en cada bot involucrado, apunta directo al número del otro bot.
+- **La escalada a `WAITING_HUMAN` se deshacía sola si el mensaje repetido tenía forma
+  de saludo** (justo el caso más probable en un loop real — "Hola...", como el bug de
+  arriba). La detección de saludos (paso 7 de `processIncomingMessage`) reseteaba la
+  fase al inicio del flow en CUALQUIER mensaje que empezara con un saludo, sin
+  importar que ya estuviera en `WAITING_HUMAN` — el bot se apagaba en el mensaje 2 del
+  loop pero se volvía a prender solo en el mensaje 3. Fix: `greetingDetected` ahora
+  es `false` de entrada si `userSession.phase === PHASE.WAITING_HUMAN` — un saludo
+  nunca reactiva el flujo automático mientras se espera atención humana.
 
 ## Recordatorio de aislamiento
 
