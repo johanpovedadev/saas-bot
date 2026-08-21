@@ -243,7 +243,31 @@ async function processIncomingMessage(sock, messageData, ctx) {
         if (await adminHandler.handleAdminCommand(sock, jid, text, userSession, ctx)) {
             return;
         }
-        
+
+        // 6.5. Detectar LOOP: 2 mensajes entrantes seguidos con el MISMO texto
+        // exacto. Corre en TODO mensaje, sin esperar ningún umbral de errorCount
+        // (a diferencia del chequeo global de abajo) — existe justo para el caso
+        // de un loop entre dos bots, donde cada mensaje SÍ se entiende y se
+        // responde "correctamente" cada vez, así que errorCount nunca sube.
+        // Regla fija: los bots de WhatsApp se apagan siempre, sin excepción. Los
+        // que no son de WhatsApp (hoy: Leo/Telegram, vía notifyHumanEscalation)
+        // solo avisan al admin y siguen respondiendo, nunca se apagan.
+        if (userSession.phase !== PHASE.WAITING_HUMAN && frustrationService.checkMessageLoop(userSession, text)) {
+            const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
+            if (loopNotifyFlow) {
+                try {
+                    await loopNotifyFlow.notifyHumanEscalation(sock, jid, `Posible loop: mensaje repetido "${text.substring(0, 100)}"`, ctx);
+                } catch (e) {
+                    logger.error(`[${jid}] Error notificando loop (flow propio): ${e.message}`);
+                }
+                userSession.lastMessageText = null; // no repetir el aviso mientras siga igual
+            } else {
+                logger.warn(`[${jid}] 🚨 Loop detectado: mismo mensaje 2 veces seguidas, apagando el bot para este chat`);
+                await frustrationService.handleFrustration(sock, jid, userSession, ctx, `Mensaje repetido (posible loop): "${text.substring(0, 100)}"`);
+                return;
+            }
+        }
+
         // 7. Detectar saludos
         const greetingDetected = greetingsHandler.isGreeting(text);
         logger.debug(`[${jid}] Verificando saludo: "${text}" -> ${greetingDetected}`);

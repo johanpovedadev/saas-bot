@@ -42,6 +42,32 @@ const MAX_CONSECUTIVE_ERRORS = 2;
 const MAX_REPEATED_MESSAGES = 2;
 
 /**
+ * Detecta un LOOP (2 mensajes entrantes seguidos con el mismo texto exacto)
+ * de forma independiente de errorCount/keywords — a diferencia de
+ * detectFrustration, esta corre en CADA mensaje sin esperar ningún umbral.
+ * Existe porque un loop entre dos bots (cada uno "entendiendo" y respondiendo
+ * "correctamente" el saludo del otro, en círculo) nunca sube errorCount —
+ * cada mensaje SÍ se entiende, solo que siempre es el mismo — así que
+ * detectFrustration (gateada detrás de errorCount) nunca lo agarra.
+ * @param {Object} userSession - Sesión del usuario
+ * @param {string} text - Texto del mensaje actual
+ * @returns {boolean} true si este mensaje es identico al inmediatamente anterior
+ */
+function checkMessageLoop(userSession, text) {
+    try {
+        if (!text || typeof text !== 'string') return false;
+        const normalized = text.toLowerCase().trim();
+        if (!normalized) return false;
+        const isRepeatOfLast = userSession.lastMessageText === normalized;
+        userSession.lastMessageText = normalized;
+        return isRepeatOfLast;
+    } catch (e) {
+        logger.error({ err: e }, '[Frustration] Error en checkMessageLoop');
+        return false;
+    }
+}
+
+/**
  * Detecta si el cliente está frustrado basándose en múltiples señales
  * @param {Object} userSession - Sesión del usuario
  * @param {string} text - Texto del mensaje actual
@@ -220,6 +246,7 @@ function reactivateBot(userSession, initialPhase) {
     userSession.waitingForHuman = false;
     userSession.errorCount = 0;
     userSession.messageHistory = [];
+    userSession.lastMessageText = null;
     delete userSession.frustrationReason;
     delete userSession.frustrationTimestamp;
     if (initialPhase && userSession.phase === PHASE.WAITING_HUMAN) {
@@ -231,6 +258,7 @@ function reactivateBot(userSession, initialPhase) {
 module.exports = {
     detectFrustration,
     detectAndHandleFrustration,  // ✅ Nueva función todo-en-uno
+    checkMessageLoop,
     handleFrustration,
     incrementErrorCount,
     resetErrorCount,

@@ -182,6 +182,40 @@ async function testPilatesOffTopicEscalatesInstantly() {
     }
 }
 
+async function testMessageLoopEscalatesEvenWhenUnderstood() {
+    // Reproduce el incidente real: dos bots (o un bot con un remitente que
+    // repite) intercambiando el MISMO texto una y otra vez - cada mensaje se
+    // "entiende" perfectamente (es una opcion de menu valida), asi que
+    // errorCount nunca sube y el chequeo global normal nunca se entera. Este
+    // chequeo (checkMessageLoop) es independiente de errorCount justamente
+    // para agarrar este caso.
+    const ctx = makeCtx();
+    const sock = makeSock([]);
+    const jid = testJid(506);
+
+    const originalNotify = notificationService.notifyAdminsAboutCustomerIssue;
+    let notified = false;
+    notificationService.notifyAdminsAboutCustomerIssue = async () => { notified = true; };
+
+    try {
+        await send(sock, ctx, jid, 'hola');
+        await send(sock, ctx, jid, `ClientaLoop${506}`);
+        assert.strictEqual(ctx.sessions[jid].errorCount || 0, 0, 'hasta aca no debe haber ningun error (todo se entendio bien)');
+
+        // Mismo mensaje EXACTO dos veces seguidas (como el saludo repetido del
+        // incidente real) - cada uno es perfectamente valido por si solo.
+        await send(sock, ctx, jid, 'hola de nuevo');
+        assert.ok(!notified, 'el primer mensaje del par no debe escalar todavia');
+        await send(sock, ctx, jid, 'hola de nuevo'); // idéntico -> loop
+        assert.ok(notified, 'dos mensajes identicos seguidos deben escalar de una, aunque errorCount siga en 0');
+        assert.strictEqual(ctx.sessions[jid].phase, PHASE.WAITING_HUMAN, 'el bot de WhatsApp debe apagarse siempre ante un loop, sin excepcion');
+        console.log('OK: 2 mensajes identicos seguidos escalan de una, incluso sin que errorCount haya subido (bug del incidente real, ya corregido)');
+    } finally {
+        notificationService.notifyAdminsAboutCustomerIssue = originalNotify;
+        cleanupUsers([jid]);
+    }
+}
+
 async function testAdminReactivarResetsPhase() {
     const adminHandler = require('./handlers/modules/admin.handler.js');
     const ctx = makeCtx();
@@ -213,6 +247,7 @@ async function testAdminReactivarResetsPhase() {
         await testWaitingHumanSurvivesNextMessage();
         await testMascotasIsFlowPhaseIncludesWaitingHuman();
         await testPilatesOffTopicEscalatesInstantly();
+        await testMessageLoopEscalatesEvenWhenUnderstood();
         await testAdminReactivarResetsPhase();
 
         console.log('\nTodos los tests pasaron.');
@@ -222,7 +257,7 @@ async function testAdminReactivarResetsPhase() {
         process.exitCode = 1;
     } finally {
         pilatesRoster.getClientCredit = originalGetClientCredit;
-        cleanupUsers([testJid(501), testJid(502), testJid(503), testJid(504), testJid(505)]);
+        cleanupUsers([testJid(501), testJid(502), testJid(503), testJid(504), testJid(505), testJid(506)]);
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

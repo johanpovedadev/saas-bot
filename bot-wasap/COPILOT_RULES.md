@@ -65,7 +65,16 @@ bot de este proyecto (los que hay hoy y los que se creen después) **debe**:
    El chequeo global en `handlers/handler.js` (paso 10 de `processIncomingMessage`) ya
    dispara la escalada automáticamente al llegar al umbral (2 por defecto; podés pedir uno
    más alto tipo mascotas con `ins_*`, 5) — no dupliques esa lógica de umbral en tu propio
-   flow, solo alimentá el contador.
+   flow, solo alimentá el contador. **No confundir con la detección de loop** (punto
+   siguiente): `errorCount` es SOLO para "no entendí" — un mensaje entendido y
+   respondido "correctamente" nunca lo sube, aunque se repita en círculo con otro bot.
+2.5. **La detección de loop (`frustrationService.checkMessageLoop`, paso 6.5 de
+   `processIncomingMessage`) ya corre sola, automática, para cualquier bot** — no hace
+   falta cablearla a mano. Compara cada mensaje entrante contra el inmediatamente
+   anterior; si son idénticos, apaga el bot de una (o avisa sin apagar, para los que
+   tienen `notifyHumanEscalation`). Existe porque un loop entre dos bots (cada uno
+   "entendiendo" y respondiendo bien el saludo del otro, en círculo) nunca sube
+   `errorCount` — pasó de verdad, ver "Bugs ya corregidos" más abajo.
 3. **Agregar una intención `off_topic` al prompt de tu clasificador de IA** (si el bot tiene
    uno) para distinguir "mensaje sin nada que ver con el negocio" de "no entendí"/"chat" —
    y escalarla DE UNA en tu router (sin pasar por el contador de 2 intentos), reusando la
@@ -143,6 +152,22 @@ teléfono. Esto implica:
   y verifica el banner de arranque (`Negocio:`, `businessKey` en el log) antes de darlo
   por bueno — el nombre del proceso en `pm2 status` NO garantiza que esté corriendo esa
   configuración.
+- **Loop real entre dos bots (dos números de WhatsApp propios auto-respondiéndose):**
+  pasó de verdad — el número conectado a `pilates_clientas` y el número conectado a
+  `heladeria` quedaron mandándose el saludo de cada uno en círculo, cada ~15-20s,
+  indefinidamente, porque cada mensaje se "entendía" perfectamente (un saludo válido)
+  así que `userSession.errorCount` nunca subía y el chequeo global de frustración
+  (gateado detrás de `errorCount >= umbral`) nunca se enteraba. Fix:
+  `frustrationService.checkMessageLoop(userSession, text)` — chequeo NUEVO e
+  independiente de errorCount/keywords, corre en cada mensaje (paso 6.5 de
+  `processIncomingMessage` en `handlers/handler.js`, ANTES de la detección de saludos)
+  y compara el texto entrante contra el inmediatamente anterior (`userSession.
+  lastMessageText`). Regla fija: 2 mensajes idénticos seguidos apagan el bot (WhatsApp)
+  siempre, sin excepción — salvo los bots que exportan `notifyHumanEscalation` (hoy:
+  Leo/Telegram), que solo avisan al admin y NUNCA se apagan, igual que con
+  errores/fuera de tema (ver sección "Escalar a humano" arriba). Contención de
+  emergencia mientras se diagnostica un loop en vivo: `mutedStore.muteChat(businessKey,
+  jid)` en cada bot involucrado, apunta directo al número del otro bot.
 
 ## Recordatorio de aislamiento
 

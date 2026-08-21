@@ -125,6 +125,29 @@ function cleanupJid(jid) {
         }
         console.log('OK: el chequeo global de handler.js usa notifyHumanEscalation para Leo, sin apagarlo');
 
+        // 4. Loop (2 mensajes identicos seguidos, ej. como el incidente real
+        // entre dos bots): para Leo, avisa a Johan pero NUNCA apaga el bot -
+        // sigue respondiendo normal al mensaje siguiente.
+        const jid4 = '573000000604@c.us';
+        cleanupJid(jid4);
+        const ctx4 = freshCtx();
+        ctx4.sessions[jid4] = { phase: 'fin_main', finance: { name: 'Laura', transactions: [], loans: [] } };
+        let loopNotified = 0;
+        financeFlow.notifyHumanEscalation = async () => { loopNotified++; };
+        try {
+            await sendViaHandler(ctx4, jid4, 'hola de nuevo');
+            assert.strictEqual(loopNotified, 0, 'el primer mensaje del par no debe avisar todavia');
+            await sendViaHandler(ctx4, jid4, 'hola de nuevo'); // idéntico -> loop
+            assert.ok(loopNotified >= 1, 'dos mensajes identicos seguidos deben avisar a Johan de una');
+            assert.notStrictEqual(ctx4.sessions[jid4].phase, PHASE.WAITING_HUMAN, 'Leo NUNCA debe apagarse ante un loop (regla: Leo/Telegram nunca se apaga)');
+            const r3 = await sendViaHandler(ctx4, jid4, '18 mil en almuerzo');
+            assert.ok(/Registrado/i.test(r3) || /correcto/i.test(r3), 'Leo debe seguir respondiendo normal después del loop');
+        } finally {
+            financeFlow.notifyHumanEscalation = originalNotifyHuman;
+            cleanupJid(jid4);
+        }
+        console.log('OK: un loop (2 mensajes identicos) avisa a Johan pero nunca apaga a Leo');
+
         console.log('\nTodos los tests pasaron.');
         process.exitCode = 0;
     } catch (e) {
