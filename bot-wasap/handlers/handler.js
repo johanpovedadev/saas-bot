@@ -268,10 +268,12 @@ async function processIncomingMessage(sock, messageData, ctx) {
             }
         }
 
-        // 7. Detectar saludos
-        const greetingDetected = greetingsHandler.isGreeting(text);
+        // 7. Detectar saludos - NUNCA mientras se está esperando atención humana:
+        // si no, un saludo (ej. "Hola" - justo la forma de la mayoría de loops
+        // reales) reactivaría el flujo automático solo y deshace la escalada.
+        const greetingDetected = userSession.phase !== PHASE.WAITING_HUMAN && greetingsHandler.isGreeting(text);
         logger.debug(`[${jid}] Verificando saludo: "${text}" -> ${greetingDetected}`);
-        
+
         if (greetingDetected) {
             if (userSession.phase === PHASE.AWAITING_NAME) {
                 // Ya le preguntamos el nombre, dejar pasar para que el delegate lo procese
