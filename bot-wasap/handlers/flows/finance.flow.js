@@ -50,6 +50,7 @@ function initFinance(userSession) {
             pendingConfirm: null,
             lastResetDate: new Date().toDateString(),
             streak: 0,
+            bestStreak: 0,
             lastStreakDate: '',
             trialLastShown: 0,
             diagnosticAnswer: 0,
@@ -83,6 +84,45 @@ function initFinance(userSession) {
 
 function daysSince(start) {
     return Math.floor((Date.now() - start) / 86400000);
+}
+
+/**
+ * Mensaje de bienvenida para alguien que llega por primera vez. Antes solo
+ * decia lo que Leo NO es ("sin regaños, sin Excel") - se cambia el eje a lo
+ * que la persona SI va a lograr (deseo, no ausencia de miedo), y se suma
+ * prueba social real (nunca inventada, ver financeStore.getCommunityStats)
+ * solo si el numero es lo bastante alto como para sumar confianza en vez de
+ * restarla.
+ */
+function getWelcomeMessage() {
+    let proofLine = '';
+    try {
+        const stats = financeStore.getCommunityStats();
+        if (stats.totalTransactions >= 20) {
+            proofLine = `\n🔥 Ya llevamos *${stats.totalTransactions} movimientos* registrados entre quienes ya empezaron.\n`;
+        }
+    } catch (e) { /* si falla, se omite la linea, nunca se rompe el saludo */ }
+    return `🦁 ¡Rrrraaawr! Soy Leo. En un par de semanas vas a saber exactamente para dónde se va tu plata — y vas a poder decidir, no adivinar. Nada de Excel, nada de vueltas.\n` +
+        proofLine +
+        `\n¿Cómo te llamo?`;
+}
+
+/**
+ * Sube la racha del dia (si no se habia contado hoy todavia) y actualiza
+ * bestStreak (la mejor racha histórica, que NUNCA baja aunque la racha
+ * actual se rompa). Antes solo existia `streak` — romper una racha borraba
+ * de la vista cualquier logro anterior, lo cual castiga al usuario en vez
+ * de protegerlo (ver informe de branding/retención). `fin.bestStreak` puede
+ * venir undefined en cuentas viejas creadas antes de este campo - se trata
+ * como 0.
+ */
+function bumpStreak(fin) {
+    const today = new Date().toDateString();
+    if (fin.lastStreakDate === today) return; // ya contado hoy
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
+    fin.lastStreakDate = today;
+    fin.bestStreak = Math.max(fin.bestStreak || 0, fin.streak);
 }
 
 // ============================================================================
@@ -843,16 +883,20 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
         fin.goalTarget = val;
     }
     financeStore.saveFinance(jid, fin);
+    // Momento critico: justo antes de esta pantalla es donde mas gente se
+    // queda sin volver (ver informe de retencion). Se cambia el eje de "que
+    // hacer ahora" a "que vas a lograr" - el primer registro se enmarca como
+    // el paso 1 hacia la meta, no como una tarea suelta.
     await say(sock, jid,
-        `🦁 *${fin.goalName}* — ¡me gusta esa meta! ` +
+        `🦁 *${fin.goalName}* — ¡esa es tu meta! ` +
         (fin.goalTarget > 0
-            ? `Vamos a trabajar para juntar ${formatMoney(fin.goalTarget, fin)}. Paso a paso.\n\n`
-            : `Cuando quieras decime cuánta plata necesitás y te ayudo a hacer el plan.\n\n`) +
-        `Podés empezar con frases como:\n\n` +
+            ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${formatMoney(fin.goalTarget, fin)} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
+            : `Cuando quieras decime cuánta plata necesitás y armamos el camino juntos.\n\n`) +
+        `Tu primer paso es registrar cualquier movimiento de hoy — así de simple:\n\n` +
         `_"Compré 18 mil en almuerzo"_\n` +
         `_"Recibí 2 millones de sueldo"_\n` +
         `_"¿Cuánto tengo?"_\n\n` +
-        `¿Qué querés registrar hoy?`,
+        `Cada registro te acerca un poco más a *${fin.goalName}* 🦁`,
         ctx);
     if (!canUseAi(jid)) {
         await showQuickMenu(sock, jid, fin, ctx, `🦁 Estamos listos, *${fin.name}*!`);
@@ -915,12 +959,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 userSession.phase = PHASE.FIN_MAIN;
                 financeStore.saveFinance(jid, fin);
                 // #8 — racha for setting goal too
-                const today = new Date().toDateString();
-                if (fin.lastStreakDate !== today) {
-                    const yesterday = new Date(Date.now() - 86400000).toDateString();
-                    fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
-                    fin.lastStreakDate = today;
-                }
+                bumpStreak(fin);
                 // Check immediate goal milestones
                 const goalMs = getNewMilestones(fin, { goalTarget: 0, balance: 0 });
                 for (const mId of goalMs) {
@@ -1239,12 +1278,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
 
     // #8 — racha
-    const today = new Date().toDateString();
-    if (fin.lastStreakDate !== today) {
-        const yesterday = new Date(Date.now() - 86400000).toDateString();
-        fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
-        fin.lastStreakDate = today;
-    }
+    bumpStreak(fin);
 
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
@@ -1255,8 +1289,19 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const todayMsg = fin.todaySpending > 0
         ? `📊 Hoy: ${formatMoney(fin.todaySpending, fin)}\n`
         : '';
-    const streakMsg = fin.streak >= 2 ? `🔥 ${fin.streak} días seguidos\n` : '';
-    const milestoneMsg = fin.streak === 5 ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 ? `🏆 10 días! Imparable.\n` : '';
+    // Racha protegida: si acaba de reiniciar en 1 pero ya tenia una racha
+    // mejor antes, no se muestra como si arrancara de cero — se reconoce lo
+    // que ya logro (nunca castigar por un dia perdido, ver informe de
+    // retencion). Si empata o supera su propio record, se celebra aparte.
+    const isNewRecord = fin.streak >= 2 && fin.streak === fin.bestStreak;
+    const streakMsg = isNewRecord
+        ? `🔥 ${fin.streak} días seguidos — ¡tu mejor racha hasta ahora! 🏅\n`
+        : fin.streak >= 2
+            ? `🔥 ${fin.streak} días seguidos\n`
+            : (fin.streak === 1 && fin.bestStreak >= 2)
+                ? `🔥 De vuelta al ruedo — tu mejor racha sigue siendo ${fin.bestStreak} días, vamos por más 💪\n`
+                : '';
+    const milestoneMsg = fin.streak === 5 && !isNewRecord ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 && !isNewRecord ? `🏆 10 días! Imparable.\n` : '';
 
     // #5 — oferta solo 1 vez al día para usuarios sin plan con IA
     const planLine = isFinPremium(fin) ? ''
@@ -1562,10 +1607,7 @@ async function showWelcome(sock, jid, ctx) {
         }
         return;
     }
-    await say(sock, jid,
-        `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas.\n\n` +
-        `¿Cómo te llamo?`,
-        ctx);
+    await say(sock, jid, getWelcomeMessage(), ctx);
 }
 
 async function handleUnknown(sock, jid, text, userSession, ctx) {
@@ -1591,10 +1633,7 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     } else {
         userSession.phase = PHASE.FIN_ONBOARDING;
         // Mensaje 1: bienvenida emocional
-        await say(sock, jid,
-            `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas.\n\n` +
-            `¿Cómo te llamo?`,
-            ctx);
+        await say(sock, jid, getWelcomeMessage(), ctx);
     }
 }
 
@@ -1721,7 +1760,7 @@ module.exports = {
             website: 'https://leo-financiero.com'
         },
         bot: {
-            welcomeMessage: `🦁 ¡Rrrraaawr! Soy Leo. Desde hoy vemos juntos pa' dónde se te escapa la plata — sin regaños, sin Excel, sin vueltas. ¿Cómo te llamo?`,
+            welcomeMessage: `🦁 ¡Rrrraaawr! Soy Leo. En un par de semanas vas a saber exactamente para dónde se va tu plata — y vas a poder decidir, no adivinar. ¿Cómo te llamo?`,
             mainMenu: null,
             phases: { enableAIAssistant: true },
             ai: { enabled: true, model: 'gemini-2.5-flash' },
@@ -1758,5 +1797,9 @@ module.exports = {
     // corrigio en heladeria/pescaderia/mascotas esta sesion, pero finance
     // habia quedado afuera).
     isFlowPhase: (phase) => typeof phase === 'string' && (phase.toLowerCase().startsWith('fin_') || phase === PHASE.WAITING_HUMAN),
-    getPhases: () => FIN_PHASES
+    getPhases: () => FIN_PHASES,
+    // Expuesto para tests unitarios directos (evita depender del parser
+    // determinista/flujo de confirmacion completo solo para probar la
+    // matematica de la racha).
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage }
 };

@@ -90,6 +90,24 @@ async function send(ctx, jid, text) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
+        // Este test escribia directo en la base REAL de Leo sin limpiar
+        // despues - encontrado porque el jid de prueba acumulo miles de
+        // prestamos entre corridas repetidas y termino rompiendo el test
+        // (contaba prestamos viejos en vez de los 2 que el test acaba de
+        // crear). Se resetea (no se borra la fila, DELETE queda bloqueado
+        // por el permiso del modo automatico) para que la proxima corrida
+        // arranque limpia.
+        try {
+            const Database = require('better-sqlite3');
+            const path = require('path');
+            const financeCrypto = require('./services/financeCrypto');
+            const db = new Database(path.join(__dirname, 'data', 'finance.db'));
+            const cleanExtra = JSON.stringify({ loans: [], goalName: '', goalTarget: 0 });
+            const cleanTxs = financeCrypto.encrypt('[]');
+            db.prepare('UPDATE finance_users SET transactions = ?, extra = ?, balance = 0, today_spending = 0 WHERE jid = ?')
+                .run(cleanTxs, cleanExtra, '573000000201@c.us');
+            db.close();
+        } catch (e) { /* best-effort */ }
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

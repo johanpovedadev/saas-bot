@@ -79,6 +79,7 @@ function rowToFinance(row) {
         transactions,
         pendingConfirm: null,
         streak: extra.streak || 0,
+        bestStreak: extra.bestStreak || 0,
         lastStreakDate: extra.lastStreakDate || '',
         trialLastShown: extra.trialLastShown || 0,
         diagnosticAnswer: extra.diagnosticAnswer || 0,
@@ -121,6 +122,7 @@ function financeToRow(jid, fin) {
         transactions: txsEnc,
         extra: JSON.stringify({
             streak: fin.streak || 0,
+            bestStreak: fin.bestStreak || 0,
             lastStreakDate: fin.lastStreakDate || '',
             trialLastShown: fin.trialLastShown || 0,
             diagnosticAnswer: fin.diagnosticAnswer || 0,
@@ -202,6 +204,52 @@ function addTransaction(jid, tx) {
     }
 }
 
+// Cuentas de prueba/placeholder que NO son usuarios reales (numeros de
+// ejemplo de plantillas de config, fixtures de test_finance_*.js, o cuentas
+// ya migradas/superadas por otra) - se excluyen de cualquier estadistica
+// mostrada a usuarios reales para que la prueba social sea honesta, nunca
+// inflada. Ver bot-wasap/COPILOT_RULES.md si esta lista crece.
+const NON_REAL_JIDS = new Set([
+    '573001234567@c.us',        // numero placeholder de config/businesses/template.config.js
+    '212948991647868@lid',      // cuenta vieja de Johan, migrada a 5534032418@telegram
+    '573000000302@c.us',        // fixture de tests (rango reservado 573000000XXX)
+    '573000000501@c.us',        // fixture de tests (rango reservado 573000000XXX)
+    '573000000201@c.us',        // fixture de tests (rango reservado 573000000XXX)
+]);
+
+/**
+ * Estadisticas agregadas REALES de la comunidad (nunca inventadas) para usar
+ * como prueba social en el onboarding/mensajes clave - ej. "ya llevamos X
+ * movimientos registrados". Excluye NON_REAL_JIDS. Si la consulta falla,
+ * devuelve ceros (el caller debe omitir la linea de prueba social en vez de
+ * mostrar un numero roto).
+ */
+function getCommunityStats() {
+    try {
+        const d = getDb();
+        if (!d) return { totalTransactions: 0, activeUsers: 0 };
+        const rows = d.prepare('SELECT jid, transactions FROM finance_users').all();
+        let totalTransactions = 0;
+        let activeUsers = 0;
+        for (const row of rows) {
+            if (NON_REAL_JIDS.has(row.jid)) continue;
+            let txs = [];
+            try {
+                const raw = row.transactions;
+                txs = financeCrypto.isEncrypted(raw) ? JSON.parse(financeCrypto.decrypt(raw) || '[]') : JSON.parse(raw || '[]');
+            } catch (e) { txs = []; }
+            if (txs.length > 0) {
+                activeUsers++;
+                totalTransactions += txs.length;
+            }
+        }
+        return { totalTransactions, activeUsers };
+    } catch (err) {
+        logger.error(`financeStore.getCommunityStats: ${err.message}`);
+        return { totalTransactions: 0, activeUsers: 0 };
+    }
+}
+
 function closeDb() {
     try {
         if (db) {
@@ -222,5 +270,6 @@ module.exports = {
     loadFinance,
     saveFinance,
     addTransaction,
+    getCommunityStats,
     closeDb
 };
