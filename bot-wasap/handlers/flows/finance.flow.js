@@ -734,11 +734,37 @@ async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
 async function askDiagnosticQuestion(sock, jid, ctx) {
     await say(sock, jid,
         `Contame: ¿qué es lo que quieres lograr con tus finanzas ahorita?\n\n` +
-        `1️⃣ Ahorrar para algo importante\n` +
-        `2️⃣ Salir de mis deudas y respirar tranquilo\n` +
-        `3️⃣ Tener el control total de mi plata\n` +
-        `4️⃣ Simplemente empezar a organizarme`,
+        `*1* / *A* — Ahorrar para algo importante\n` +
+        `*2* / *B* — Salir de mis deudas y respirar tranquilo\n` +
+        `*3* / *C* — Tener el control total de mi plata\n` +
+        `*4* / *D* — Simplemente empezar a organizarme\n\n` +
+        `_Respondé con el número, la letra, o directo la palabra (ej: "ahorrar")_ 🦁`,
         ctx);
+}
+
+// Letra (a/b/c/d) o palabra clave de cada opcion del diagnostico -> numero
+// 1-4. Antes SOLO se aceptaba un digito plano (parseInt) - cualquiera que
+// contestara con una letra o en sus propias palabras quedaba en loop sin
+// salida (ver handleDiagnostic). Sin tildes/mayusculas para matchear mas
+// variantes ("Ahorrar", "AHORRO", "ahorrando" todas calzan con /ahorr/).
+function stripAccentsFin(s) {
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+const DIAGNOSTIC_KEYWORDS = [
+    { option: 1, re: /ahorr/ },
+    { option: 2, re: /deuda/ },
+    { option: 3, re: /control/ },
+    { option: 4, re: /organiz/ }
+];
+function matchDiagnosticOption(text) {
+    const raw = String(text || '').trim();
+    const num = parseInt(raw, 10);
+    if (num >= 1 && num <= 4) return num;
+    const t = stripAccentsFin(raw).toLowerCase();
+    const letter = t.match(/^([abcd])\b/);
+    if (letter) return { a: 1, b: 2, c: 3, d: 4 }[letter[1]];
+    const kw = DIAGNOSTIC_KEYWORDS.find(k => k.re.test(t));
+    return kw ? kw.option : null;
 }
 
 /**
@@ -766,8 +792,7 @@ async function handleReferralOnboarding(sock, jid, text, userSession, ctx, fin) 
 }
 
 async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
-    const t = text.trim();
-    const option = parseInt(t);
+    const option = matchDiagnosticOption(text);
     const answers = {
         1: 'Ahorrar para algo importante',
         2: 'Salir de tus deudas y respirar tranquilo',
@@ -796,7 +821,7 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
         // sigue respondiendo, igual que el resto de escaladas de este flow).
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
-            `Escribí el número de la opción que más te describa (1, 2, 3 o 4) 🦁`,
+            `No te agarré bien 😅 Contame con el número (1, 2, 3, 4), la letra (A, B, C, D), o la palabra — ej: *"ahorrar"*, *"deudas"*, *"control"* u *"organizarme"* 🦁`,
             ctx);
     }
 }
