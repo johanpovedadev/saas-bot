@@ -695,7 +695,21 @@ async function handle(sock, jid, text, userSession, ctx) {
 
 async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
     if (!fin.name) {
-        fin.name = text.trim();
+        const candidate = text.trim();
+        // Sin validacion, cualquier texto quedaba guardado tal cual como
+        // "nombre" - encontrado en la base real: un mensaje de phishing
+        // ("verifica que somos oficiales", con link) quedo guardado como
+        // nombre de un usuario. No es una defensa de seguridad completa,
+        // solo evita que basura obvia (links, texto larguisimo) contamine
+        // el nombre que despues se muestra de vuelta al propio usuario y a
+        // Johan en reportes/notificaciones.
+        if (candidate.length > 40 || /https?:\/\/|www\./i.test(candidate)) {
+            userSession.errorCount = (userSession.errorCount || 0) + 1;
+            await say(sock, jid, `🦁 Decime solo tu nombre (sin links ni mensajes largos) 😉`, ctx);
+            return;
+        }
+        userSession.errorCount = 0;
+        fin.name = candidate;
         financeStore.saveFinance(jid, fin);
         userSession.phase = PHASE.FIN_REFERRAL_ONBOARDING;
         fin.trialStart = Date.now();
@@ -762,6 +776,7 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
     };
 
     if (option >= 1 && option <= 4) {
+        userSession.errorCount = 0;
         fin.diagnosticAnswer = option;
         financeStore.saveFinance(jid, fin);
         userSession.phase = PHASE.FIN_GOAL_ONBOARDING;
@@ -771,6 +786,15 @@ async function handleDiagnostic(sock, jid, text, userSession, ctx, fin) {
             `🦁 Última cosa antes de arrancar: ¿pa' qué te gustaría ahorrar? (un viaje, salir de una deuda, lo que sea — contame corto, así te armo el camino hacia esa meta)`,
             ctx);
     } else {
+        // Antes esta rama nunca subia errorCount: alguien que respondia con
+        // palabras en vez de un numero (ej. "ahorrar", "la primera") quedaba
+        // en loop infinito reescribiendole lo mismo, sin IA de respaldo ni
+        // escalada - encontrado revisando la base real de usuarios (varios
+        // registros quedaron atascados exactamente en esta fase). Ahora sube
+        // el contador para que el chequeo global de handler.js dispare
+        // notifyHumanEscalation (Leo NUNCA se silencia, solo avisa a Johan y
+        // sigue respondiendo, igual que el resto de escaladas de este flow).
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
             `Escribí el número de la opción que más te describa (1, 2, 3 o 4) 🦁`,
             ctx);
@@ -1678,7 +1702,12 @@ module.exports = {
             ai: { enabled: true, model: 'gemini-2.5-flash' },
             greetings: { type: 'colombia' }
         },
-        admin: { jids: ['573138777115@c.us'], notifications: { newOrder: true, customerIssue: true } },
+        // Vacio a proposito: este bot es Telegram-only (index-telegram.js), un
+        // JID de WhatsApp (@c.us) acá nunca puede recibir nada real y solo
+        // generaba ETELEGRAM "chat not found" en cada notificacion (encontrado
+        // revisando logs). El admin real de Telegram sale de
+        // ADMIN_TELEGRAM_ID (.env.finance) via getAdminJids() mas abajo.
+        admin: { jids: [], notifications: { newOrder: true, customerIssue: true } },
         backend: {
             apiBase: 'http://127.0.0.1:8001/api',
             endpoints: { orders: '/registrar_lead/' },
@@ -1698,6 +1727,11 @@ module.exports = {
     isPremiumBlocked,
     onPremiumBlocked,
     getInitialPhase: () => PHASE.FIN_ONBOARDING,
-    isFlowPhase: (phase) => typeof phase === 'string' && phase.toLowerCase().startsWith('fin_'),
+    // Incluye WAITING_HUMAN aunque no empiece con "fin_": sin esto, el chequeo
+    // de "fase no pertenece al flow" en handlers/handler.js resetearia
+    // cualquier escalada al primer mensaje siguiente (mismo bug que ya se
+    // corrigio en heladeria/pescaderia/mascotas esta sesion, pero finance
+    // habia quedado afuera).
+    isFlowPhase: (phase) => typeof phase === 'string' && (phase.toLowerCase().startsWith('fin_') || phase === PHASE.WAITING_HUMAN),
     getPhases: () => FIN_PHASES
 };

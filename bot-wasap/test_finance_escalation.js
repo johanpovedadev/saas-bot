@@ -12,6 +12,14 @@ const assert = require('assert');
 process.env.BUSINESS_KEY = 'finance';
 process.env.NODE_ENV = 'test';
 process.env.GEMINI_API_KEY = ''; // forzar fallback deterministico
+// admin.jids del flow quedo vacio a proposito (el JID de WhatsApp hardcodeado
+// ahi rompia las notificaciones reales via Telegram, ver COPILOT_RULES.md) -
+// el admin real sale de ADMIN_TELEGRAM_ID, asi que el test necesita fijar uno
+// para poder verificar el contenido de notifyAdmin. HERMES_BOT_TOKEN se anula
+// (dotenv nunca pisa una variable ya puesta) para que notifyAdmin caiga al
+// sock mockeado en vez de hacer un fetch real a la API de Telegram/Jarvis.
+process.env.ADMIN_TELEGRAM_ID = '5534032418';
+process.env.HERMES_BOT_TOKEN = '';
 
 const flowRegistry = require('./handlers/flowRegistry');
 const envConfig = require('./config/env.loader');
