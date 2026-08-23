@@ -70,8 +70,23 @@ async function refreshMuted(card) {
     try {
         const { muted } = await api(`/businesses/${key}/muted`);
         list.innerHTML = muted.length
-            ? muted.map(jid => `<li>${jid.split('@')[0]}</li>`).join('')
+            ? muted.map(jid => `<li>${jid.split('@')[0]} <button type="button" class="btn btn-unmute-one" data-unmute-jid="${jid.split('@')[0]}">Desilenciar ✕</button></li>`).join('')
             : '<li>Ningún número silenciado.</li>';
+        // Boton directo por numero — antes habia que copiar el numero a mano
+        // en la casilla de arriba, lo cual generaba dudas de si "el panel no
+        // dejaba" desilenciar cuando en realidad si funcionaba.
+        list.querySelectorAll('[data-unmute-jid]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    await api(`/businesses/${key}/unmute`, { method: 'POST', body: JSON.stringify({ number: btn.dataset.unmuteJid }) });
+                    refreshMuted(card);
+                } catch (e) {
+                    alert(e.message);
+                    btn.disabled = false;
+                }
+            });
+        });
     } catch (e) {
         list.innerHTML = `<li>Error: ${e.message}</li>`;
     }

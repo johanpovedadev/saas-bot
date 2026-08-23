@@ -128,7 +128,10 @@ input {
 .inline-form .btn { flex: 0 0 auto; }
 
 .muted-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--text-dim); max-height: 100px; overflow-y: auto; }
+.muted-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .muted-note { color: var(--text-dim); font-size: 0.85rem; }
+
+.btn-unmute-one { padding: 2px 8px; font-size: 0.75rem; border-color: var(--stopped); color: var(--stopped); }
 
 .log-viewer, .leads-viewer {
   max-height: 220px;
