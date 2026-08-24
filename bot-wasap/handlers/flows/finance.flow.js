@@ -1057,17 +1057,39 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             const type = result.intent === 'register_expense' ? 'expense' : 'income';
             const cat = result.category || (type === 'expense' ? 'Otros' : 'Ingreso');
             const desc = result.description || (type === 'expense' ? 'Compra' : 'Ingreso');
+            // Si el mensaje reportó VARIAS transacciones a la vez (ej: "gasté
+            // 20mil en comida y 15mil en transporte"), las demás vienen en
+            // additional_transactions - se validan y se guardan en cola junto
+            // a la primera, para confirmarlas y registrarlas TODAS en orden
+            // (regla fija: ningún producto/transacción pedido junto se pierde).
+            const extra = (Array.isArray(result.additional_transactions) ? result.additional_transactions : [])
+                .filter(t => t && (t.type === 'expense' || t.type === 'income') && Number(t.amount) > 0)
+                .map(t => ({
+                    type: t.type,
+                    amount: Number(t.amount),
+                    category: t.category || (t.type === 'expense' ? 'Otros' : 'Ingreso'),
+                    description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso')
+                }));
             if (result.needs_confirmation && result.amount > 0) {
                 fin.pendingConfirm = {
                     type,
                     amount: result.amount,
                     category: cat,
                     description: desc,
-                    date: result.date || 'hoy'
+                    date: result.date || 'hoy',
+                    extra
                 };
-                await say(sock, jid, result.response, ctx);
+                if (extra.length > 0) {
+                    const lineas = extra.map(t => `• ${t.type === 'expense' ? '💸' : '💰'} ${formatMoney(t.amount, fin)} — ${t.description}`).join('\n');
+                    await say(sock, jid, `${result.response}\n\nTambién anoté:\n${lineas}\n\n¿Confirmas TODO? (sí/no)`, ctx);
+                } else {
+                    await say(sock, jid, result.response, ctx);
+                }
             } else if (result.amount > 0) {
                 await saveAndConfirm(sock, jid, type, result.amount, cat, desc, fin, ctx);
+                for (const t of extra) {
+                    await saveAndConfirm(sock, jid, t.type, t.amount, t.category, t.description, fin, ctx);
+                }
             } else {
                 await say(sock, jid, result.response ||
                     (type === 'expense'
@@ -1255,6 +1277,9 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
             await saveLoanAndConfirm(sock, jid, confirm.counterparty, confirm.amount, confirm.direction, fin, ctx);
         } else {
             await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx);
+            for (const t2 of (Array.isArray(confirm.extra) ? confirm.extra : [])) {
+                await saveAndConfirm(sock, jid, t2.type, t2.amount, t2.category, t2.description, fin, ctx);
+            }
         }
         fin.pendingConfirm = null;
     } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
@@ -1838,5 +1863,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage }
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation }
 };

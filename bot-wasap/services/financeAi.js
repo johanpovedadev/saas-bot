@@ -50,6 +50,7 @@ Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con est
   "subcategory": "<subcategoría>",
   "description": "<descripción corta>",
   "date": "<hoy, ayer, fecha específica>",
+  "additional_transactions": [{"type": "expense" | "income", "amount": <número>, "category": "<igual que arriba>", "description": "<corta>"}],
   "needs_confirmation": true/false,
   "loan_counterparty": "<nombre de la persona, solo si intent es register_loan>",
   "loan_direction": "me_deben" | "debo",
@@ -59,6 +60,7 @@ Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con est
 Conceptos clave:
 - register_expense: cuando el usuario reporta una compra ("compré 18k en almuerzo", "pagué 50mil de mercado")
 - register_income: cuando reporta ingreso ("recibí sueldo", "me pagaron 2 millones")
+- Si el mensaje reporta VARIAS transacciones distintas a la vez (ej: "gasté 20mil en comida y 15mil en transporte", "compré 30mil de mercado y recibí 100mil de un amigo"): pon la PRIMERA en los campos de arriba (intent/amount/category/description) y TODAS las demás en "additional_transactions", cada una con su propio "type" (expense o income), amount, category y description. Si solo hay una transacción, deja "additional_transactions" vacío [].
 - register_loan: cuando presta o le prestan plata ("le presté a Juan 50 mil", "María me debe 100 mil", "le debo a Pedro 30 mil"). loan_direction="me_deben" si a el/ella le deben (prestó plata o alguien le debe), "debo" si el/ella debe.
 - query_loans: cuando pregunta por sus préstamos ("préstamos", "quién me debe", "qué debo", "mis préstamos")
 - query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto compré hoy?")
@@ -121,6 +123,7 @@ async function interpret(message, userSession, forceFallback) {
             else if (text.startsWith('```')) text = text.slice(3, -3).trim();
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
+            if (!Array.isArray(parsed.additional_transactions)) parsed.additional_transactions = [];
             return parsed;
         } catch (e) {
             logger.warn(`financeAi intento ${attempt}: ${e.message}`);
