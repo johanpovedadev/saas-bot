@@ -79,7 +79,19 @@ function daysListText() {
 
 function matchDay(text) {
     const t = stripAccents(text).toLowerCase().trim();
-    return DAY_ORDER.find(k => t.includes(k)) || null;
+    const byName = DAY_ORDER.find(k => t.includes(k));
+    if (byName) return byName;
+    // Regla fija: toda seleccion acepta numero ademas de nombre - aunque los
+    // dias se mencionan en texto ("Lunes, Miércoles, Viernes") sin numerarlos
+    // explicitamente, un cliente que responde "1" quiere decir "el primero
+    // que me dijiste". Se mapea por posicion contra los dias disponibles.
+    const bareNum = t.match(/^(\d+)$/);
+    if (bareNum) {
+        const available = getDaysAvailableThisWeek();
+        const idx = parseInt(bareNum[1], 10) - 1;
+        if (idx >= 0 && available[idx]) return available[idx];
+    }
+    return null;
 }
 
 /** true si el texto menciona un dia de la semana que NO es lunes/miercoles/viernes. */
@@ -636,14 +648,34 @@ async function escalateOrReprompt(sock, jid, userSession, ctx, pil, repromptMess
     await say(sock, jid, repromptMessage, ctx);
 }
 
+/**
+ * Encuentra la clase elegida por NÚMERO (posición en la lista mostrada) o
+ * por NOMBRE (día, y si hay varias el mismo día, también la hora) - regla
+ * fija: toda selección acepta número, código o nombre, y esta lista ya
+ * viene numerada Y con el día/hora de cada clase, así que responder con el
+ * día es tan natural como responder con el número.
+ */
+function matchRescheduleOption(t, options) {
+    const num = parseInt(t.trim(), 10);
+    if (num >= 1 && num <= options.length) return options[num - 1];
+    const norm = stripAccents(t).toLowerCase();
+    const byDay = options.filter(o => norm.includes(stripAccents(String(o.day || '')).toLowerCase()));
+    if (byDay.length === 1) return byDay[0];
+    if (byDay.length > 1) {
+        const byDayAndTime = byDay.find(o => norm.includes(stripAccents(String(o.time_label || '')).toLowerCase()));
+        if (byDayAndTime) return byDayAndTime;
+    }
+    return null;
+}
+
 async function handleRescheduleFind(sock, jid, t, userSession, ctx, pil) {
     const options = pil.rescheduleOptions || [];
-    const num = parseInt(t.trim(), 10);
-    if (!(num >= 1 && num <= options.length)) {
+    const match = matchRescheduleOption(t, options);
+    if (!match) {
         return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `Escribe el número de la clase que quieres reagendar.`);
     }
     resetNotUnderstood(pil);
-    pil.rescheduleBookingId = options[num - 1].id;
+    pil.rescheduleBookingId = match.id;
     userSession.phase = PHASE.PILC_RESCHEDULE_DAY;
     await say(sock, jid, `¿Para cuándo la quieres pasar? (${daysListText()})`, ctx);
 }
@@ -848,6 +880,6 @@ module.exports = {
     _internal: {
         AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList,
         commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek,
-        hasActiveBookingOnDay, isBookingWithinCutoff, slotDateTime
+        hasActiveBookingOnDay, isBookingWithinCutoff, slotDateTime, matchRescheduleOption
     }
 };
