@@ -158,6 +158,10 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
       // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[POST_ADD_OPTIONS] Opción inválida: "${t}"`);
 
+    // El flow con IA decide subir o no errorCount puertas adentro de su
+    // propio handleNotUnderstood (ver products.handler.js#handleNoProductsFoundEmpathic
+    // para la explicacion completa de por qué no se sube acá a ciegas antes
+    // de intentar la IA - hacerlo escalaba conversaciones normales por error).
     try {
         const flowRegistry = require('./flowRegistry');
         const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
@@ -169,9 +173,8 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
         logger.error(`[${jid}] Error delegando post_add_options a IA: ${aiErr.message}`);
     }
 
+    // Sin flow con IA: acá SÍ hay que subir el contador nosotros mismos.
     userSession.errorCount = (userSession.errorCount || 0) + 1;
-    
-    // ✅ Sistema de frustración después de 2 errores
     if (userSession.errorCount >= 2) {
         await frustrationService.handleFrustration(
             sock, jid, userSession, ctx,
@@ -179,13 +182,13 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
         );
         return; // Salir del flujo, admin se hace cargo
     }
-    
-    await say(sock, jid, 
+
+    await say(sock, jid,
         '❌ Opción no válida. Por favor elige:\n\n' +
         '1️⃣ Seguir comprando\n' +
         '2️⃣ Ir a pagar\n' +
         '3️⃣ Menú principal\n\n' +
-        'Escribe el número de la opción.', 
+        'Escribe el número de la opción.',
         ctx
     );
 }

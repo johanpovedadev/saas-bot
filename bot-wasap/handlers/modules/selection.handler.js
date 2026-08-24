@@ -137,7 +137,10 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
         userSession.awaitingField = 'quantity';
         await handleSelectQuantity(sock, jid, normalizedInput, userSession, ctx);
     } else {
-        // Modo híbrido: intentar IA antes del mensaje genérico
+        // Modo híbrido: intentar IA antes del mensaje genérico. El flow con
+        // IA decide subir o no errorCount puertas adentro (ver
+        // handleNoProductsFoundEmpathic en products.handler.js para la
+        // explicacion completa de por qué no se sube acá a ciegas).
         try {
             const flowRegistry = require('../flowRegistry');
             const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
@@ -148,6 +151,8 @@ async function handleSelectDetails(sock, jid, input, userSession, ctx) {
         } catch (aiErr) {
             logger.error(`[${jid}] Error delegando selección de detalles a IA: ${aiErr.message}`);
         }
+        // Sin flow con IA: acá SÍ hay que subir el contador nosotros mismos.
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         const msg = `❌ No entendí tu respuesta. Por favor, selecciona ${nomenclature.itemPrimaryPlural} (S1), ${nomenclature.itemSecondaryPlural} (T1) o indica la cantidad.`;
         await say(sock, jid, msg, ctx);
     }

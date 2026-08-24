@@ -1979,8 +1979,22 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
         await sendMenuImages(sock, jid, ctx);
     }
 
+    // Bug real: esta funcion es el punto de entrada de TODO mensaje libre no
+    // reconocido por el flujo determinista (menu principal, busqueda de
+    // producto, seleccion de sabores/toppings, post_add_options - se llama
+    // desde 5 sitios distintos), y nunca tocaba userSession.errorCount en
+    // absoluto. Un cliente podia mandar mensajes que la IA jamas lograra
+    // entender (classifyOrderInput siempre devuelve false) indefinidamente
+    // sin que el chequeo global de handler.js se enterara nunca - la IA
+    // respondia algo cada vez, pero nunca escalaba a un humano. Mismo
+    // patron ya corregido en pescaderia.flow.js#routeIntent: sube el
+    // contador solo si de verdad no se entendio nada, lo resetea si si.
     const handled = await classifyOrderInput(sock, jid, text, userSession, ctx);
-    if (handled) return;
+    if (handled) {
+        userSession.errorCount = 0;
+        return;
+    }
+    userSession.errorCount = (userSession.errorCount || 0) + 1;
     await genericGuidedError(sock, jid, userSession, ctx);
 }
 

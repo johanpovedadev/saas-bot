@@ -21,9 +21,20 @@ const flowRegistry = require('./handlers/flowRegistry');
 const pescaderiaFlow = require('./handlers/flows/pescaderia.flow.js');
 const sessionService = require('./services/sessionService');
 const notificationService = require('./services/notificationService');
+const restaurantAi = require('./services/restaurantAi');
 const PHASE = require('./utils/phases');
 
 flowRegistry.register('pescaderia', pescaderiaFlow);
+
+// Sin esto, este test llamaba a la IA REAL de pescaderia (restaurantAi.interpret)
+// para clasificar los mensajes "invalidos" - la clasificacion en vivo no es
+// deterministica (a veces el modelo clasificaba distinto entre corridas),
+// haciendo que las aserciones de errorCount fallaran intermitentemente sin
+// que hubiera ningun bug real. Se mockea a un intent "chat" fijo (mensaje
+// entendido como charla, pero que no resuelve nada del checkout) - mismo
+// patron que test_heladeria_checkout_escalation.js usa para heladeriaAi.
+const originalRestaurantAiInterpret = restaurantAi.interpret;
+restaurantAi.interpret = async () => ({ intent: 'chat', response: 'Entiendo que puede ser confuso, ¿en qué te ayudo?' });
 
 function testJid(n) { return `573000008${String(n).padStart(3, '0')}@c.us`; }
 
@@ -150,6 +161,7 @@ async function withNotifyMock(fn) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
+        restaurantAi.interpret = originalRestaurantAiInterpret;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

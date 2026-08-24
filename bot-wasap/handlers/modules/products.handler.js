@@ -179,7 +179,12 @@ async function handleMultipleProductsFoundEmpathic(sock, jid, productos, userSes
  * @returns {Promise<void>}
  */
 async function handleNoProductsFoundEmpathic(sock, jid, userSession, ctx, originalQuery) {
-    // Modo híbrido: si algún flow expone IA, delegar antes del mensaje genérico
+    // Modo híbrido: si algún flow expone IA, delegar antes del mensaje
+    // genérico. El flow con IA (heladeria/pescaderia) es quien decide subir
+    // o no errorCount dentro de su propio handleNotUnderstood - segun si de
+    // verdad no entendió nada o si esto era charla/otra intención válida.
+    // Subirlo acá siempre, sin importar el resultado, hacía que mensajes
+    // normales escalaran por error (ver menu.handler.js para el mismo caso).
     try {
         const flowRegistry = require('../flowRegistry');
         const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
@@ -191,20 +196,21 @@ async function handleNoProductsFoundEmpathic(sock, jid, userSession, ctx, origin
         logger.error(`[${jid}] Error delegando búsqueda sin resultados a IA: ${aiErr.message}`);
     }
 
+    // Sin flow con IA: acá SÍ hay que subir el contador nosotros mismos.
     userSession.errorCount++;
-    
+
     // ✅ Detectar frustración después de 2 errores consecutivos
     if (userSession.errorCount >= 2) {
         await frustrationService.handleFrustration(
-            sock, 
-            jid, 
-            userSession, 
-            ctx, 
+            sock,
+            jid,
+            userSession,
+            ctx,
             `${userSession.errorCount} productos no encontrados consecutivos`
         );
         return; // Admin se hará cargo
     }
-    
+
     // Mensaje empático según el número de errores
     if (userSession.errorCount >= 3) {
         const message = empathy.getFrustrationRecoveryMessage(userSession.errorCount);
@@ -542,7 +548,10 @@ async function handleProductSelection(sock, jid, input, userSession, ctx) {
     
     if (!producto) {
         logger.warn(`[${jid}] -> No se encontró producto con input: "${input}"`);
-        // Modo híbrido: delegar a la IA antes del mensaje genérico
+        // Modo híbrido: delegar a la IA antes del mensaje genérico. El flow
+        // con IA decide subir o no errorCount puertas adentro (ver
+        // handleNoProductsFoundEmpathic mas arriba para la explicacion
+        // completa de por qué no se sube acá a ciegas).
         try {
             const flowRegistry = require('../flowRegistry');
             const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
@@ -553,9 +562,11 @@ async function handleProductSelection(sock, jid, input, userSession, ctx) {
         } catch (aiErr) {
             logger.error(`[${jid}] Error delegando selección sin producto a IA: ${aiErr.message}`);
         }
-        await say(sock, jid, 
+        // Sin flow con IA: acá SÍ hay que subir el contador nosotros mismos.
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
+        await say(sock, jid,
             `❌ No encontré ese producto en la lista.\n\n` +
-            `Por favor escribe el *número* (ejemplo: 1) o el *nombre exacto* del producto que deseas. 😊`, 
+            `Por favor escribe el *número* (ejemplo: 1) o el *nombre exacto* del producto que deseas. 😊`,
             ctx
         );
         return;

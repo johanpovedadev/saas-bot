@@ -115,8 +115,18 @@ async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
             await handleEncargoOption(sock, jid, userSession, ctx);
             break;        default:
             logger.warn(`[${jid}] -> Opción de menú desconocida: ${option}`);
-            
-            // Modo híbrido: si algún flow expone IA, delegar texto libre antes del mensaje genérico
+
+            // Modo híbrido: si algún flow expone IA, delegar texto libre
+            // antes del mensaje generico. IMPORTANTE: el errorCount de este
+            // caso NO se sube acá arriba a ciegas - el flow con IA (ej.
+            // heladeria/pescaderia) ya sabe distinguir "esto fue charla
+            // entendida" (no debe contar como error) de "esto no se
+            // entendió nada" (sí debe contar), y es quien decide subir o
+            // resetear errorCount puertas adentro de su propio
+            // handleNotUnderstood. Subirlo acá siempre, sin importar si la
+            // IA entendió o no, hacía que 2 mensajes normales de charla
+            // ("gracias", "quiero un pargo" fuera de catálogo) escalaran
+            // por error - bug real encontrado en regresión.
             try {
                 const flowRegistry = require('../flowRegistry');
                 const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
@@ -127,12 +137,12 @@ async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
             } catch (aiErr) {
                 logger.error(`[${jid}] Error delegando opción inválida a IA: ${aiErr.message}`);
             }
-            
-            // Incrementar contador de errores
+
+            // Sin flow con IA: acá SÍ hay que subir el contador nosotros
+            // mismos, no hay nadie más que lo haga.
             userSession.errorCount = (userSession.errorCount || 0) + 1;
             logger.info(`[${jid}] errorCount: ${userSession.errorCount}`);
-            
-            // Activar sistema de frustración si hay 2+ errores consecutivos
+
             if (userSession.errorCount >= 2) {
                 await frustrationService.handleFrustration(
                     sock, jid, userSession, ctx,
@@ -140,7 +150,7 @@ async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
                 );
                 return; // Salir del flujo, admin se hace cargo
             }
-            
+
             const maxOption = activeOptions.length;
             await say(sock, jid, `❌ Opción no válida. Por favor, elige un número del 1 al ${maxOption}.`, ctx);
             await sendMainMenu(sock, jid, ctx);
