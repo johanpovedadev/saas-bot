@@ -772,14 +772,24 @@ function mapCodeToItem(token, list, prefix, dbFields, jid) {
     const nomenclature = envConfig.nomenclature;
     const t = String(token).trim().toLowerCase();
     const m = t.match(new RegExp(`^${prefix}(\\d+)$`, 'i'));
-    
+
     // Si es un código válido (ej: S1, T2)
     if (m) {
         const idx = parseInt(m[1], 10) - 1;
         if (idx >= 0 && list && list[idx]) return list[idx];
         return null;
     }
-    
+
+    // Regla fija: toda selección acepta número, código o nombre. Un número
+    // "pelado" (sin prefijo S/T, ej: "1" en vez de "S1") es tan válido como
+    // el código - se interpreta como la posición en la lista mostrada.
+    const bareNum = t.match(/^(\d+)$/);
+    if (bareNum) {
+        const idx = parseInt(bareNum[1], 10) - 1;
+        if (idx >= 0 && list && list[idx]) return list[idx];
+        return null;
+    }
+
     // Si no es código, buscar por nombre usando el campo genérico
     if (list && list.length) {
         const nameField = dbFields.productName;

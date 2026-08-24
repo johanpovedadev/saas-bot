@@ -446,8 +446,11 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
         return;
     }
 
+    // Regla fija: la seleccion acepta numero, codigo (S<n>) o nombre - un
+    // numero "pelado" (ej. "1" en vez de "S1") es tan valido como el codigo
+    // en este paso (no hay ambiguedad con cantidad aca, esa fase es distinta).
     const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
-        .filter(t => !SABOR_STOPWORDS.has(t) && t.length >= 2);
+        .filter(t => !SABOR_STOPWORDS.has(t) && (t.length >= 2 || /^\d+$/.test(t)));
     // Repetición deliberada del MISMO token ("lulo lulo" = 2 bolas de lulo) se
     // cuenta como 2 sabores. Dos tokens DISTINTOS que resuelven al mismo sabor
     // ("lulo" + "maracuya" → "Lulo Maracuya") son el mismo sabor nombrado de
@@ -456,7 +459,7 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
     const tokenProduct = new Map();
     for (const tok of tokens) {
         if (flow.saboresSeleccionados.length >= flow.counts.sabores) break;
-        const m = tok.match(/^s(\d+)$/i);
+        const m = tok.match(/^s(\d+)$/i) || tok.match(/^(\d+)$/);
         let sabor = null;
         if (m) {
             const idx = parseInt(m[1], 10) - 1;
@@ -830,15 +833,18 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
         return;
     }
 
+    // Regla fija: la seleccion acepta numero, codigo (S<n>) o nombre - un
+    // numero "pelado" (ej. "1" en vez de "S1") es tan valido como el codigo
+    // en este paso (no hay ambiguedad con cantidad aca, esa fase es distinta).
     const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
-        .filter(t => !SABOR_STOPWORDS.has(t) && t.length >= 2);
+        .filter(t => !SABOR_STOPWORDS.has(t) && (t.length >= 2 || /^\d+$/.test(t)));
     // Misma lógica que handleSabores: repetición deliberada del mismo token se
     // cuenta; dos tokens distintos que resuelven al mismo sabor se cuentan una vez.
     const pushedThisMessage = new Set();
     const tokenProduct = new Map();
     for (const tok of tokens) {
         if (customization.currentSabores.length >= flow.counts.sabores) break;
-        const m = tok.match(/^s(\d+)$/i);
+        const m = tok.match(/^s(\d+)$/i) || tok.match(/^(\d+)$/);
         let sabor = null;
         if (m) {
             const idx = parseInt(m[1], 10) - 1;
