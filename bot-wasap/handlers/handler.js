@@ -347,13 +347,24 @@ async function processIncomingMessage(sock, messageData, ctx) {
         //   loop (ver _test_conchita.js).
         // Ambos casos quedan protegidos igual por el chequeo global de
         // errorCount más abajo si de verdad el cliente queda atascado.
+        //
+        // IMPORTANTE: checkMessageLoop debe llamarse SIEMPRE, en TODO mensaje,
+        // para que lastMessageText seguí el último texto real - la excepción
+        // de abajo solo debe suprimir la ESCALADA, no el registro. Bug real
+        // encontrado con testing exhaustivo (_validate_heladeria.js): si se
+        // salta la llamada durante las fases exentas, lastMessageText queda
+        // "congelado" en el último mensaje de una fase NO exenta - y un
+        // mensaje futuro y no relacionado (ej. "1" para cantidad, varias fases
+        // después) puede coincidir por pura casualidad con ese texto viejo y
+        // disparar una escalada falsa.
         const REPEAT_ALLOWED_PHASES = new Set([
             PHASE.HELADO_SABORES, PHASE.HELADO_TOPPINGS,
             PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
             PHASE.SELECCION_PRODUCTO
         ]);
+        const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
-            frustrationService.checkMessageLoop(userSession, text)) {
+            isMessageLoop) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {
                 try {
