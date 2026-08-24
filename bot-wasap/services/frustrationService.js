@@ -3,6 +3,7 @@
 
 const { say } = require('./bot_core');
 const notificationService = require('./notificationService');
+const waitingHumanStore = require('./waitingHumanStore');
 const PHASE = require('../utils/phases');
 const { logger } = require('../utils/logger');
 
@@ -182,6 +183,12 @@ async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustrac
         userSession.phase = PHASE.WAITING_HUMAN;
         userSession.frustrationReason = reason;
         userSession.frustrationTimestamp = Date.now();
+        // Registro compartido para que el panel web (otro proceso, no ve
+        // userSession en memoria) pueda listar/reactivar este chat. Se hace
+        // ACÁ (no solo en el chequeo global de handler.js) porque el camino
+        // de detección de loop llama a esta función y hace `return`
+        // inmediato, sin pasar por ese chequeo global después.
+        waitingHumanStore.markWaiting(process.env.BUSINESS_KEY, jid, reason);
         
         // Resetear contadores de error para evitar múltiples notificaciones
         userSession.errorCount = 0;

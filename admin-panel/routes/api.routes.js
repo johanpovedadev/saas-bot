@@ -30,7 +30,8 @@ router.get('/businesses', async (req, res) => {
             pid: status.pid,
             uptime: status.uptime,
             ownerJid: botControl.getOwner(key),
-            mutedCount: botControl.listMuted(key).length
+            mutedCount: botControl.listMuted(key).length,
+            waitingHumanCount: botControl.listWaitingHuman(key).length
         };
     });
     res.json({ businesses });
@@ -59,6 +60,15 @@ router.post('/businesses/:key/mute', requireBusinessScope, (req, res) => {
 
 router.post('/businesses/:key/unmute', requireBusinessScope, (req, res) => {
     const result = botControl.unmute(req.params.key, req.body.number);
+    res.status(result.ok ? 200 : 400).json(result);
+});
+
+router.get('/businesses/:key/waiting-human', requireBusinessScope, (req, res) => {
+    res.json({ waiting: botControl.listWaitingHuman(req.params.key) });
+});
+
+router.post('/businesses/:key/reactivate', requireBusinessScope, (req, res) => {
+    const result = botControl.reactivate(req.params.key, req.body.number);
     res.status(result.ok ? 200 : 400).json(result);
 });
 

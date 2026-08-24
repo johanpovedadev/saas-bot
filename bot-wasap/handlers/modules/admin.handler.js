@@ -13,6 +13,7 @@ const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
 const frustrationService = require('../../services/frustrationService');
 const mutedStore = require('../../services/mutedStore');
+const waitingHumanStore = require('../../services/waitingHumanStore');
 
 /**
  * Obtiene los JIDs de los administradores
@@ -335,6 +336,7 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
             const currentFlow = flowRegistry.getTenantFlow();
             const initialPhase = currentFlow ? currentFlow.getInitialPhase() : require('../../utils/phases').SELECCION_OPCION;
             frustrationService.reactivateBot?.(sess, initialPhase);
+            waitingHumanStore.clearWaiting(process.env.BUSINESS_KEY, target);
             logger.info(`[${target}] -> Admin reactivó bot después de atender frustración`);
         }
         

@@ -27,6 +27,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const empathy = require('../utils/empathyMessages');
 const frustrationService = require('../services/frustrationService');
+const waitingHumanStore = require('../services/waitingHumanStore');
 
 // ===================================
 // IMPORTS - Specialized Modules
@@ -206,10 +207,10 @@ async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
     // Las fases INS_* manejan su propio errorCount, se les da margen mayor
     const isInsurancePhase = userSession.phase && userSession.phase.toLowerCase().startsWith('ins_');
     const frustrationThreshold = isInsurancePhase ? 5 : 2;
+    const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
     if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
         logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);
 
-        const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
         if (customNotifyFlow) {
             // Bots que no son de WhatsApp (hoy: Leo/Telegram) nunca se
             // silencian - solo se avisa al admin, el bot sigue respondiendo.
@@ -229,6 +230,19 @@ async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
             if (isFrustrated) {
                 logger.info(`[${jid}] ✅ Usuario derivado a admin por frustración global`);
             }
+        }
+    }
+
+    // Sincroniza con el registro compartido (waitingHumanStore) para que el
+    // panel web — que corre en OTRO proceso y no ve userSession en memoria —
+    // pueda listar y reactivar estos chats. Se salta para bots tipo Leo
+    // (notifyHumanEscalation): esos nunca pasan a WAITING_HUMAN, no hay nada
+    // que sincronizar.
+    if (!customNotifyFlow) {
+        if (userSession.phase === PHASE.WAITING_HUMAN) {
+            waitingHumanStore.markWaiting(process.env.BUSINESS_KEY, jid, userSession.frustrationReason || 'Esperando atención humana');
+        } else {
+            waitingHumanStore.clearWaiting(process.env.BUSINESS_KEY, jid);
         }
     }
 }
@@ -275,7 +289,27 @@ async function processIncomingMessage(sock, messageData, ctx) {
             }
             return;
         }
-        
+
+        // 4.5 Reactivación SILENCIOSA desde el panel web: a diferencia del
+        // comando de WhatsApp "reactivar mia" (que le avisa al cliente "un
+        // administrador te reactivó"), reactivar desde el panel no debe
+        // notificarle nada — pedido explícito del negocio, para que el
+        // cliente no se dé cuenta de que se está reactivando de nuevo. Si
+        // sigue en WAITING_HUMAN pero el panel ya lo sacó del registro
+        // compartido, se resetea la fase y se le muestra el saludo normal.
+        if (userSession.phase === PHASE.WAITING_HUMAN && !waitingHumanStore.isWaiting(process.env.BUSINESS_KEY, jid)) {
+            const fallbackPhase = currentFlow ? currentFlow.getInitialPhase() : PHASE.SELECCION_OPCION;
+            logger.info(`[${jid}] Reactivado desde el panel web — reseteando fase a ${fallbackPhase}`);
+            userSession.phase = fallbackPhase;
+            userSession.errorCount = 0;
+            if (currentFlow) {
+                await currentFlow.showWelcome(sock, jid, ctx);
+            } else {
+                await menuHandler.sendMainMenu(sock, jid, ctx);
+            }
+            return;
+        }
+
         logger.debug(`[${jid}] 📍 Fase actual: ${userSession.phase}`);
         
         // 5. Log de conversación

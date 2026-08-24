@@ -40,6 +40,7 @@ async function refreshAllStatuses() {
 async function refreshCardDetails(card) {
     await refreshQr(card);
     await refreshMuted(card);
+    await refreshWaitingHuman(card);
     await refreshLogs(card);
     await refreshLeads(card);
     await refreshFinanceStats(card);
@@ -81,6 +82,50 @@ async function refreshMuted(card) {
                 try {
                     await api(`/businesses/${key}/unmute`, { method: 'POST', body: JSON.stringify({ number: btn.dataset.unmuteJid }) });
                     refreshMuted(card);
+                } catch (e) {
+                    alert(e.message);
+                    btn.disabled = false;
+                }
+            });
+        });
+    } catch (e) {
+        list.innerHTML = `<li>Error: ${e.message}</li>`;
+    }
+}
+
+// "hace 5 min" / "hace 2 h" / "hace 3 d" - legible sin ser una fecha completa.
+function timeAgo(ms) {
+    if (!ms) return '';
+    const mins = Math.floor((Date.now() - ms) / 60000);
+    if (mins < 1) return 'recién';
+    if (mins < 60) return `hace ${mins} min`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `hace ${hours} h`;
+    return `hace ${Math.floor(hours / 24)} d`;
+}
+
+async function refreshWaitingHuman(card) {
+    const list = card.querySelector('[data-waiting-human-list]');
+    if (!list) return; // Telegram card no tiene esta seccion (Leo nunca se apaga)
+    const key = card.dataset.key;
+    try {
+        const { waiting } = await api(`/businesses/${key}/waiting-human`);
+        list.innerHTML = waiting.length
+            ? waiting.map(w => `
+                <li>
+                  <span class="waiting-info">
+                    <strong>${w.jid.split('@')[0]}</strong>
+                    <span class="waiting-reason">${escapeHtml(w.reason || 'Esperando atención humana')} · ${timeAgo(w.since)}</span>
+                  </span>
+                  <button type="button" class="btn btn-unmute-one" data-reactivate-jid="${w.jid.split('@')[0]}">Reactivar ✕</button>
+                </li>`).join('')
+            : '<li>Nadie esperando atención humana ahora mismo.</li>';
+        list.querySelectorAll('[data-reactivate-jid]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    await api(`/businesses/${key}/reactivate`, { method: 'POST', body: JSON.stringify({ number: btn.dataset.reactivateJid }) });
+                    refreshWaitingHuman(card);
                 } catch (e) {
                     alert(e.message);
                     btn.disabled = false;

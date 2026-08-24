@@ -11,6 +11,7 @@ const BOT_WASAP_SERVICES = path.join(__dirname, '..', '..', 'bot-wasap', 'servic
 const pm2Control = require(path.join(BOT_WASAP_SERVICES, 'pm2Control'));
 const botRegistry = require(path.join(BOT_WASAP_SERVICES, 'botRegistry'));
 const mutedStore = require(path.join(BOT_WASAP_SERVICES, 'mutedStore'));
+const waitingHumanStore = require(path.join(BOT_WASAP_SERVICES, 'waitingHumanStore'));
 
 const PHONE_RE = /\d{7,15}/;
 
@@ -56,4 +57,24 @@ function unmute(businessKey, rawNumber) {
     return { ok: true };
 }
 
-module.exports = { start, stop, getOwner, getAllOwners, listMuted, mute, unmute, resolveAppName: pm2Control.resolveAppName };
+function listWaitingHuman(businessKey) {
+    return waitingHumanStore.listWaiting(businessKey);
+}
+
+/**
+ * Reactiva un chat en espera de humano DESDE EL PANEL — a diferencia del
+ * comando de WhatsApp "reactivar mia", esto es silencioso: el cliente no
+ * recibe ningún aviso de que fue reactivado (pedido explícito del negocio).
+ * Solo quita la entrada del registro compartido; el bot vivo detecta esto
+ * en el siguiente mensaje del cliente y le resetea la fase ahí (ver
+ * handlers/handler.js).
+ * @returns {{ok:boolean, error?:string}}
+ */
+function reactivate(businessKey, rawNumber) {
+    const digits = normalizeNumber(rawNumber);
+    if (!PHONE_RE.test(digits)) return { ok: false, error: 'Número inválido (debe tener entre 7 y 15 dígitos).' };
+    waitingHumanStore.clearWaiting(businessKey, `${digits}@c.us`);
+    return { ok: true };
+}
+
+module.exports = { start, stop, getOwner, getAllOwners, listMuted, mute, unmute, listWaitingHuman, reactivate, resolveAppName: pm2Control.resolveAppName };
