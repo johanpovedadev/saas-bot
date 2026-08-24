@@ -206,7 +206,7 @@ function matchOfferedSlot(text, offered) {
  * reserva. Devuelve { ok: true, booking } o { ok: false, reason: 'llena' }
  * si alguien mas tomo el ultimo cupo entre la oferta y la confirmacion.
  */
-async function commitBooking(jid, name, phone, day, dateISO, slot) {
+async function commitBooking(jid, name, phone, day, dateISO, slot, isCortesia = false) {
     const session = pilatesStore.findOrCreateSession(day, dateISO, slot.start, slot.end);
     if (!session) return { ok: false, reason: 'error' };
     const wasEmpty = session.booked_count === 0;
@@ -225,7 +225,12 @@ async function commitBooking(jid, name, phone, day, dateISO, slot) {
                     dateISO,
                     startTime: slot.start,
                     endTime: slot.end,
-                    notes: 'Clase grupal — Bri Pilates (clientas recurrentes)'
+                    // Marca visible para Bri: sabe de un vistazo en su Calendar
+                    // quién viene por primera vez (clase de cortesía) para
+                    // recibirla distinto y darle seguimiento despues.
+                    notes: isCortesia
+                        ? `🎁 CLASE DE CORTESÍA (primera vez) — ${name}, tel: ${phone}`
+                        : 'Clase grupal — Bri Pilates (clientas recurrentes)'
                 });
                 if (result.synced) {
                     eventId = result.eventId;
@@ -244,7 +249,7 @@ async function commitBooking(jid, name, phone, day, dateISO, slot) {
     pilatesStore.saveBooking({
         id, jid, name, phone, day: AVAILABLE_DAYS[day], timeLabel: slot.label,
         status: 'confirmada', sessionId: session.id,
-        calendarSynced: !!eventId, calendarEventId: eventId
+        calendarSynced: !!eventId, calendarEventId: eventId, isCortesia
     });
 
     return { ok: true, bookingId: id, wasFirstOfSession: wasEmpty };
@@ -385,9 +390,32 @@ async function handleCreditLimitConfirm(sock, jid, t, userSession, ctx, pil) {
 }
 
 async function startAgendar(sock, jid, userSession, ctx, pil) {
-    const ok = await requireRegisteredClient(sock, jid, ctx, isRegisteredClient,
-        `😅 No te encuentro en la lista de clientas de Bri todavía. Te conecto con ella para que te registre.`);
-    if (!ok) return await handleTalkToBri(sock, jid, 'No aparece en la lista de clientas', userSession, ctx, pil);
+    const registered = await isRegisteredClient(jid);
+    if (!registered) {
+        // Clienta nueva (no en el roster de Bri): en vez de cortar el flujo
+        // y mandarla directo a hablar con Bri, puede agendar UNA clase de
+        // cortesía por su cuenta, en los mismos horarios de siempre —
+        // is_cortesia queda marcado en la reserva para que no pueda agendar
+        // una segunda "gratis" (ver pilatesStore.hasUsedCortesia).
+        if (pilatesStore.hasUsedCortesia(jid)) {
+            await say(sock, jid,
+                `😊 Ya viviste tu clase de cortesía con nosotras — ¡me encantaría que sigas viniendo! Te conecto con Bri para armar tu plan mensual 🙌`,
+                ctx);
+            return await handleTalkToBri(sock, jid, 'Ya uso su clase de cortesia, quiere seguir agendando', userSession, ctx, pil);
+        }
+        if (getDaysAvailableThisWeek().length === 0) {
+            userSession.phase = PHASE.PILC_MENU;
+            await say(sock, jid, `😅 Esta semana ya no quedan días disponibles para tu clase de cortesía. Escríbeme la próxima semana y te la agendo con gusto 🧘‍♀️`, ctx);
+            return;
+        }
+        pil.mode = 'cortesia';
+        userSession.phase = PHASE.PILC_ASK_DAY;
+        await say(sock, jid,
+            `🎁 ¡Qué lindo que quieras conocernos! Tu primera clase va *por cuenta de la casa* — una clase de cortesía para que sientas en carne propia cómo el pilates te cambia el cuerpo y la energía desde el primer día.\n\n` +
+            `¿Qué día te gustaría vivirla? (${daysListText()})`,
+            ctx);
+        return;
+    }
 
     if (await checkCreditLimitOrEscalate(sock, jid, userSession, ctx, pil)) return;
 
@@ -399,7 +427,7 @@ async function startAgendar(sock, jid, userSession, ctx, pil) {
 
     pil.mode = 'agendar';
     userSession.phase = PHASE.PILC_ASK_DAY;
-    await say(sock, jid, `¡Con gusto! ¿Qué día prefieres? (${daysListText()})`, ctx);
+    await say(sock, jid, `¡Con gusto! Vamos a encontrar tu momento ideal de esta semana 🧘‍♀️ ¿Qué día prefieres? (${daysListText()})`, ctx);
 }
 
 /**
@@ -533,17 +561,23 @@ async function handleConfirm(sock, jid, t, userSession, ctx, pil) {
         return;
     }
 
-    const result = await commitBooking(jid, name, phone, pil.newDay, pil.newDateISO, pil.newSlot);
+    const isCortesia = pil.mode === 'cortesia';
+    const result = await commitBooking(jid, name, phone, pil.newDay, pil.newDateISO, pil.newSlot, isCortesia);
     if (!result.ok) {
         userSession.phase = PHASE.PILC_ASK_DAY;
         await say(sock, jid, `😅 Justo se acabó ese cupo. ¿Probamos otro día u horario? (${daysListText()})`, ctx);
         return;
     }
     userSession.phase = PHASE.PILC_MENU;
-    await say(sock, jid,
-        `Listo ✅ así quedó, *${name}*: *${AVAILABLE_DAYS[pil.newDay]}* a las *${pil.newSlot.label}*.\n\n` +
-        `Nos vemos en la clase 🙌`,
-        ctx);
+    // Branding emocional: el "que vas a lograr/sentir" pesa mas que el dato
+    // logistico solo (dia/hora) para que la persona llegue con ganas, no
+    // solo con la cita anotada en el calendario.
+    const successMsg = isCortesia
+        ? `¡Listo, *${name}*! 🎁 Tu clase de cortesía quedó agendada para *${AVAILABLE_DAYS[pil.newDay]}* a las *${pil.newSlot.label}*.\n\n` +
+          `Preparate para sentir cómo se despierta tu cuerpo, se despeja tu mente, y te vas con esa energía que solo el pilates te regala. ¡Te esperamos! 🧘‍♀️✨`
+        : `Listo ✅ así quedó, *${name}*: *${AVAILABLE_DAYS[pil.newDay]}* a las *${pil.newSlot.label}*.\n\n` +
+          `Ese ratito ya es tuyo — para moverte, respirar y salir sintiéndote más fuerte y en paz. ¡Nos vemos en la clase! 🧘‍♀️💪`;
+    await say(sock, jid, successMsg, ctx);
 }
 
 async function startReschedule(sock, jid, userSession, ctx, pil) {
@@ -720,7 +754,7 @@ async function handleFallback(sock, jid, text, userSession, ctx, pendingQuestion
  */
 async function handleSaturdayReply(sock, jid, t, userSession, ctx, pil) {
     const low = stripAccents(t).toLowerCase();
-    if (/^1|igual|mismo|^2|cambiar|^3|no|salt|pausa/.test(low)) resetNotUnderstood(pil);
+    if (/^1|igual|mismo|^2|cambiar|no|salt|pausa/.test(low)) resetNotUnderstood(pil);
     if (/^1|igual|mismo/.test(low)) {
         const day = pil.saturdayDay;
         const timeKey = extractTimeKey(pil.saturdayTime || '');
@@ -743,7 +777,7 @@ async function handleSaturdayReply(sock, jid, t, userSession, ctx, pil) {
         const result = await commitBooking(jid, name, phone, day, dateISO, slot);
         userSession.phase = PHASE.PILC_MENU;
         if (result.ok) {
-            await say(sock, jid, `Listo ✅ te agendé igual que siempre: *${AVAILABLE_DAYS[day]}* a las *${slot.label}*. ¡Nos vemos! 🙌`, ctx);
+            await say(sock, jid, `Listo ✅ te agendé igual que siempre: *${AVAILABLE_DAYS[day]}* a las *${slot.label}*.\n\nEse ratito ya es tuyo — para moverte, respirar y salir mejor de cómo llegaste. ¡Nos vemos! 🧘‍♀️🙌`, ctx);
         } else {
             await say(sock, jid, `😅 Justo se acabó el cupo. Escribe *2* para elegir otro horario.`, ctx);
         }
@@ -755,14 +789,18 @@ async function handleSaturdayReply(sock, jid, t, userSession, ctx, pil) {
         await say(sock, jid, `¡Con gusto! ¿Qué día prefieres esta semana? (${daysListText()})`, ctx);
         return;
     }
-    if (/^3|no|salt|pausa/.test(low)) {
+    // "Esta semana no" ya no se ofrece como opción numerada (pedido
+    // explícito: que no sea fácil saltarse la clase) — pero si alguien
+    // de verdad no puede ir y lo dice con sus propias palabras, se sigue
+    // reconociendo como salida oculta, sin dejarla en un loop.
+    if (/no|salt|pausa/.test(low)) {
         const weekOf = nextDateForDay('lunes');
         pilatesStore.savePause(jid, weekOf);
         userSession.phase = PHASE.PILC_MENU;
-        await say(sock, jid, `Entendido, esta semana no te agendo. ¡Nos vemos la próxima! 🙌`, ctx);
+        await say(sock, jid, `Entendido, esta semana no te agendo. ¡Te voy a extrañar! Nos vemos la próxima 🙌`, ctx);
         return;
     }
-    return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `Responde *1* (igual que siempre), *2* (cambiar horario) o *3* (esta semana no).`);
+    return await escalateOrReprompt(sock, jid, userSession, ctx, pil, `Responde *1* (igual que siempre) o *2* (cambiar horario).`);
 }
 
 module.exports = {

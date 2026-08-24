@@ -13,11 +13,14 @@ const pilatesStore = require('./pilatesStore');
 const sessionService = require('./sessionService');
 const { sendStaggered, pickRandom } = require('./humanBroadcast');
 
+// Branding emocional: el recordatorio es el ultimo mensaje antes de llegar
+// a la clase - el momento justo para que la persona se emocione con lo que
+// va a SENTIR (energia, fuerza, calma), no solo confirmar la hora.
 const REMINDER_VARIANTS = [
-    (nombre, timeLabel) => `¡Hola ${nombre}! 🧘‍♀️ Solo para recordarte que tu clase es hoy a las ${timeLabel} — ¡nos vemos ahí!`,
-    (nombre, timeLabel) => `${nombre}, tu clase de hoy es a las ${timeLabel} 🙌 ¡te espero!`,
-    (nombre, timeLabel) => `Hola ${nombre} 🧘‍♀️ Recordatorio rapidito: tu clase de hoy arranca a las ${timeLabel}.`,
-    (nombre, timeLabel) => `¡Ey ${nombre}! Tu clase de hoy es a las ${timeLabel} 🧘‍♀️ nos vemos pronto.`
+    (nombre, timeLabel) => `¡Hola ${nombre}! 🧘‍♀️ En un rato es tu momento — ${timeLabel}. Llegá lista para sentirte increíble. ¡Nos vemos!`,
+    (nombre, timeLabel) => `${nombre}, faltan minutos para tu clase de las ${timeLabel} 🔥 Vas a salir con otra energía. ¡Te espero!`,
+    (nombre, timeLabel) => `Hola ${nombre} 🧘‍♀️ Tu clase arranca a las ${timeLabel} — este ratito es tuyo. ¡Nos vemos ahí!`,
+    (nombre, timeLabel) => `¡Ey ${nombre}! A las ${timeLabel} es tu clase 💪 Prepará tu mejor versión de hoy. ¡Nos vemos pronto!`
 ];
 
 function buildReminderMessage(nombre, timeLabel) {

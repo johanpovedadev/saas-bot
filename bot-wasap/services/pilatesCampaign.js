@@ -15,24 +15,27 @@ const PHASE = require('../utils/phases');
 const { sendStaggered, pickRandom } = require('./humanBroadcast');
 
 // Variantes de redaccion del mismo mensaje — nunca el mismo texto exacto
-// para todas, para no verse como un blast identico de bot.
+// para todas, para no verse como un blast identico de bot. Ya NO se ofrece
+// "esta semana no" como opcion visible (pedido explicito) — el foco es que
+// la clienta se ilusione con su proximo horario, no que le resulte facil
+// saltarselo. Si alguien de verdad no puede ir, sigue pudiendo decirlo con
+// sus propias palabras (ver handleSaturdayReply) y Bri lo gestiona directo.
 const MESSAGE_VARIANTS = [
     (nombre, dayLabel, timeLabel) =>
-        `¡Hola ${nombre}! 🧘‍♀️ Para armar la agenda de la próxima semana, ¿mantenemos tu horario habitual (${dayLabel} ${timeLabel}), lo cambiamos, o esta semana la saltamos?`,
+        `¡Hola ${nombre}! 🧘‍♀️ Estoy armando tu semana ideal — ¿seguimos con ${dayLabel} ${timeLabel} como siempre, o preferís otro horario?`,
     (nombre, dayLabel, timeLabel) =>
-        `¡Hola ${nombre}! 🧘‍♀️ Estoy armando el horario de la próxima semana — ¿seguimos con ${dayLabel} ${timeLabel} como siempre, cambiamos el horario, o esta semana te la saltas?`,
+        `¡Hola ${nombre}! 🧘‍♀️ Ya casi cierro la agenda de la próxima semana — ¿tu clase de ${dayLabel} ${timeLabel} sigue en pie, o la movemos?`,
     (nombre, dayLabel, timeLabel) =>
-        `Hola ${nombre} 🙌 Antes de cerrar la agenda de la semana que viene, cuéntame: ¿tu clase de ${dayLabel} ${timeLabel} sigue igual, la cambiamos, o esta semana no vienes?`,
+        `Hola ${nombre} 🙌 Quiero apartarte tu cupo de la semana que viene — ¿${dayLabel} ${timeLabel} de siempre te sigue funcionando, o cambiamos?`,
     (nombre, dayLabel, timeLabel) =>
-        `¡Hola ${nombre}! 🧘‍♀️ ¿Cómo vamos con la próxima semana? ¿${dayLabel} ${timeLabel} de siempre, otro horario, o la saltamos esta vez?`
+        `¡Hola ${nombre}! 🧘‍♀️ ¿Cómo vamos con la próxima semana? ¿${dayLabel} ${timeLabel} de siempre, u otro horario?`
 ];
 
 function buildCampaignMessage(client, dayLabel, timeLabel) {
     const variant = pickRandom(MESSAGE_VARIANTS);
     return `${variant(client.nombre || '', dayLabel, timeLabel)}\n\n` +
         `1️⃣ Igual que siempre\n` +
-        `2️⃣ Cambiar horario\n` +
-        `3️⃣ Esta semana no`;
+        `2️⃣ Cambiar horario`;
 }
 
 /**

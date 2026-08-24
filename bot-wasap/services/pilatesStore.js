@@ -83,6 +83,13 @@ function getDb() {
         if (!sessionCols.includes('reminded')) {
             db.exec(`ALTER TABLE pilates_sessions ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0`);
         }
+        // Migracion aditiva: marca si una reserva es la clase de cortesia
+        // (gratis, primera vez) de una clienta nueva que todavia no esta en
+        // el roster - asi is_cortesia=1 identifica quien ya uso su cortesia
+        // (no elegible para otra) sin depender de estar en el roster.
+        if (!cols.includes('is_cortesia')) {
+            db.exec(`ALTER TABLE pilates_bookings ADD COLUMN is_cortesia INTEGER NOT NULL DEFAULT 0`);
+        }
         logger.info(`pilatesStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -96,8 +103,8 @@ function saveBooking(booking) {
     if (!database) return null;
     try {
         database.prepare(`
-            INSERT INTO pilates_bookings (id, jid, name, phone, day, time_label, status, calendar_synced, calendar_event_id, session_id)
-            VALUES (@id, @jid, @name, @phone, @day, @time_label, @status, @calendar_synced, @calendar_event_id, @session_id)
+            INSERT INTO pilates_bookings (id, jid, name, phone, day, time_label, status, calendar_synced, calendar_event_id, session_id, is_cortesia)
+            VALUES (@id, @jid, @name, @phone, @day, @time_label, @status, @calendar_synced, @calendar_event_id, @session_id, @is_cortesia)
         `).run({
             id: booking.id,
             jid: booking.jid,
@@ -108,7 +115,8 @@ function saveBooking(booking) {
             status: booking.status || 'pendiente',
             calendar_synced: booking.calendarSynced ? 1 : 0,
             calendar_event_id: booking.calendarEventId || null,
-            session_id: booking.sessionId || null
+            session_id: booking.sessionId || null,
+            is_cortesia: booking.isCortesia ? 1 : 0
         });
         return booking.id;
     } catch (err) {
@@ -135,6 +143,24 @@ function getBookingsByJid(jid) {
     } catch (err) {
         logger.error(`pilatesStore: getBookingsByJid error: ${err.message}`);
         return [];
+    }
+}
+
+/**
+ * true si esta clienta (por jid) ya usó su clase de cortesía alguna vez -
+ * cualquier reserva marcada is_cortesia=1, sin importar su estado (aunque
+ * la haya cancelado, ya "gastó" el beneficio). Se usa para no dar mas de
+ * una clase de cortesía a la misma persona.
+ */
+function hasUsedCortesia(jid) {
+    const database = getDb();
+    if (!database) return false;
+    try {
+        const row = database.prepare(`SELECT 1 FROM pilates_bookings WHERE jid = ? AND is_cortesia = 1 LIMIT 1`).get(jid);
+        return !!row;
+    } catch (err) {
+        logger.error(`pilatesStore: hasUsedCortesia error: ${err.message}`);
+        return false;
     }
 }
 
@@ -442,7 +468,7 @@ function getLocalClients() {
 }
 
 module.exports = {
-    saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings,
+    saveBooking, markCalendarSynced, getBookingsByJid, getAllBookings, hasUsedCortesia,
     findOrCreateSession, setSessionCalendarEvent, incrementSessionCount, decrementSessionCount,
     getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,

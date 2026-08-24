@@ -74,12 +74,18 @@ function cleanup() {
     // y que NINGUNA reserva real (jid que no sea de prueba) tambien este
     // usando — nunca `WHERE id LIKE 'sess_%'` a secas, eso borraba sesiones
     // reales de clientas de verdad.
+    // Incluye tambien 573999880400 (jid de prueba de "no registrada" / clase
+    // de cortesia) — desde que esa prueba SI llega a crear una reserva real
+    // (antes se cortaba antes de agendar nada), tambien hay que limpiarla.
+    const TEST_JID_PATTERNS = ["jid LIKE '57300099%'", "jid LIKE '5739998804%'"];
+    const testJidWhere = TEST_JID_PATTERNS.join(' OR ');
+    const notTestJidWhere = TEST_JID_PATTERNS.map(p => `NOT (${p})`).join(' AND ');
     db.prepare(`
         DELETE FROM pilates_sessions
-        WHERE id IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE jid LIKE '57300099%' AND session_id IS NOT NULL)
-        AND id NOT IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE jid NOT LIKE '57300099%' AND session_id IS NOT NULL)
+        WHERE id IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE (${testJidWhere}) AND session_id IS NOT NULL)
+        AND id NOT IN (SELECT DISTINCT session_id FROM pilates_bookings WHERE (${notTestJidWhere}) AND session_id IS NOT NULL)
     `).run();
-    db.prepare(`DELETE FROM pilates_bookings WHERE jid LIKE '57300099%'`).run();
+    db.prepare(`DELETE FROM pilates_bookings WHERE ${testJidWhere}`).run();
     // Auto-reparacion: cualquier sesion real compartida con una prueba pudo
     // quedar con booked_count inflado (reservas de prueba que la
     // incrementaron y luego se borraron sin decrementarla de vuelta).
@@ -341,12 +347,25 @@ function pickTestSlot(dateISO) {
         await send(sockB, ctxCamp, jidB, '2');
         assert.ok(/qu[eé] d[ií]a prefieres/i.test(sentB.join(' ')), 'opcion 2 debe pedir el nuevo dia (mismo sub-flujo de reagendar)');
 
+        // "Esta semana no" ya NO es una opcion numerada visible (pedido
+        // explicito del negocio) - escribir el numero "3" a secas ahora
+        // debe caer en reprompt (no reconocido), y el mensaje de reprompt
+        // solo debe mencionar las opciones 1 y 2.
         const sentC = []; const sockC = makeSock(sentC);
         await send(sockC, ctxCamp, jidC, '3');
-        assert.ok(/esta semana no te agendo/i.test(sentC.join(' ')), 'opcion 3 debe registrar la pausa sin crear reserva');
+        assert.ok(!/esta semana no te agendo/i.test(sentC.join(' ')), '"3" ya no debe registrar una pausa (no es una opcion valida)');
+        assert.ok(/\(igual que siempre\)/i.test(sentC.join(' ')) && !/esta semana no/i.test(sentC.join(' ')), 'el reprompt no debe ofrecer "esta semana no" como opcion');
+        console.log('OK: "3" ya no pausa la semana (opcion retirada), el reprompt no la ofrece');
+
+        // Pero si la clienta lo pide con sus propias palabras, se sigue
+        // reconociendo (salida oculta, no un boton visible) para no dejarla
+        // sin forma de avisar que esta semana no puede.
+        const sentC2 = []; const sockC2 = makeSock(sentC2);
+        await send(sockC2, ctxCamp, jidC, 'esta semana no puedo ir');
+        assert.ok(/esta semana no te agendo/i.test(sentC2.join(' ')), 'decirlo con palabras propias debe seguir registrando la pausa');
 
         pilatesRoster.getActiveRegulars = originalGetActiveRegulars;
-        console.log('OK: campana de sabados maneja las 3 opciones (igual/cambiar/pausar)');
+        console.log('OK: campana de sabados — igual/cambiar por numero, pausar solo con palabras propias (no como opcion visible)');
 
         // 4b) El texto del mensaje de campana varia (no siempre la misma frase).
         const texts = new Set();
@@ -356,21 +375,42 @@ function pickTestSlot(dateISO) {
         assert.ok(texts.size > 1, 'el mensaje de campana debe variar la redaccion entre envios, no ser siempre identico');
         console.log(`OK: el mensaje de campana varia (${texts.size} redacciones distintas en 20 intentos)`);
 
-        // 5) Candado de registro: una jid que NO esta en el roster no puede agendar.
+        // 5) Clase de cortesia: una jid que NO esta en el roster SI puede
+        // agendar UNA clase (gratis, primera vez) por su cuenta — antes se
+        // cortaba de una y se escalaba a Bri sin dejarla agendar nada.
         // (prefijo distinto a 57300099xxxx a proposito, para no calzar con el mock de "registrada" de arriba)
         const jidUnreg = '573999880400@c.us';
+        const dateISOCortesia = pilcFlow._internal.nextDateForDay('lunes');
+        const slotCortesia = pickTestSlot(dateISOCortesia);
+        assert.ok(slotCortesia, 'debe haber un horario ofrecido el lunes para la prueba de cortesia');
         const sentUnreg = []; const sockUnreg = makeSock(sentUnreg);
         const ctxUnreg = makeCtx();
-        let notifiedUnreg = false;
-        notificationService.notifySystemAlert = async () => { notifiedUnreg = true; };
         await send(sockUnreg, ctxUnreg, jidUnreg, 'hola');
         await send(sockUnreg, ctxUnreg, jidUnreg, 'No Registrada');
-        await send(sockUnreg, ctxUnreg, jidUnreg, '1'); // intenta agendar
-        assert.ok(/no te encuentro en la lista/i.test(sentUnreg.join(' ')), 'debe avisar que no esta en la lista');
-        assert.ok(notifiedUnreg, 'debe escalar a Bri automaticamente en vez de dejarla agendar');
-        assert.strictEqual(ctxUnreg.sessions[jidUnreg].phase, require('./utils/phases').WAITING_HUMAN, 'debe quedar en fase de espera a Bri');
+        sentUnreg.length = 0;
+        await send(sockUnreg, ctxUnreg, jidUnreg, '1'); // intenta agendar, nunca antes agendo nada
+        assert.ok(/cortes[ií]a/i.test(sentUnreg.join(' ')), 'una clienta nueva debe poder empezar su clase de cortesia, no cortarse');
+        assert.strictEqual(ctxUnreg.sessions[jidUnreg].phase, require('./utils/phases').PILC_ASK_DAY, 'debe pasar a elegir dia, igual que una clienta registrada');
+        await send(sockUnreg, ctxUnreg, jidUnreg, 'lunes');
+        await send(sockUnreg, ctxUnreg, jidUnreg, slotCortesia.label);
+        sentUnreg.length = 0;
+        await send(sockUnreg, ctxUnreg, jidUnreg, 'si');
+        assert.ok(/cortes[ií]a/i.test(sentUnreg.join(' ')), 'la confirmacion debe reconocer que es su clase de cortesia');
+        assert.ok(pilatesStore.hasUsedCortesia(jidUnreg), 'la reserva debe quedar marcada is_cortesia para no dar una segunda gratis');
+        console.log('OK: clienta nueva (fuera del roster) puede agendar su clase de cortesia por su cuenta');
+
+        // 5b) Ya usada la cortesia, un segundo intento SI se corta y escala a Bri.
+        const ctxUnreg2 = makeCtx();
+        const sentUnreg2 = []; const sockUnreg2 = makeSock(sentUnreg2);
+        let notifiedUnreg2 = false;
+        notificationService.notifySystemAlert = async () => { notifiedUnreg2 = true; };
+        await send(sockUnreg2, ctxUnreg2, jidUnreg, 'hola');
+        await send(sockUnreg2, ctxUnreg2, jidUnreg, '1'); // ya tiene nombre guardado, intenta agendar de nuevo
+        assert.ok(/ya viviste tu clase de cortes[ií]a/i.test(sentUnreg2.join(' ')), 'debe avisar que ya uso su cortesia');
+        assert.ok(notifiedUnreg2, 'debe escalar a Bri en el segundo intento, no dar otra clase gratis');
+        assert.strictEqual(ctxUnreg2.sessions[jidUnreg].phase, require('./utils/phases').WAITING_HUMAN, 'debe quedar en fase de espera a Bri');
         notificationService.notifySystemAlert = originalNotify;
-        console.log('OK: clienta fuera de la lista no puede agendar, se escala directo a Bri');
+        console.log('OK: tras usar la cortesia, el segundo intento sin registrarse escala a Bri (no da una segunda gratis)');
 
         // 6) Escalada tras 2 mensajes seguidos sin entender.
         const jidEsc = testJid(401);
