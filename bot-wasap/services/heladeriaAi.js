@@ -399,6 +399,7 @@ Mensaje del cliente: "${text}"
 Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni después):
 {
   "producto": "nombre exacto de un producto del menú o null",
+  "productos_adicionales": [{"nombre": "<nombre exacto del menú>", "cantidad": <número o 1>}],
   "bebidas": ["nombres exactos de bebidas detectadas o []"],
   "sabores": ["nombres exactos de sabores detectados o []"],
   "toppings": ["nombres exactos de toppings detectados o []"],
@@ -410,6 +411,7 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura (sin texto antes ni 
 
 Reglas:
 - Usa SIEMPRE nombres exactos de las listas. Haz fuzzy match (acentos, mayúsculas, typos).
+- "productos_adicionales": si el cliente pide VARIOS productos DISTINTOS del menú en el mismo mensaje (ej: "quiero una copa osito y un banana split", "2 conos sencillos y una copa capricho mío"), pon el PRIMERO en "producto" (con su cantidad en "cantidad") y TODOS los demás aquí, cada uno con su nombre exacto y cantidad. Si solo mencionó un producto, deja esta lista vacía []. NO repitas acá el mismo producto que ya pusiste en "producto".
 - "bebidas": si el cliente menciona una bebida del catálogo junto a un producto o sola (ej: "con limonada", "una capricho mío con limonada natural", "y un jugo"), pon el nombre EXACTO de la bebida del catálogo aquí. Las bebidas del catálogo tienen códigos que empiezan con "B-" (ej: Limonada Natural, Limonada Cereza, Limonada de Coco). No inventes bebidas que no estén en el catálogo. NO pongas aquí toppings ni sabores.
 - "no_reconocido": es CRÍTICO no dejar pedidos a medias en silencio. Si el mensaje menciona MÁS de una cosa (ej: dos productos, o un producto y una bebida/sabor) y solo pudiste resolver una parte contra el catálogo, escribe la parte que NO resolviste en "no_reconocido" en vez de simplemente omitirla. El cliente debe enterarse de qué no se pudo agregar.
 - Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
@@ -430,6 +432,7 @@ Reglas:
     try {
         const parsed = JSON.parse(cleaned);
         if (!parsed.producto) parsed.producto = null;
+        if (!Array.isArray(parsed.productos_adicionales)) parsed.productos_adicionales = [];
         if (!Array.isArray(parsed.bebidas)) parsed.bebidas = [];
         if (!Array.isArray(parsed.sabores)) parsed.sabores = [];
         if (!Array.isArray(parsed.toppings)) parsed.toppings = [];

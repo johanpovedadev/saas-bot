@@ -1597,6 +1597,44 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         acted = true;
     }
 
+    // 2a) Productos ADICIONALES y DISTINTOS pedidos en el MISMO mensaje (ej:
+    //     "una copa osito y un banana split") - se resuelven contra el
+    //     catálogo y se agregan a la misma cola que ya usa el pedido por voz
+    //     (pendingVoiceGuided, ver routeIntent/afterAddToCarrito): los
+    //     productos sin sabores/toppings se agregan directo al carrito, los
+    //     que sí requieren personalización quedan en cola y se van pidiendo
+    //     uno por uno automáticamente apenas termine el producto actual (o de
+    //     una, si no había ningún producto principal en curso).
+    if (Array.isArray(result.productos_adicionales) && result.productos_adicionales.length > 0) {
+        const targetCodeForExtra = targetProduct ? (targetProduct[dbFields.productCode] || '') : (currentFlowProduct ? (currentFlowProduct[dbFields.productCode] || '') : '');
+        const resolvedExtra = resolveProducts(result.productos_adicionales, ctx)
+            .filter(r => !targetCodeForExtra || (r.product[dbFields.productCode] || '') !== targetCodeForExtra);
+        if (resolvedExtra.length > 0) {
+            const guidedExtra = [];
+            const plainExtra = [];
+            for (const r of resolvedExtra) {
+                const c = getCounts(r.product);
+                (c.sabores > 0 || c.toppings > 0) ? guidedExtra.push(r) : plainExtra.push(r);
+            }
+            for (const r of plainExtra) addPlainToCarrito(userSession, r);
+            if (plainExtra.length > 0) {
+                const lineas = plainExtra.map(r => `• ${r.cantidad}x ${getProductName(r.product)} - *${money(r.precio * r.cantidad)}*`).join('\n');
+                await say(sock, jid, `📝 También anoté:\n\n${lineas}`, ctx);
+            }
+            if (guidedExtra.length > 0) {
+                userSession.pendingVoiceGuided = (Array.isArray(userSession.pendingVoiceGuided) ? userSession.pendingVoiceGuided : []).concat(guidedExtra);
+                // Si no había ningún producto principal en curso (ni recién
+                // iniciado arriba ni ya en marcha), nada más está por arrancar
+                // el flujo guiado -> arrancar el primero de la cola de una.
+                if (!targetProduct && !userSession.heladoFlow) {
+                    const first = userSession.pendingVoiceGuided.shift();
+                    await handleProductOptions(sock, jid, first.product, userSession, ctx);
+                }
+            }
+            acted = true;
+        }
+    }
+
     // 2b) Bebidas mencionadas junto al pedido (ej: "con limonada", "y un jugo")
     //     → ítem independiente del carrito, sin bloquear el flujo del producto.
     const bebidaNames = [];
