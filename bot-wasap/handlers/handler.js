@@ -283,7 +283,7 @@ async function processIncomingMessage(sock, messageData, ctx) {
             userSession.phase = fallbackPhase;
             userSession.errorCount = 0;
             if (currentFlow) {
-                await currentFlow.showWelcome(sock, jid, ctx);
+                await currentFlow.showWelcome(sock, jid, ctx, text);
             } else {
                 await menuHandler.sendMainMenu(sock, jid, ctx);
             }
@@ -303,7 +303,7 @@ async function processIncomingMessage(sock, messageData, ctx) {
             userSession.phase = fallbackPhase;
             userSession.errorCount = 0;
             if (currentFlow) {
-                await currentFlow.showWelcome(sock, jid, ctx);
+                await currentFlow.showWelcome(sock, jid, ctx, text);
             } else {
                 await menuHandler.sendMainMenu(sock, jid, ctx);
             }
@@ -371,7 +371,7 @@ async function processIncomingMessage(sock, messageData, ctx) {
                     delete userSession._rechazoSent;
                     userSession.planSeleccionado = null;
                     userSession.tipoMascota = null;
-                    await currentFlow.showWelcome(sock, jid, ctx);
+                    await currentFlow.showWelcome(sock, jid, ctx, text);
                     return;
                 }
                 // Sin flow (finance) — pedir nombre si no lo tiene
@@ -490,7 +490,7 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
                 const currentFlow = getCurrentFlow();
                 if (currentFlow) {
                     userSession.phase = currentFlow.getInitialPhase();
-                    await currentFlow.showWelcome(sock, jid, ctx);
+                    await currentFlow.showWelcome(sock, jid, ctx, text);
                 } else {
                     userSession.phase = PHASE.SELECCION_OPCION;
                     userSession.errorCount = 0;
@@ -509,7 +509,7 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
             const currentFlow = getCurrentFlow();
             if (currentFlow) {
                 userSession.phase = currentFlow.getInitialPhase();
-                await currentFlow.showWelcome(sock, jid, ctx);
+                await currentFlow.showWelcome(sock, jid, ctx, text);
             } else {
                 userSession.phase = PHASE.SELECCION_OPCION;
                 userSession.errorCount = 0;
@@ -644,7 +644,7 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
             if (currentFlow) {
                 userSession.phase = currentFlow.getInitialPhase();
                 userSession.errorCount = 0;
-                await currentFlow.showWelcome(sock, jid, ctx);
+                await currentFlow.showWelcome(sock, jid, ctx, text);
             } else {
                 userSession.phase = PHASE.SELECCION_OPCION;
                 userSession.errorCount = 0;

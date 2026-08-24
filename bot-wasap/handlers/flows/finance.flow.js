@@ -903,6 +903,24 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     }
 }
 
+// Un check-in/bienvenida de regreso no debe "comerse" un mensaje real -
+// si lo que disparo la pantalla ya era un registro real (ej. "26 mil en
+// almuerzo") o cualquier otra cosa con sentido, se procesa igual encima del
+// resumen en vez de perderse. Solo se descartan saludos vacios/genericos
+// (si se reprocesara "hola" como texto libre, generaria una respuesta
+// redundante encima del saludo que ya se mostro).
+const GREETING_ONLY_RE = /^(hola|hey|holi|holis|ola|hi|buenas|buenos dias|buenas tardes|buenas noches)s?[!.\s]*$/i;
+
+async function processPossibleTransaction(sock, jid, text, userSession, ctx, fin) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed || GREETING_ONLY_RE.test(trimmed)) return;
+    if (!canUseAi(jid)) {
+        await handleFreeUser(sock, jid, trimmed, userSession, ctx, fin);
+    } else {
+        await handleConversation(sock, jid, trimmed, userSession, ctx, fin);
+    }
+}
+
 async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     fin.lastCheckinDate = new Date().toDateString();
     userSession.phase = PHASE.FIN_MAIN;
@@ -928,6 +946,11 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
                 : `Podés empezar cuando quieras:\n\n_"Compré 15 mil en desayuno"_\n_"Recibí 500 mil de freelance"_`,
             ctx);
     }
+    // Bug real encontrado: este handler nunca miraba `text` - un cliente que
+    // reaparecia y escribia de una "26 mil en almuerzo" (en vez de saludar
+    // primero) perdia ese registro por completo, sin ningun aviso ni error,
+    // solo veia el resumen de bienvenida con el saldo de siempre.
+    await processPossibleTransaction(sock, jid, text, userSession, ctx, fin);
 }
 
 async function handleGoals(sock, jid, text, userSession, ctx, fin) {
@@ -1552,7 +1575,7 @@ async function handleFeedbackText(sock, jid, text, userSession, ctx, fin) {
     await say(sock, jid, `¡Gracias! 🙏 Se lo compartí a Johan directo — tu opinión nos ayuda a mejorar Leo.`, ctx);
 }
 
-async function showWelcome(sock, jid, ctx) {
+async function showWelcome(sock, jid, ctx, text) {
     const userSession = ctx?.sessions?.[jid];
     if (!userSession) return;
     // Load persisted finance data if not in memory (e.g. after restart)
@@ -1569,11 +1592,13 @@ async function showWelcome(sock, jid, ctx) {
     financeAdmin.touchUser(jid);
     syncPremiumFromAdmin(jid, fin);
     if (fin?.name) {
-        // Check-in every 48h
+        // Check-in every 48h - el resumen ya se muestra ACÁ mismo abajo, así
+        // que se marca hecho de una (si no, con sesiones que se pierden
+        // seguido por reinicios, podía no marcarse nunca vía handleCheckin).
         const lastCheck = fin.lastCheckinDate;
         const today = new Date().toDateString();
-        if (lastCheck !== today && userSession.phase !== PHASE.FIN_CHECKIN) {
-            userSession.phase = PHASE.FIN_CHECKIN;
+        if (lastCheck !== today) {
+            fin.lastCheckinDate = today;
         }
         const txCount = fin.transactions.length;
         const notif = fin.notifiedNewFeatures ? '' :
@@ -1605,6 +1630,18 @@ async function showWelcome(sock, jid, ctx) {
                 (fin.diagnosticAnswer ? '' : `• Contarme cómo vas con tu plata`),
                 ctx);
         }
+        // Mismo bug que en handleCheckin: si el mensaje que trajo a la
+        // persona hasta acá (ej. reconexión tras un reinicio del bot) ya era
+        // un registro real, no se descarta - se procesa igual. Bug real:
+        // un reinicio del bot borra la sesión en memoria de TODOS los
+        // clientes; el primer mensaje de cualquiera que vuelva llega hasta
+        // acá con la fase recién reseteada (fin_onboarding, sin importar
+        // dónde iba realmente) y, sin este fix, se perdía sin aviso ni
+        // error. Se fuerza fin_main antes de procesar - es lo que
+        // corresponde para alguien que ya tiene nombre y no está en medio
+        // de ningún otro paso.
+        userSession.phase = PHASE.FIN_MAIN;
+        await processPossibleTransaction(sock, jid, text, userSession, ctx, fin);
         return;
     }
     await say(sock, jid, getWelcomeMessage(), ctx);
