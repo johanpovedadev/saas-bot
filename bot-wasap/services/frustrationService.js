@@ -50,6 +50,16 @@ const MAX_REPEATED_MESSAGES = 2;
  * "correctamente" el saludo del otro, en círculo) nunca sube errorCount —
  * cada mensaje SÍ se entiende, solo que siempre es el mismo — así que
  * detectFrustration (gateada detrás de errorCount) nunca lo agarra.
+ *
+ * A propósito NO compara la fase además del texto: se probó (ver
+ * test_loop_protection_campaign.js) y falla contra el caso real que esta
+ * función existe para atrapar - un bot ajeno respondiendo el saludo en
+ * bucle, porque cada "Hola" que llega también dispara la detección de
+ * saludo y resetea la fase de la sesión antes de llegar acá, así que un
+ * loop de verdad SÍ cambia de fase entre mensajes. Para falsos positivos
+ * puntuales (reuso legítimo del mismo texto en la misma fase, ej. seleccionar
+ * "1" de una lista recién filtrada) usar una excepción local por fase en el
+ * call site (ver REPEAT_ALLOWED_PHASES en handler.js), no acá.
  * @param {Object} userSession - Sesión del usuario
  * @param {string} text - Texto del mensaje actual
  * @returns {boolean} true si este mensaje es identico al inmediatamente anterior

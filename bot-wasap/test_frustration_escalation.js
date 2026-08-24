@@ -21,6 +21,7 @@ const pilatesRoster = require('./services/pilatesRoster');
 const pilatesAi = require('./services/pilatesAi');
 const notificationService = require('./services/notificationService');
 const frustrationService = require('./services/frustrationService');
+const waitingHumanStore = require('./services/waitingHumanStore');
 const PHASE = require('./utils/phases');
 
 const originalGetClientCredit = pilatesRoster.getClientCredit;
@@ -132,6 +133,14 @@ async function testWaitingHumanSurvivesNextMessage() {
     const sock = makeSock([]);
     const jid = testJid(503);
     ctx.sessions[jid] = { phase: PHASE.WAITING_HUMAN };
+    // El registro compartido (waitingHumanStore) es lo que el panel web usa
+    // para saber quien esta esperando y poder reactivarlo - handler.js
+    // ahora chequea ese registro en cada mensaje (ver "reactivacion
+    // silenciosa desde el panel"), asi que hay que marcarlo acá tambien
+    // para simular correctamente una escalada real (si no, el propio
+    // handler.js interpreta la ausencia de esta marca como "ya lo
+    // reactivaron desde el panel" y resetea la fase solo).
+    waitingHumanStore.markWaiting('pilates_clientas', jid, 'prueba: sobrevive al siguiente mensaje');
 
     const originalNotify = notificationService.notifySystemAlert;
     let forwardedMsg = null;
@@ -144,6 +153,7 @@ async function testWaitingHumanSurvivesNextMessage() {
         console.log('OK: WAITING_HUMAN sobrevive al siguiente mensaje del cliente (isFlowPhase fix) y se reenvia al admin');
     } finally {
         notificationService.notifySystemAlert = originalNotify;
+        waitingHumanStore.clearWaiting('pilates_clientas', jid);
     }
 }
 

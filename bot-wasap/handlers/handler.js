@@ -322,14 +322,38 @@ async function processIncomingMessage(sock, messageData, ctx) {
         }
 
         // 6.5. Detectar LOOP: 2 mensajes entrantes seguidos con el MISMO texto
-        // exacto. Corre en TODO mensaje, sin esperar ningún umbral de errorCount
-        // (a diferencia del chequeo global de abajo) — existe justo para el caso
-        // de un loop entre dos bots, donde cada mensaje SÍ se entiende y se
-        // responde "correctamente" cada vez, así que errorCount nunca sube.
+        // exacto (comparación de solo texto, a propósito - ver el comentario
+        // en checkMessageLoop de frustrationService.js sobre por qué NO se
+        // compara también la fase). Corre en TODO mensaje, sin esperar ningún
+        // umbral de errorCount (a diferencia del chequeo global de abajo) —
+        // existe justo para el caso de un loop entre dos bots, donde cada
+        // mensaje SÍ se entiende y se responde "correctamente" cada vez, así
+        // que errorCount nunca sube.
         // Regla fija: los bots de WhatsApp se apagan siempre, sin excepción. Los
         // que no son de WhatsApp (hoy: Leo/Telegram, vía notifyHumanEscalation)
         // solo avisan al admin y siguen respondiendo, nunca se apagan.
-        if (userSession.phase !== PHASE.WAITING_HUMAN && frustrationService.checkMessageLoop(userSession, text)) {
+        //
+        // Excepciones puntuales (bugs reales encontrados con testing
+        // exhaustivo, preexistentes) donde repetir el mismo texto NO es un
+        // loop sino una acción legítima distinta:
+        // - HELADO_SABORES/TOPPINGS (y sus variantes per-unit): repetir el
+        //   MISMO nombre en dos mensajes separados es forma válida de pedir
+        //   "2 de lo mismo" (funcionalidad probada, ver
+        //   _test_fix_sabores_repetidos.js).
+        // - SELECCION_PRODUCTO: el cliente escribe un número (ej. "1") para
+        //   ver el menú, la IA narrows la lista a un solo producto por su
+        //   propia búsqueda, y el cliente escribe el MISMO número otra vez
+        //   para seleccionar ese único resultado — coincidencia de texto, no
+        //   loop (ver _test_conchita.js).
+        // Ambos casos quedan protegidos igual por el chequeo global de
+        // errorCount más abajo si de verdad el cliente queda atascado.
+        const REPEAT_ALLOWED_PHASES = new Set([
+            PHASE.HELADO_SABORES, PHASE.HELADO_TOPPINGS,
+            PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
+            PHASE.SELECCION_PRODUCTO
+        ]);
+        if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
+            frustrationService.checkMessageLoop(userSession, text)) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {
                 try {
