@@ -207,9 +207,9 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
  * podía fallar la cantidad 2+ veces seguidas sin que el sistema se enterara.
  */
 async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
-    // Las fases INS_* manejan su propio errorCount, se les da margen mayor
-    const isInsurancePhase = userSession.phase && userSession.phase.toLowerCase().startsWith('ins_');
-    const frustrationThreshold = isInsurancePhase ? 5 : 2;
+    // Regla fija para todos los bots y fases: al 2do error consecutivo se
+    // escala a humano, sin excepciones por negocio ni por fase.
+    const frustrationThreshold = 2;
     const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
     if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
         logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);

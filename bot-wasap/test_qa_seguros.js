@@ -194,12 +194,14 @@ async function run() {
     assert(flowSource.includes('datosMascotaRazaGato'), 'Tiene mensaje raza gato (ISSUE #15)');
 
     // ===================================
-    // 7. Validar handler.js
+    // 7. Validar que handler.js no arrastre INS_PAGO
     // ===================================
+    // handler.js delega genericamente a currentFlow.handle() (no tiene un
+    // switch por fase por negocio) - el case real de INS_RECHAZO vive en
+    // seguros.flow.js, y ya se valida arriba (seccion 3, INSURANCE_PHASES).
     console.log('\n📁 7. Validando handler.js...');
-    
+
     const handlerSource = fs.readFileSync(path.join(__dirname, 'handlers/handler.js'), 'utf8');
-    assert(handlerSource.includes('INS_RECHAZO'), 'handler.js tiene case INS_RECHAZO');
     assert(!handlerSource.includes('INS_PAGO'), 'handler.js sin referencia a INS_PAGO');
 
     // ===================================

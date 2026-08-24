@@ -22,7 +22,7 @@ heladeriaAi.interpretOrderText = async (text) => {
         return {
             producto: 'Copa Osito',
             bebidas: [],
-            sabores: ['Lulo Maracuya', 'Arequipe'],
+            sabores: ['Lulo', 'Ron pasas'],
             toppings: [],
             cantidad: 1,
             direccion: 'Cra 23 #10-20',
@@ -76,7 +76,7 @@ async function handle(text, userSession) {
     check(tops1.some(n => /oreo/i.test(n)) && tops1.some(n => /arandano/i.test(n)),
         `TOPP-nombre: resolvió "oreo y arándano" (${tops1.join(', ')})`);
     check(s1.phase === 'HELADO_QUANTITY', `TOPP-nombre: avanza a cantidad (fase: ${s1.phase})`);
-    check(/\$\s*1\.000/.test(r1) && /\$\s*2\.000/.test(r1), 'TOPP-nombre: confirma con precio de cada topping');
+    check(/\$\s*1\.000/.test(r1) && /\$\s*2\.500/.test(r1), 'TOPP-nombre: confirma con precio de cada topping');
 
     // ---- "lista" / "cuáles hay" → lista agrupada y se queda en el paso ----
     const s2 = makeToppingsSession();
@@ -140,11 +140,11 @@ async function handle(text, userSession) {
     check(s8.phase === 'HELADO_QUANTITY', `TOPP-qty: "wafer" se queda en cantidad (fase: ${s8.phase})`);
 
     const s9 = makeQuantitySession();
-    const r9 = await handle('cereal flips', s9);
+    const r9 = await handle('milo', s9);
     const tops9 = (s9.heladoFlow.toppingsSeleccionados || []).map(t => t.NombreProducto || t);
-    check(tops9.length === 1 && /cereal flips/i.test(tops9[0]),
-        `TOPP-qty: "cereal flips" resuelve cereal flips (${tops9.join(', ')})`);
-    check(s9.phase === 'HELADO_QUANTITY', `TOPP-qty: "cereal flips" se queda en cantidad (fase: ${s9.phase})`);
+    check(tops9.length === 1 && /galletas milo/i.test(tops9[0]),
+        `TOPP-qty: "milo" resuelve galletas milo (${tops9.join(', ')})`);
+    check(s9.phase === 'HELADO_QUANTITY', `TOPP-qty: "milo" se queda en cantidad (fase: ${s9.phase})`);
 
     // ---- "2" desde HELADO_POST_ADD → ir a pagar (caso del chat real) ----
     const s10 = {
