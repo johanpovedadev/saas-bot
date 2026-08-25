@@ -224,16 +224,24 @@ function normSaborName(sabor, dbFields) {
     return stripAccents(String((sabor && (sabor[f.productName] || sabor)) || '').toLowerCase());
 }
 
+/**
+ * Lista de toppings agrupada por categoría, con código T<n> — el mismo n que
+ * usa handleToppings/handlePerUnitToppings para resolver "t1"/"t2" (posición
+ * en la lista PLANA, no en el grupo) — para que se pueda responder por
+ * nombre O por código, igual que ya se puede con los sabores (S1, S2...).
+ */
 function formatToppingsGrouped(ctx) {
     const dbFields = getDbFields();
     const list = buildOptionLists(ctx).toppings;
+    const codeByItem = new Map(list.map((p, i) => [p[dbFields.productCode] || p, i + 1]));
     const blocks = [];
     for (const g of TOPPING_GROUPS) {
         const items = list.filter(p => g.match.test(String(p[dbFields.productName] || '')));
         if (!items.length) continue;
         const itemLines = items.map(p => {
             const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
-            return `• ${p[dbFields.productName]}${precio ? ` - ${money(precio)}` : ''}`;
+            const code = codeByItem.get(p[dbFields.productCode] || p);
+            return `*T${code}.* ${p[dbFields.productName]}${precio ? ` - ${money(precio)}` : ''}`;
         });
         blocks.push(`*${g.label}*\n${itemLines.join('\n')}`);
     }
@@ -280,7 +288,8 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
         await say(sock, jid,
             `🍦 *${nombre}* seleccionado.\n\n` +
             `📍 *Paso 1 (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
-            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos" para agregar de todo, "lista" para ver las opciones, o "no" para continuar._`, ctx);
+            `${formatToppingsGrouped(ctx) || '_No hay toppings disponibles._'}\n\n` +
+            `_Escribe el código (T1, T2...) o el nombre que quieras (ej: "oreo y arándano"), "todos" para agregar de todo, o "no" para continuar._`, ctx);
         return;
     }
 
@@ -500,7 +509,8 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
         await say(sock, jid,
             `✅ Sabores: *${nombres}*.\n\n` +
             `📍 *Paso 2 (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
-            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
+            `${formatToppingsGrouped(ctx) || '_No hay toppings disponibles._'}\n\n` +
+            `_Escribe el código (T1, T2...) o el nombre que quieras (ej: "oreo y arándano"), "todos", o "no" para continuar._`, ctx);
     } else {
         userSession.phase = HELADO_QUANTITY;
         await say(sock, jid, `✅ Sabores: *${nombres}*.\n\n¿Cuántas unidades deseas?`, ctx);
@@ -892,7 +902,8 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
         await say(sock, jid,
             `✅ Sabores unidad *${customization.currentUnit + 1}*: *${nombres}*.\n\n` +
             `📍 *Toppings (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
-            `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
+            `${formatToppingsGrouped(ctx) || '_No hay toppings disponibles._'}\n\n` +
+            `_Escribe el código (T1, T2...) o el nombre que quieras (ej: "oreo y arándano"), "todos", o "no" para continuar._`, ctx);
     } else {
         await pushPerUnit(sock, jid, userSession, ctx);
     }
@@ -1513,7 +1524,8 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
         case HELADO_TOPPINGS: {
             await say(sock, jid,
                 `📍 *Toppings (opcional):* ¿Le agregamos algún topping? Tienen costo adicional. 🍓🍫\n\n` +
-                `_Escribe los nombres que quieras (ej: "oreo y arándano"), "todos", "lista" para ver las opciones, o "no" para continuar._`, ctx);
+                `${formatToppingsGrouped(ctx) || '_No hay toppings disponibles._'}\n\n` +
+                `_Escribe el código (T1, T2...) o el nombre que quieras (ej: "oreo y arándano"), "todos", o "no" para continuar._`, ctx);
             return;
         }
         case HELADO_QUANTITY:

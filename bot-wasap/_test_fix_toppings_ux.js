@@ -78,11 +78,25 @@ async function handle(text, userSession) {
     check(s1.phase === 'HELADO_QUANTITY', `TOPP-nombre: avanza a cantidad (fase: ${s1.phase})`);
     check(/\$\s*1\.000/.test(r1) && /\$\s*2\.500/.test(r1), 'TOPP-nombre: confirma con precio de cada topping');
 
+    // ---- Regla nueva: el paso de toppings SIEMPRE muestra la lista de una,
+    // sin tener que pedir "lista" primero (igual que sabores ya hacía) ----
+    const sTrans = makeToppingsSession();
+    sTrans.phase = 'HELADO_SABORES';
+    sTrans.heladoFlow.counts = { sabores: 1, toppings: 23 };
+    sTrans.heladoFlow.saboresSeleccionados = [];
+    const rTrans = await handle('lulo', sTrans); // completa el unico sabor que falta -> transicion a toppings
+    check(sTrans.phase === 'HELADO_TOPPINGS', `TRANSICION: pasa a toppings tras completar sabores (fase: ${sTrans.phase})`);
+    check(/Galletas|Perlas|Dulces/.test(rTrans), 'TRANSICION: la lista de toppings aparece de una, sin pedir "lista"');
+    check(/T\d+\./.test(rTrans), 'TRANSICION: la lista muestra códigos T desde el primer mensaje');
+
     // ---- "lista" / "cuáles hay" → lista agrupada y se queda en el paso ----
     const s2 = makeToppingsSession();
     const r2 = await handle('cuáles hay?', s2);
     check(/Galletas/.test(r2) && /Perlas/.test(r2) && /Dulces/.test(r2), 'TOPP-lista: muestra grupos (galletas, perlas, dulces)');
-    check(!/T\d+\./.test(r2), 'TOPP-lista: NO muestra códigos T');
+    // Regla nueva: los toppings ahora se pueden elegir por código (T1, T2...)
+    // igual que los sabores (S1, S2...) - antes esta lista era solo por
+    // nombre, a proposito. Se invierte esa decision por pedido explicito.
+    check(/T\d+\./.test(r2), 'TOPP-lista: SÍ muestra códigos T (para elegir por código, igual que sabores)');
     check(s2.phase === 'HELADO_TOPPINGS', `TOPP-lista: se queda en toppings (fase: ${s2.phase})`);
 
     // ---- "todos" → agrega todos ----
