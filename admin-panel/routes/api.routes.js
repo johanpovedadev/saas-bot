@@ -95,6 +95,62 @@ router.post('/businesses/:key/pilates-credito', requireBusinessScope, async (req
     res.status(result.ok ? 200 : 400).json(result);
 });
 
+// Horario de clases (dias + horas/cupo) - Fase 4: Bri edita esto ella misma
+// desde el panel, ya no requiere que alguien le edite codigo y redespliegue.
+// El bot recarga estos valores en cada mensaje entrante (ver
+// refreshScheduleFromStore en pilates_clientas.flow.js), asi que un cambio
+// guardado acá se refleja en el siguiente mensaje de cualquier clienta.
+router.get('/businesses/:key/pilates/schedule', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    res.json({ days: pilatesStore.getScheduleDays(), slots: pilatesStore.getScheduleSlots() });
+});
+
+const DAY_DOW_BY_KEY = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };
+
+router.post('/businesses/:key/pilates/schedule/day', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const { dayKey, dayLabel } = req.body || {};
+    const normalizedKey = String(dayKey || '').trim().toLowerCase();
+    const dow = DAY_DOW_BY_KEY[normalizedKey];
+    if (!normalizedKey || dow === undefined) return res.status(400).json({ error: 'Día inválido. Usa: lunes, martes, miercoles, jueves, viernes, sabado o domingo.' });
+    if (!dayLabel || !String(dayLabel).trim()) return res.status(400).json({ error: 'Falta el nombre a mostrar del día (ej. "Lunes").' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    pilatesStore.upsertScheduleDay(normalizedKey, String(dayLabel).trim(), dow);
+    res.json({ ok: true });
+});
+
+router.post('/businesses/:key/pilates/schedule/day/remove', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const { dayKey } = req.body || {};
+    if (!dayKey) return res.status(400).json({ error: 'Falta el día a eliminar.' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    pilatesStore.removeScheduleDay(dayKey);
+    res.json({ ok: true });
+});
+
+router.post('/businesses/:key/pilates/schedule/slot', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const { startTime, endTime, capacity } = req.body || {};
+    if (!/^\d{2}:\d{2}$/.test(startTime || '') || !/^\d{2}:\d{2}$/.test(endTime || '')) {
+        return res.status(400).json({ error: 'Hora inválida. Usa formato 24h, ej. 05:00.' });
+    }
+    const cap = parseInt(capacity, 10);
+    if (!Number.isFinite(cap) || cap < 1) return res.status(400).json({ error: 'El cupo debe ser un número mayor a 0.' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    pilatesStore.upsertScheduleSlot(startTime, endTime, cap);
+    res.json({ ok: true });
+});
+
+router.post('/businesses/:key/pilates/schedule/slot/remove', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const { startTime } = req.body || {};
+    if (!startTime) return res.status(400).json({ error: 'Falta la hora a eliminar.' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    pilatesStore.removeScheduleSlot(startTime);
+    res.json({ ok: true });
+});
+
 // Clases con al menos 1 reserva en un rango de fechas (por defecto, hoy + 6
 // dias) con quien esta agendado en cada una — para que Bri vea de una
 // cuantas personas hay y a que hora, sin depender de que alguien le edite

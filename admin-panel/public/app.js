@@ -45,6 +45,7 @@ async function refreshCardDetails(card) {
     await refreshLeads(card);
     await refreshFinanceStats(card);
     await refreshPilatesSessions(card);
+    await refreshScheduleEditor(card);
 }
 
 async function refreshQr(card) {
@@ -212,6 +213,54 @@ async function refreshPilatesSessions(card) {
     }
 }
 
+async function refreshScheduleEditor(card) {
+    const daysList = card.querySelector('[data-schedule-days]');
+    const slotsList = card.querySelector('[data-schedule-slots]');
+    if (!daysList || !slotsList) return; // solo la tarjeta de pilates_clientas tiene esta seccion
+    const key = card.dataset.key;
+    try {
+        const { days, slots } = await api(`/businesses/${key}/pilates/schedule`);
+
+        daysList.innerHTML = days.length
+            ? days.map(d => `
+                <li>
+                  <span>${escapeHtml(d.day_label)}</span>
+                  <button type="button" class="btn btn-unmute-one" data-remove-day="${escapeHtml(d.day_key)}">Quitar ✕</button>
+                </li>`).join('')
+            : '<li>Ningún día activo — el bot no podría ofrecer clases.</li>';
+        daysList.querySelectorAll('[data-remove-day]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!confirm(`¿Quitar ${btn.parentElement.querySelector('span').textContent} de los días de clase?`)) return;
+                btn.disabled = true;
+                try {
+                    await api(`/businesses/${key}/pilates/schedule/day/remove`, { method: 'POST', body: JSON.stringify({ dayKey: btn.dataset.removeDay }) });
+                    refreshScheduleEditor(card);
+                } catch (e) { alert(e.message); btn.disabled = false; }
+            });
+        });
+
+        slotsList.innerHTML = slots.length
+            ? slots.map(s => `
+                <li>
+                  <span>${escapeHtml(s.start_time)}–${escapeHtml(s.end_time)} · cupo ${s.capacity}</span>
+                  <button type="button" class="btn btn-unmute-one" data-remove-slot="${escapeHtml(s.start_time)}">Quitar ✕</button>
+                </li>`).join('')
+            : '<li>Ningún horario activo — el bot no podría ofrecer clases.</li>';
+        slotsList.querySelectorAll('[data-remove-slot]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!confirm(`¿Quitar el horario ${btn.dataset.removeSlot}?`)) return;
+                btn.disabled = true;
+                try {
+                    await api(`/businesses/${key}/pilates/schedule/slot/remove`, { method: 'POST', body: JSON.stringify({ startTime: btn.dataset.removeSlot }) });
+                    refreshScheduleEditor(card);
+                } catch (e) { alert(e.message); btn.disabled = false; }
+            });
+        });
+    } catch (e) {
+        daysList.innerHTML = `<li>Error: ${e.message}</li>`;
+    }
+}
+
 async function refreshLeads(card) {
     const viewer = card.querySelector('[data-leads-viewer]');
     const key = card.dataset.key;
@@ -325,6 +374,38 @@ function wireCard(card) {
             if (nombre) nombre.value = btn.dataset.nombre || '';
             if (clases) clases.value = btn.dataset.clases || '';
             if (telefono) telefono.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+    }
+
+    const dayBtn = card.querySelector('[data-action="guardar-schedule-day"]');
+    if (dayBtn) {
+        dayBtn.addEventListener('click', async () => {
+            const select = card.querySelector('[data-schedule-day-key]');
+            const dayKey = select.value;
+            const dayLabel = select.options[select.selectedIndex].text;
+            try {
+                await api(`/businesses/${key}/pilates/schedule/day`, { method: 'POST', body: JSON.stringify({ dayKey, dayLabel }) });
+                refreshScheduleEditor(card);
+            } catch (e) { alert(e.message); }
+        });
+    }
+
+    const slotBtn = card.querySelector('[data-action="guardar-schedule-slot"]');
+    if (slotBtn) {
+        slotBtn.addEventListener('click', async () => {
+            const start = card.querySelector('[data-schedule-slot-start]');
+            const end = card.querySelector('[data-schedule-slot-end]');
+            const capacity = card.querySelector('[data-schedule-slot-capacity]');
+            try {
+                await api(`/businesses/${key}/pilates/schedule/slot`, {
+                    method: 'POST',
+                    body: JSON.stringify({ startTime: start.value.trim(), endTime: end.value.trim(), capacity: capacity.value })
+                });
+                start.value = '';
+                end.value = '';
+                capacity.value = '';
+                refreshScheduleEditor(card);
+            } catch (e) { alert(e.message); }
         });
     }
 }

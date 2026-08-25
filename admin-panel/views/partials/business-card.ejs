@@ -52,6 +52,36 @@
     <h3>Clases agendadas (próximos 7 días)</h3>
     <div class="pilates-sessions" data-pilates-sessions>—</div>
   </div>
+
+  <div class="card-section">
+    <h3>Días de clase</h3>
+    <ul class="schedule-list" data-schedule-days>—</ul>
+    <div class="inline-form">
+      <select data-schedule-day-key>
+        <option value="lunes">Lunes</option>
+        <option value="martes">Martes</option>
+        <option value="miercoles">Miércoles</option>
+        <option value="jueves">Jueves</option>
+        <option value="viernes">Viernes</option>
+        <option value="sabado">Sábado</option>
+        <option value="domingo">Domingo</option>
+      </select>
+      <button type="button" class="btn" data-action="guardar-schedule-day">Agregar/activar</button>
+    </div>
+    <p class="qr-hint">El nombre a mostrar se toma del día elegido. Un día ya activo no se duplica.</p>
+  </div>
+
+  <div class="card-section">
+    <h3>Horarios y cupo</h3>
+    <ul class="schedule-list" data-schedule-slots>—</ul>
+    <div class="inline-form">
+      <input type="text" placeholder="Inicio (05:00)" data-schedule-slot-start class="input-narrow">
+      <input type="text" placeholder="Fin (06:00)" data-schedule-slot-end class="input-narrow">
+      <input type="number" min="1" placeholder="Cupo" data-schedule-slot-capacity class="input-narrow">
+      <button type="button" class="btn" data-action="guardar-schedule-slot">Agregar/editar</button>
+    </div>
+    <p class="qr-hint">Mismo horario de inicio = edita el existente (fin y cupo). Aplica en el siguiente mensaje de cualquier clienta, sin reiniciar el bot.</p>
+  </div>
   <% } %>
 
   <% if (business.leadsAdapter === 'pilates_creditos') { %>

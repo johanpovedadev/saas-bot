@@ -42,7 +42,7 @@ body {
 .subtitle { color: var(--text-dim); margin: 0 0 8px; font-size: 0.9rem; }
 
 label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: var(--text-dim); }
-input {
+input, select {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -123,7 +123,7 @@ input {
 .card-section h3 { font-size: 0.85rem; margin: 0 0 8px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
 
 .inline-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.inline-form input { flex: 1 1 120px; min-width: 0; }
+.inline-form input, .inline-form select { flex: 1 1 120px; min-width: 0; }
 .inline-form input.input-narrow { flex: 0 1 90px; }
 .inline-form .btn { flex: 0 0 auto; }
 
@@ -139,6 +139,8 @@ input {
 .waiting-info strong { color: var(--text); font-size: 0.85rem; }
 .waiting-reason { font-size: 0.75rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.schedule-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--text-dim); max-height: 140px; overflow-y: auto; }
+.schedule-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pilates-sessions { max-height: 260px; overflow-y: auto; font-size: 0.85rem; }
 .pilates-day { margin-bottom: 10px; }
 .pilates-day-title { margin: 0 0 4px; font-size: 0.8rem; color: var(--text-dim); }
