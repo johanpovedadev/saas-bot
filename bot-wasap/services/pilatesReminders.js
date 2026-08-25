@@ -23,8 +23,19 @@ const REMINDER_VARIANTS = [
     (nombre, timeLabel) => `¡Ey ${nombre}! A las ${timeLabel} es tu clase 💪 Prepará tu mejor versión de hoy. ¡Nos vemos pronto!`
 ];
 
+/**
+ * Link publico de suscripcion .ics (ver admin-panel/routes/calendar.routes.js)
+ * - configurable via PANEL_PUBLIC_URL para cuando el panel quede alcanzable
+ * desde afuera (tunel/hosting); localhost por defecto mientras tanto.
+ */
+function getCalendarLink() {
+    const base = (process.env.PANEL_PUBLIC_URL || 'http://localhost:4000').replace(/\/$/, '');
+    return `${base}/calendar/pilates_clientas.ics`;
+}
+
 function buildReminderMessage(nombre, timeLabel) {
-    return pickRandom(REMINDER_VARIANTS)(nombre || '', timeLabel);
+    const base = pickRandom(REMINDER_VARIANTS)(nombre || '', timeLabel);
+    return `${base}\n\n📅 Agrega el calendario de clases a tu cel: ${getCalendarLink()}`;
 }
 
 function labelForStartTime(startTime) {
@@ -76,4 +87,4 @@ function startClassReminders(sock, ctx) {
     logger.info('pilatesReminders: scheduler de recordatorios iniciado (cada 5 min, ventana 30-45min antes de clase)');
 }
 
-module.exports = { checkAndSendReminders, startClassReminders, buildReminderMessage, labelForStartTime };
+module.exports = { checkAndSendReminders, startClassReminders, buildReminderMessage, labelForStartTime, getCalendarLink };
