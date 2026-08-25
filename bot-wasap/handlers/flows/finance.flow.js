@@ -1780,26 +1780,52 @@ async function handleReferralConfirmation(sock, jid, text, userSession, ctx, fin
 
 const NIGHT_REPORT_INTERVAL = null; // Set externally
 
+/**
+ * Recorre TODOS los usuarios registrados (financeAdmin.listUsers, la fuente
+ * persistente), no solo los que tienen sesión viva en memoria (ctx.sessions).
+ * Bug real: un reinicio del bot (deploy, crash, pm2 restart) borra TODAS las
+ * sesiones en memoria - antes de este fix, cualquier usuario que no le
+ * hubiera escrito a Leo de nuevo entre el reinicio y las 7pm simplemente no
+ * recibía su informe de la noche, aunque tuviera transacciones reales
+ * guardadas en la base de datos. Exportada aparte (ver _internal) para poder
+ * probarla sin depender del setInterval real.
+ */
+async function runNightReportSweep(sock, ctx) {
+    let users;
+    try {
+        users = financeAdmin.listUsers({ limit: 10000 });
+    } catch (e) {
+        logger.error(`[runNightReportSweep] Error listando usuarios: ${e.message}`);
+        return;
+    }
+    const today = new Date().toDateString();
+    for (const u of users) {
+        const jid = u.jid;
+        if (!jid) continue;
+        try {
+            const session = ctx?.sessions?.[jid];
+            // Preferir la sesión en memoria si existe (más al día); si no,
+            // cargar desde la DB - así el informe no depende de que el
+            // usuario haya escrito recientemente.
+            const fin = (session && session.finance) || financeStore.loadFinance(jid);
+            if (!fin?.name || !(fin.transactions?.length > 0)) continue;
+            if ((fin.lastReportDate || '') === today) continue;
+            await generateNightReport(sock, jid, fin, ctx);
+            fin.lastReportDate = today;
+            financeStore.saveFinance(jid, fin);
+        } catch (e) {
+            logger.error(`[runNightReportSweep] Error generando informe para ${jid}: ${e.message}`);
+        }
+    }
+}
+
 function startNightReporter(sock, ctx) {
     // Check every 15 minutes if it's 7-8 PM
     const CHECK_INTERVAL = 15 * 60 * 1000; // 15 min
     setInterval(() => {
         const hour = new Date().getHours();
         if (hour >= 19 && hour < 20) {
-            const store = ctx?.sessions;
-            if (!store) return;
-            for (const [jid, session] of Object.entries(store)) {
-                const fin = session?.finance;
-                if (fin?.name && fin.transactions?.length > 0) {
-                    const reportDate = fin.lastReportDate || '';
-                    const today = new Date().toDateString();
-                    if (reportDate !== today) {
-                        generateNightReport(sock, jid, fin, ctx);
-                        fin.lastReportDate = today;
-                        financeStore.saveFinance(jid, fin);
-                    }
-                }
-            }
+            runNightReportSweep(sock, ctx);
         }
     }, CHECK_INTERVAL);
 }
@@ -1863,5 +1889,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation }
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep }
 };
