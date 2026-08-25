@@ -97,6 +97,43 @@ function getDb() {
         if (!sessionCols.includes('day_before_reminded')) {
             db.exec(`ALTER TABLE pilates_sessions ADD COLUMN day_before_reminded INTEGER NOT NULL DEFAULT 0`);
         }
+        // Horario editable desde el panel (Fase 4): antes vivia quemado en
+        // codigo (AVAILABLE_DAYS/SLOTS en pilates_clientas.flow.js). Si la
+        // tabla esta vacia (primera vez), se siembra con esos MISMOS valores
+        // para que el bot no se quede sin horarios el dia del despliegue.
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS pilates_schedule_days (
+                id TEXT PRIMARY KEY,
+                day_key TEXT NOT NULL UNIQUE,
+                day_label TEXT NOT NULL,
+                dow INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        `);
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS pilates_schedule_slots (
+                id TEXT PRIMARY KEY,
+                start_time TEXT NOT NULL UNIQUE,
+                end_time TEXT NOT NULL,
+                capacity INTEGER NOT NULL DEFAULT 6,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        `);
+        const daysCount = db.prepare(`SELECT COUNT(*) n FROM pilates_schedule_days`).get().n;
+        if (daysCount === 0) {
+            const insertDay = db.prepare(`INSERT INTO pilates_schedule_days (id, day_key, day_label, dow) VALUES (?, ?, ?, ?)`);
+            insertDay.run('day_lunes', 'lunes', 'Lunes', 1);
+            insertDay.run('day_miercoles', 'miercoles', 'Miércoles', 3);
+            insertDay.run('day_viernes', 'viernes', 'Viernes', 5);
+        }
+        const slotsCount = db.prepare(`SELECT COUNT(*) n FROM pilates_schedule_slots`).get().n;
+        if (slotsCount === 0) {
+            const insertSlot = db.prepare(`INSERT INTO pilates_schedule_slots (id, start_time, end_time, capacity) VALUES (?, ?, ?, ?)`);
+            insertSlot.run('slot_0500', '05:00', '06:00', 6);
+            insertSlot.run('slot_0600', '06:00', '07:00', 6);
+            insertSlot.run('slot_1700', '17:00', '18:00', 6);
+            insertSlot.run('slot_1900', '19:00', '20:00', 6);
+        }
         logger.info(`pilatesStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -512,6 +549,84 @@ function getSessionsWithBookings(startIso, endIso) {
     }
 }
 
+/** Días activos de clase, ordenados por día de semana (lunes primero). */
+function getScheduleDays() {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(`SELECT * FROM pilates_schedule_days ORDER BY dow ASC`).all();
+    } catch (err) {
+        logger.error(`pilatesStore: getScheduleDays error: ${err.message}`);
+        return [];
+    }
+}
+
+/** Agrega un día o edita uno existente (mismo day_key = reemplaza). */
+function upsertScheduleDay(dayKey, dayLabel, dow) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const id = `day_${dayKey}`;
+        database.prepare(`
+            INSERT INTO pilates_schedule_days (id, day_key, day_label, dow) VALUES (?, ?, ?, ?)
+            ON CONFLICT(day_key) DO UPDATE SET day_label = excluded.day_label, dow = excluded.dow
+        `).run(id, dayKey, dayLabel, dow);
+        return id;
+    } catch (err) {
+        logger.error(`pilatesStore: upsertScheduleDay error: ${err.message}`);
+        return null;
+    }
+}
+
+function removeScheduleDay(dayKey) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`DELETE FROM pilates_schedule_days WHERE day_key = ?`).run(dayKey);
+    } catch (err) {
+        logger.error(`pilatesStore: removeScheduleDay error: ${err.message}`);
+    }
+}
+
+/** Horarios (hora de inicio/fin/cupo) ofrecidos, ordenados por hora. */
+function getScheduleSlots() {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(`SELECT * FROM pilates_schedule_slots ORDER BY start_time ASC`).all();
+    } catch (err) {
+        logger.error(`pilatesStore: getScheduleSlots error: ${err.message}`);
+        return [];
+    }
+}
+
+/** Agrega un horario o edita uno existente (misma start_time = reemplaza). */
+function upsertScheduleSlot(startTime, endTime, capacity) {
+    const database = getDb();
+    if (!database) return null;
+    try {
+        const id = `slot_${startTime.replace(':', '')}`;
+        database.prepare(`
+            INSERT INTO pilates_schedule_slots (id, start_time, end_time, capacity) VALUES (?, ?, ?, ?)
+            ON CONFLICT(start_time) DO UPDATE SET end_time = excluded.end_time, capacity = excluded.capacity
+        `).run(id, startTime, endTime, capacity);
+        return id;
+    } catch (err) {
+        logger.error(`pilatesStore: upsertScheduleSlot error: ${err.message}`);
+        return null;
+    }
+}
+
+function removeScheduleSlot(startTime) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`DELETE FROM pilates_schedule_slots WHERE start_time = ?`).run(startTime);
+    } catch (err) {
+        logger.error(`pilatesStore: removeScheduleSlot error: ${err.message}`);
+    }
+}
+
 /** Roster local completo (clientas cargadas desde el panel, no el Sheet). */
 function getLocalClients() {
     const database = getDb();
@@ -531,5 +646,7 @@ module.exports = {
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
     upsertLocalClient, getLocalClients,
     getBookingsForSession, getSessionsNeedingReminder, markSessionReminded, getSessionById,
-    getSessionsWithBookings, getSessionsForDate, markSessionDayBeforeReminded
+    getSessionsWithBookings, getSessionsForDate, markSessionDayBeforeReminded,
+    getScheduleDays, upsertScheduleDay, removeScheduleDay,
+    getScheduleSlots, upsertScheduleSlot, removeScheduleSlot
 };

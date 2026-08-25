@@ -35,16 +35,55 @@ const PILC_PHASES = [
     PHASE.PILC_SATURDAY_REPLY, PHASE.PILC_CREDIT_LIMIT_CONFIRM
 ];
 
-// Dias y horarios de clase. Ajustar aqui si Bri Pilates cambia la agenda.
-const AVAILABLE_DAYS = { lunes: 'Lunes', miercoles: 'Miércoles', viernes: 'Viernes' };
-const DAY_ORDER = ['lunes', 'miercoles', 'viernes'];
-const SLOTS = [
-    { start: '05:00', end: '06:00', label: '5:00 am' },
-    { start: '06:00', end: '07:00', label: '6:00 am' },
-    { start: '17:00', end: '18:00', label: '5:00 pm' },
-    { start: '19:00', end: '20:00', label: '7:00 pm' }
+// Dias y horarios de clase — Fase 4 del panel: editables desde el panel web
+// (pilatesStore.getScheduleDays/getScheduleSlots), YA NO quemados en código.
+// Estos 4 quedan como `let` con valores por defecto (los mismos de antes,
+// usados solo hasta la primera llamada a refreshScheduleFromStore) y se
+// MUTAN en el mismo lugar en cada refresh — así los ~20 sitios de este
+// archivo que ya los leen directamente (AVAILABLE_DAYS[dia], SLOTS.map...)
+// siguen funcionando sin cambios, viendo siempre el valor más reciente.
+let AVAILABLE_DAYS = { lunes: 'Lunes', miercoles: 'Miércoles', viernes: 'Viernes' };
+let DAY_ORDER = ['lunes', 'miercoles', 'viernes'];
+let SLOTS = [
+    { start: '05:00', end: '06:00', label: '5:00 am', capacity: 6 },
+    { start: '06:00', end: '07:00', label: '6:00 am', capacity: 6 },
+    { start: '17:00', end: '18:00', label: '5:00 pm', capacity: 6 },
+    { start: '19:00', end: '20:00', label: '7:00 pm', capacity: 6 }
 ];
-const CAPACITY = 6;
+let DAY_DOW = { lunes: 1, miercoles: 3, viernes: 5 }; // 0=domingo..6=sabado
+
+/** "05:00" -> "5:00 am" / "17:00" -> "5:00 pm" (formato usado en toda la conversación). */
+function formatTimeLabel(startTime) {
+    const [hh, mm] = startTime.split(':').map(Number);
+    const period = hh < 12 ? 'am' : 'pm';
+    const hour12 = (hh % 12) || 12;
+    return `${hour12}:${String(mm).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Recarga días/horarios desde pilatesStore (fuente de verdad, editable desde
+ * el panel) y MUTA los objetos/arrays de arriba en el mismo lugar - se llama
+ * al principio de handle()/showWelcome() (cada mensaje entrante) y una vez
+ * al arrancar el bot, así un cambio guardado desde el panel se refleja en el
+ * siguiente mensaje de cualquier clienta, sin reiniciar el proceso.
+ */
+function refreshScheduleFromStore() {
+    const days = pilatesStore.getScheduleDays();
+    const slots = pilatesStore.getScheduleSlots();
+    if (days.length === 0 || slots.length === 0) return; // DB no disponible o vacía: seguir con los defaults en memoria
+
+    for (const k of Object.keys(AVAILABLE_DAYS)) delete AVAILABLE_DAYS[k];
+    for (const k of Object.keys(DAY_DOW)) delete DAY_DOW[k];
+    for (const d of days) {
+        AVAILABLE_DAYS[d.day_key] = d.day_label;
+        DAY_DOW[d.day_key] = d.dow;
+    }
+    DAY_ORDER.length = 0;
+    DAY_ORDER.push(...days.map(d => d.day_key));
+
+    SLOTS.length = 0;
+    SLOTS.push(...slots.map(s => ({ start: s.start_time, end: s.end_time, label: formatTimeLabel(s.start_time), capacity: s.capacity })));
+}
 
 function stripAccents(s) {
     return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -54,8 +93,6 @@ function initPilc(userSession) {
     if (!userSession.pilc) userSession.pilc = {};
     return userSession.pilc;
 }
-
-const DAY_DOW = { lunes: 1, miercoles: 3, viernes: 5 }; // 0=domingo..6=sabado
 
 /**
  * Dias de ESTA semana (lunes-domingo, hoy incluido) que todavia no han
@@ -136,7 +173,7 @@ function getOfferedSlots(dateISO) {
     return SLOTS.map(slot => {
         const session = availability[slot.start];
         const bookedCount = session ? session.booked_count : 0;
-        const capacity = session ? session.capacity : CAPACITY;
+        const capacity = session ? session.capacity : slot.capacity;
         return { ...slot, free: Math.max(0, capacity - bookedCount), bookedCount };
     }).filter(s => s.free > 0 && !isWithinCutoff(slotDateTime(dateISO, s.start)));
 }
@@ -290,6 +327,7 @@ async function releaseBooking(booking) {
 }
 
 async function showWelcome(sock, jid, ctx) {
+    refreshScheduleFromStore();
     const userSession = ctx?.sessions?.[jid];
     if (!userSession) return;
     initPilc(userSession);
@@ -315,6 +353,7 @@ async function showMenu(sock, jid, ctx, name) {
 }
 
 async function handle(sock, jid, text, userSession, ctx) {
+    refreshScheduleFromStore();
     const pil = initPilc(userSession);
     const t = (text || '').trim();
     if (!t) return;
@@ -870,6 +909,7 @@ module.exports = {
     // (campana de sabados + recordatorios de clase) — ver el hook generico
     // en index.js, reusable por cualquier otro bot de citas a futuro.
     startScheduledJobs: (sock, ctx) => {
+        refreshScheduleFromStore();
         require('../../services/pilatesCampaign').startSaturdayCampaign(sock, ctx);
         require('../../services/pilatesReminders').startClassReminders(sock, ctx);
         require('../../services/pilatesDayBeforeReminders').startDayBeforeReminders(sock, ctx);
@@ -881,6 +921,7 @@ module.exports = {
     _internal: {
         AVAILABLE_DAYS, DAY_ORDER, SLOTS, nextDateForDay, getOfferedSlots, formatSlotsList,
         commitBooking, slotKey, extractTimeKey, matchDay, getDaysAvailableThisWeek, hasDayPassedThisWeek,
-        hasActiveBookingOnDay, isBookingWithinCutoff, slotDateTime, matchRescheduleOption
+        hasActiveBookingOnDay, isBookingWithinCutoff, slotDateTime, matchRescheduleOption,
+        refreshScheduleFromStore, formatTimeLabel
     }
 };
