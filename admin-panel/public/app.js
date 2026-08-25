@@ -174,10 +174,11 @@ async function refreshFinanceStats(card) {
     }
 }
 
-// "lunes 25 ago" - suficiente para ubicarse sin ser una fecha completa.
+// "Lunes 25 ago" - suficiente para ubicarse sin ser una fecha completa.
 function fmtDateShort(iso) {
     const d = new Date(`${iso}T00:00:00`);
-    return d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' });
+    const text = d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' });
+    return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 async function refreshPilatesSessions(card) {
