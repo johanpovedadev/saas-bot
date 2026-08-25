@@ -872,6 +872,7 @@ module.exports = {
     startScheduledJobs: (sock, ctx) => {
         require('../../services/pilatesCampaign').startSaturdayCampaign(sock, ctx);
         require('../../services/pilatesReminders').startClassReminders(sock, ctx);
+        require('../../services/pilatesDayBeforeReminders').startDayBeforeReminders(sock, ctx);
     },
     getInitialPhase: () => PHASE.PILC_ASK_NAME,
     isFlowPhase: (phase) => PILC_PHASES.includes(phase),

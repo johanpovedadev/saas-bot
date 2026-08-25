@@ -90,6 +90,13 @@ function getDb() {
         if (!cols.includes('is_cortesia')) {
             db.exec(`ALTER TABLE pilates_bookings ADD COLUMN is_cortesia INTEGER NOT NULL DEFAULT 0`);
         }
+        // Migracion aditiva: marca si ya se le mando el recordatorio del DIA
+        // ANTERIOR (5-7pm, aviso de la hora de mañana) - separado de
+        // `reminded` (el de 30-45min antes) porque son 2 avisos distintos con
+        // ventanas distintas, una sesion pasa por ambos.
+        if (!sessionCols.includes('day_before_reminded')) {
+            db.exec(`ALTER TABLE pilates_sessions ADD COLUMN day_before_reminded INTEGER NOT NULL DEFAULT 0`);
+        }
         logger.info(`pilatesStore: DB opened at ${DB_PATH}`);
         return db;
     } catch (err) {
@@ -456,6 +463,33 @@ function markSessionReminded(sessionId) {
 }
 
 /**
+ * Sesiones con al menos 1 reserva para una fecha exacta (ej. mañana) que aun
+ * no recibieron el recordatorio del día anterior — para el aviso de 5-7pm.
+ */
+function getSessionsForDate(dateIso) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        return database.prepare(
+            `SELECT * FROM pilates_sessions WHERE date_iso = ? AND booked_count > 0 AND day_before_reminded = 0`
+        ).all(dateIso);
+    } catch (err) {
+        logger.error(`pilatesStore: getSessionsForDate error: ${err.message}`);
+        return [];
+    }
+}
+
+function markSessionDayBeforeReminded(sessionId) {
+    const database = getDb();
+    if (!database) return;
+    try {
+        database.prepare(`UPDATE pilates_sessions SET day_before_reminded = 1 WHERE id = ?`).run(sessionId);
+    } catch (err) {
+        logger.error(`pilatesStore: markSessionDayBeforeReminded error: ${err.message}`);
+    }
+}
+
+/**
  * Sesiones con al menos 1 reserva entre dos fechas (inclusive), cada una con
  * su lista de reservas activas (nombre/telefono/estado) — para la vista del
  * panel de "cuántas personas hay en cada clase". Ordenado por fecha/hora.
@@ -497,5 +531,5 @@ module.exports = {
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
     upsertLocalClient, getLocalClients,
     getBookingsForSession, getSessionsNeedingReminder, markSessionReminded, getSessionById,
-    getSessionsWithBookings
+    getSessionsWithBookings, getSessionsForDate, markSessionDayBeforeReminded
 };

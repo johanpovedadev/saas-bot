@@ -76,4 +76,4 @@ function startClassReminders(sock, ctx) {
     logger.info('pilatesReminders: scheduler de recordatorios iniciado (cada 5 min, ventana 30-45min antes de clase)');
 }
 
-module.exports = { checkAndSendReminders, startClassReminders, buildReminderMessage };
+module.exports = { checkAndSendReminders, startClassReminders, buildReminderMessage, labelForStartTime };
