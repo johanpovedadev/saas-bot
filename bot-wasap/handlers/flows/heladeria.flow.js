@@ -175,11 +175,47 @@ function addPlainToCarrito(userSession, r) {
     });
 }
 
-function sendPostAddOptions(sock, jid, ctx) {
+/**
+ * Resumen corto del carrito (sin sincronizar order.items - eso solo pasa al
+ * entrar a checkout, ver ensureCarrito) para mostrarlo cada vez que se
+ * termina de agregar un producto, no solo cuando el cliente pide "pagar".
+ */
+function formatCarritoSummary(carrito) {
+    if (!carrito || carrito.length === 0) return null;
+    let total = 0;
+    const lines = carrito.map(item => {
+        const precioNum = Number(item.precio || 0) || 0;
+        const cant = Number(item.cantidad || 1) || 1;
+        const itemTotal = precioNum * cant;
+        total += itemTotal;
+        let text = `*${cant}x* ${item.nombre} - *${money(itemTotal)}*`;
+        const saboresArr = Array.isArray(item.sabores) ? item.sabores.map(s => (s && (s.NombreProducto || s.nombre)) || s) : [];
+        if (saboresArr.length) text += `\n  sabores: _${saboresArr.join(', ')}_`;
+        const toppingsArr = Array.isArray(item.toppings) ? item.toppings.map(t => (t && (t.NombreProducto || t.nombre)) || t) : [];
+        if (toppingsArr.length) text += `\n  toppings: _${toppingsArr.join(', ')}_`;
+        if (item.observaciones) text += `\n  Obs: _${item.observaciones}_`;
+        return text;
+    });
+    return { text: lines.join('\n\n'), total };
+}
+
+/**
+ * Pedido de Johan: cada vez que se termina de agregar un producto, mostrar
+ * el carrito COMPLETO (todos los productos hasta ahora) - antes solo se veía
+ * al escribir "pagar" explícitamente. Las opciones (seguir/pagar/menú) no
+ * cambian; "menú" ya vacía el carrito (equivale a "borrar todo"), y "pagar"
+ * lleva al resumen con la opción de *editar* (quitar un ítem puntual).
+ */
+function sendPostAddOptions(sock, jid, ctx, userSession) {
+    const carrito = userSession ? ensureCarrito(userSession) : null;
+    const summary = formatCarritoSummary(carrito);
+    const cartBlock = summary
+        ? `🛒 *Tu pedido hasta ahora:*\n\n${summary.text}\n\n💰 *Total: ${money(summary.total)}*\n\n`
+        : '';
     return say(sock, jid,
-        `¿Qué deseas hacer ahora?\n\n` +
+        `${cartBlock}¿Qué deseas hacer ahora?\n\n` +
         `*1)* 🍦 Seguir comprando\n` +
-        `*2)* 💳 Ir a pagar\n` +
+        `*2)* 💳 Ir a pagar (confirmar o editar el pedido)\n` +
         `*3)* 📋 Ver menú principal\n\n` +
         `Escribe el número de la opción.`, ctx);
 }
@@ -424,7 +460,7 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
             addPlainToCarrito(userSession, r);
             await say(sock, jid,
                 `🍨 Agregué a tu pedido:\n• ${r.cantidad}x ${getProductName(r.product)} - *${money(r.precio * r.cantidad)}*`, ctx);
-            await sendPostAddOptions(sock, jid, ctx);
+            await sendPostAddOptions(sock, jid, ctx, userSession);
         }
         return;
     }
@@ -774,7 +810,7 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
     const obsText = observacionesFinal ? ` · Obs: ${observacionesFinal}` : '';
     await say(sock, jid,
         `✅ ${qty}x *${nombre}*${saboresText}${toppingsText}${obsText} - *${money(precio * qty)}*`, ctx);
-    await sendPostAddOptions(sock, jid, ctx);
+    await sendPostAddOptions(sock, jid, ctx, userSession);
 }
 
 /**
@@ -1105,7 +1141,7 @@ async function afterAddToCarrito(sock, jid, userSession, ctx, cartItems) {
         return `✅ ${it.cantidad}x *${it.nombre}*${saboresText}${toppingsText}${obsText} - *${money(it.precio * it.cantidad)}*`;
     }).join('\n');
     await say(sock, jid, lines, ctx);
-    await sendPostAddOptions(sock, jid, ctx);
+    await sendPostAddOptions(sock, jid, ctx, userSession);
 }
 
 /**
@@ -1164,7 +1200,7 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
     const lines = resolved.map(r => `• ${r.cantidad}x ${getProductName(r.product)} - *${money(r.precio * r.cantidad)}*`);
     await say(sock, jid,
         `🍦 ¡Listo! Agregué a tu pedido:\n\n${lines.join('\n')}`, ctx);
-    await sendPostAddOptions(sock, jid, ctx);
+    await sendPostAddOptions(sock, jid, ctx, userSession);
     return true;
 }
 
@@ -1574,7 +1610,7 @@ async function reshowCurrentStep(sock, jid, userSession, ctx) {
             return;
         }
         case HELADO_POST_ADD:
-            await sendPostAddOptions(sock, jid, ctx);
+            await sendPostAddOptions(sock, jid, ctx, userSession);
             return;
         default:
             return;
@@ -1764,7 +1800,7 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
                 userSession.phase = HELADO_POST_ADD;
                 userSession.awaitingField = null;
                 userSession.errorCount = 0;
-                await sendPostAddOptions(sock, jid, ctx);
+                await sendPostAddOptions(sock, jid, ctx, userSession);
             }
         }
     }
@@ -1881,7 +1917,7 @@ function genericGuidedError(sock, jid, userSession, ctx) {
         case HELADO_PER_UNIT_TOPPINGS:
             return say(sock, jid, `❌ No entendí. Escribe los nombres de los toppings para esta unidad (ej: *oreo y arándano*), *"lista"* para ver las opciones o *"no"* para continuar.`, ctx);
         case HELADO_POST_ADD:
-            return sendPostAddOptions(sock, jid, ctx);
+            return sendPostAddOptions(sock, jid, ctx, userSession);
         default:
             return say(sock, jid, `😅 No entendí bien lo que necesitas. Escribe *menú* para ver nuestras opciones. 🍦`, ctx);
     }
