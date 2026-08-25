@@ -574,7 +574,14 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
             }
         }
         userSession.phase = HELADO_QUANTITY;
-        await say(sock, jid, `✅ ¡Le ponemos de todo! 😋\n\n¿Cuántas unidades deseas?`, ctx);
+        // Mismo formato que la confirmación por nombre (lista con precio) -
+        // "le ponemos de todo" sin decir QUÉ es "todo" era inconsistente con
+        // el resto del flujo (sabores, toppings por nombre, siempre listan).
+        const allLines = toppingsList.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
+        }).join('\n');
+        await say(sock, jid, `✅ ¡Le ponemos de todo! 😋\n\n${allLines}\n\n¿Cuántas unidades deseas?`, ctx);
         return;
     }
 

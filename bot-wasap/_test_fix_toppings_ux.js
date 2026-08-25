@@ -86,10 +86,16 @@ async function handle(text, userSession) {
     check(s2.phase === 'HELADO_TOPPINGS', `TOPP-lista: se queda en toppings (fase: ${s2.phase})`);
 
     // ---- "todos" → agrega todos ----
+    const totalToppingsEnCatalogo = (ctx.productsCache || []).filter(p => String(p.Categoria || '').toLowerCase() === 'toppings').length;
     const s3 = makeToppingsSession();
     const r3 = await handle('de todo', s3);
-    check((s3.heladoFlow.toppingsSeleccionados || []).length >= 20, `TOPP-todos: agrega todos (${(s3.heladoFlow.toppingsSeleccionados || []).length})`);
+    check((s3.heladoFlow.toppingsSeleccionados || []).length === totalToppingsEnCatalogo,
+        `TOPP-todos: agrega TODOS los del catálogo actual (${(s3.heladoFlow.toppingsSeleccionados || []).length}/${totalToppingsEnCatalogo})`);
     check(s3.phase === 'HELADO_QUANTITY', `TOPP-todos: avanza a cantidad (fase: ${s3.phase})`);
+    // Regla nueva: "todos" debe LISTAR lo que agregó (como ya hacía por
+    // nombre/sabores), no solo decir "le ponemos de todo" sin detalle.
+    check(/•/.test(r3) && (r3.match(/•/g) || []).length === totalToppingsEnCatalogo,
+        `TOPP-todos: el mensaje lista cada topping agregado (${(r3.match(/•/g) || []).length} líneas)`);
 
     // ---- "no" → continúa sin toppings ----
     const s4 = makeToppingsSession();
