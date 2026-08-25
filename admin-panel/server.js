@@ -9,6 +9,7 @@ const session = require('express-session');
 const authRoutes = require('./routes/auth.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const apiRoutes = require('./routes/api.routes');
+const calendarRoutes = require('./routes/calendar.routes');
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use(session({
 
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
+app.use('/', calendarRoutes);
 app.use('/api', apiRoutes);
 
 const PORT = parseInt(process.env.PORT, 10) || 4000;
