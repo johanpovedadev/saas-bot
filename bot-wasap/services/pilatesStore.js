@@ -455,6 +455,29 @@ function markSessionReminded(sessionId) {
     }
 }
 
+/**
+ * Sesiones con al menos 1 reserva entre dos fechas (inclusive), cada una con
+ * su lista de reservas activas (nombre/telefono/estado) — para la vista del
+ * panel de "cuántas personas hay en cada clase". Ordenado por fecha/hora.
+ */
+function getSessionsWithBookings(startIso, endIso) {
+    const database = getDb();
+    if (!database) return [];
+    try {
+        const sessions = database.prepare(
+            `SELECT * FROM pilates_sessions WHERE date_iso >= ? AND date_iso <= ? AND booked_count > 0
+             ORDER BY date_iso ASC, start_time ASC`
+        ).all(startIso, endIso);
+        return sessions.map(s => ({
+            ...s,
+            bookings: getBookingsForSession(s.id)
+        }));
+    } catch (err) {
+        logger.error(`pilatesStore: getSessionsWithBookings error: ${err.message}`);
+        return [];
+    }
+}
+
 /** Roster local completo (clientas cargadas desde el panel, no el Sheet). */
 function getLocalClients() {
     const database = getDb();
@@ -473,5 +496,6 @@ module.exports = {
     getSessionAvailability, getActiveBookingByJid, getBookingById, rescheduleBooking,
     cancelBooking, markBookingConfirmed, savePause, countBookingsThisMonth,
     upsertLocalClient, getLocalClients,
-    getBookingsForSession, getSessionsNeedingReminder, markSessionReminded, getSessionById
+    getBookingsForSession, getSessionsNeedingReminder, markSessionReminded, getSessionById,
+    getSessionsWithBookings
 };

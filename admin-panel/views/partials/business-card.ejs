@@ -47,6 +47,13 @@
     <div class="log-viewer" data-log-viewer>—</div>
   </div>
 
+  <% if (business.key === 'pilates_clientas') { %>
+  <div class="card-section">
+    <h3>Clases agendadas (próximos 7 días)</h3>
+    <div class="pilates-sessions" data-pilates-sessions>—</div>
+  </div>
+  <% } %>
+
   <% if (business.leadsAdapter === 'pilates_creditos') { %>
   <div class="card-section">
     <h3>Cargar clienta</h3>

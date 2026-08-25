@@ -44,6 +44,7 @@ async function refreshCardDetails(card) {
     await refreshLogs(card);
     await refreshLeads(card);
     await refreshFinanceStats(card);
+    await refreshPilatesSessions(card);
 }
 
 async function refreshQr(card) {
@@ -170,6 +171,43 @@ async function refreshFinanceStats(card) {
         card.querySelector('[data-finance-month]').textContent = thisMonth;
     } catch (e) {
         console.error('refreshFinanceStats', e);
+    }
+}
+
+// "lunes 25 ago" - suficiente para ubicarse sin ser una fecha completa.
+function fmtDateShort(iso) {
+    const d = new Date(`${iso}T00:00:00`);
+    return d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+async function refreshPilatesSessions(card) {
+    const box = card.querySelector('[data-pilates-sessions]');
+    if (!box) return; // solo la tarjeta de pilates_clientas tiene esta seccion
+    const key = card.dataset.key;
+    try {
+        const { sessions } = await api(`/businesses/${key}/pilates/sessions`);
+        if (!sessions.length) {
+            box.textContent = 'Ninguna clase agendada en los próximos 7 días.';
+            return;
+        }
+        const byDate = {};
+        for (const s of sessions) {
+            (byDate[s.date_iso] = byDate[s.date_iso] || []).push(s);
+        }
+        box.innerHTML = Object.keys(byDate).sort().map(dateIso => `
+            <div class="pilates-day">
+                <h4 class="pilates-day-title">${escapeHtml(fmtDateShort(dateIso))}</h4>
+                <ul class="pilates-day-sessions">
+                    ${byDate[dateIso].map(s => `
+                        <li class="pilates-session">
+                            <span class="pilates-session-time">${escapeHtml(s.start_time)}</span>
+                            <span class="pilates-session-count">${s.booked_count}/${s.capacity} agendadas</span>
+                            <span class="pilates-session-names">${s.bookings.map(b => escapeHtml(b.name || b.jid.split('@')[0])).join(', ') || '—'}</span>
+                        </li>`).join('')}
+                </ul>
+            </div>`).join('');
+    } catch (e) {
+        box.textContent = `Error: ${e.message}`;
     }
 }
 

@@ -95,6 +95,21 @@ router.post('/businesses/:key/pilates-credito', requireBusinessScope, async (req
     res.status(result.ok ? 200 : 400).json(result);
 });
 
+// Clases con al menos 1 reserva en un rango de fechas (por defecto, hoy + 6
+// dias) con quien esta agendado en cada una — para que Bri vea de una
+// cuantas personas hay y a que hora, sin depender de que alguien le edite
+// codigo o le mande un Excel.
+router.get('/businesses/:key/pilates/sessions', requireBusinessScope, (req, res) => {
+    if (req.params.key !== 'pilates_clientas') return res.status(404).json({ error: 'No disponible para este negocio.' });
+    const pilatesStore = require(require('path').join(__dirname, '..', '..', 'bot-wasap', 'services', 'pilatesStore'));
+    const toIso = (d) => d.toISOString().slice(0, 10);
+    const today = new Date();
+    const from = req.query.from || toIso(today);
+    const to = req.query.to || toIso(new Date(today.getTime() + 6 * 86400000));
+    const sessions = pilatesStore.getSessionsWithBookings(from, to);
+    res.json({ sessions });
+});
+
 // Usuarios activos de Leo Financiero (hoy / esta semana / este mes) — ventanas
 // rodantes de 24h/7d/30d contando quien mando al menos 1 mensaje.
 router.get('/businesses/:key/finance-stats', requireBusinessScope, (req, res) => {
