@@ -1331,11 +1331,25 @@ async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg'
 }
 
 /**
+ * Cuántas palabras "gasta" el saludo detectado al inicio del mensaje (ej.
+ * "hola" = 1, "buenos dias" = 2) - para saber si sobra texto después del
+ * saludo (un pedido real venía pegado al saludo).
+ */
+function textAfterGreeting(rawText) {
+    const { getMatchingGreeting } = require('../../config/greetings/greetings.colombia');
+    const matched = getMatchingGreeting ? getMatchingGreeting(rawText) : null;
+    if (!matched) return String(rawText || '').trim();
+    const words = String(rawText || '').trim().split(/\s+/);
+    const greetingWordCount = matched.trim().split(/\s+/).length;
+    return words.slice(greetingWordCount).join(' ').trim();
+}
+
+/**
  * Bienvenida con PERSONA (heladería 🍦). NO pide el nombre en el saludo:
  * el nombre solo se solicita en el envío (checkout). Texto estático
  * (0 calls de IA).
  */
-async function showWelcome(sock, jid, ctx) {
+async function showWelcome(sock, jid, ctx, text) {
     const userSession = ctx.sessions && ctx.sessions[jid];
 
     if (userSession) {
@@ -1354,6 +1368,19 @@ _Escribe el número de la opción (1, 2 o 3)._`;
     const greeting = editableConfig.getEditableConfig(ctx, 'Saludo de bienvenida', fallbackGreeting);
     await say(sock, jid, greeting, ctx);
     await sendMenuImages(sock, jid, ctx);
+
+    // Bug real reportado por Johan: "Hola quiero un car con un jugo" solo
+    // mostraba el menú y descartaba el pedido pegado al saludo - el cliente
+    // tenía que repetirlo, y esa repetición terminaba disparando el
+    // detector de loop. Si sobra texto real después del saludo, se procesa
+    // como un pedido de una vez (mismo clasificador que ya usa el resto del
+    // flujo para pedidos completos en lenguaje natural).
+    if (userSession) {
+        const resto = textAfterGreeting(text);
+        if (resto.length >= 3) {
+            await classifyOrderInput(sock, jid, text, userSession, ctx);
+        }
+    }
 }
 
 /**
