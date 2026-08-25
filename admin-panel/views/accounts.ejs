@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel de administración — Cuentas</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Cuentas del panel</h1>
+    <div class="topbar-user">
+      <a href="/" class="btn btn-link">← Volver</a>
+      <span><%= user.username %> (super-admin)</span>
+      <form method="POST" action="/logout"><button type="submit" class="btn btn-link">Salir</button></form>
+    </div>
+  </header>
+
+  <main class="cards-grid">
+    <section class="card">
+      <header class="card-header"><h2>Crear o editar cuenta</h2></header>
+      <div id="form-error" class="error" style="display:none"></div>
+      <form id="account-form" class="card-section">
+        <label>Usuario
+          <input type="text" id="acc-username" required autocomplete="off">
+        </label>
+        <label>Contraseña
+          <input type="password" id="acc-password" required minlength="6" autocomplete="new-password">
+        </label>
+        <label>Tipo de cuenta
+          <select id="acc-role">
+            <option value="business">Negocio (ve solo su tarjeta)</option>
+            <option value="super">Super-admin (ve todo)</option>
+          </select>
+        </label>
+        <label id="acc-business-label">Negocio
+          <select id="acc-businessKey">
+            <% businesses.forEach(b => { %>
+              <option value="<%= b.key %>"><%= b.name %> (<%= b.key %>)</option>
+            <% }) %>
+          </select>
+        </label>
+        <button type="submit" class="btn">Guardar</button>
+      </form>
+      <p class="qr-hint">Usar el mismo usuario de una cuenta existente reemplaza su contraseña/negocio — no crea una segunda cuenta.</p>
+    </section>
+
+    <section class="card">
+      <header class="card-header"><h2>Cuentas existentes</h2></header>
+      <div class="card-section">
+        <table class="leads-table">
+          <thead><tr><th>Usuario</th><th>Tipo</th><th>Negocio</th></tr></thead>
+          <tbody>
+            <% accounts.forEach(a => { %>
+              <tr>
+                <td><%= a.username %></td>
+                <td><%= a.role === 'super' ? 'Super-admin' : 'Negocio' %></td>
+                <td><%= a.businessKey || '—' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const roleSelect = document.getElementById('acc-role');
+    const businessLabel = document.getElementById('acc-business-label');
+    function syncBusinessVisibility() {
+      businessLabel.style.display = roleSelect.value === 'super' ? 'none' : '';
+    }
+    roleSelect.addEventListener('change', syncBusinessVisibility);
+    syncBusinessVisibility();
+
+    document.getElementById('account-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorBox = document.getElementById('form-error');
+      errorBox.style.display = 'none';
+      const body = {
+        username: document.getElementById('acc-username').value.trim(),
+        password: document.getElementById('acc-password').value,
+        role: roleSelect.value,
+        businessKey: document.getElementById('acc-businessKey').value
+      };
+      try {
+        const res = await fetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+        location.reload();
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = '';
+      }
+    });
+  </script>
+</body>
+</html>

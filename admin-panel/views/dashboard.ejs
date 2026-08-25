@@ -10,6 +10,9 @@
     <h1>Panel de administración</h1>
     <div class="topbar-user">
       <span><%= user.username %> (<%= user.role === 'super' ? 'super-admin' : 'negocio: ' + user.businessKey %>)</span>
+      <% if (user.role === 'super') { %>
+      <a href="/accounts" class="btn btn-link">Cuentas</a>
+      <% } %>
       <form method="POST" action="/logout"><button type="submit" class="btn btn-link">Salir</button></form>
     </div>
   </header>

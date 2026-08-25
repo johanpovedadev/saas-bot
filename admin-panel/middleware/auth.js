@@ -24,4 +24,15 @@ function requireBusinessScope(req, res, next) {
     return res.status(403).json({ error: 'No tenés permiso para este negocio.' });
 }
 
-module.exports = { requireLogin, requireBusinessScope };
+/** Solo super-admin (ej. gestión de cuentas, que no pertenece a ningún negocio). */
+function requireSuper(req, res, next) {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ error: 'No autenticado' });
+    if (user.role !== 'super') {
+        if (req.originalUrl.startsWith('/api/')) return res.status(403).json({ error: 'Solo super-admin.' });
+        return res.status(403).send('Solo super-admin.');
+    }
+    next();
+}
+
+module.exports = { requireLogin, requireBusinessScope, requireSuper };

@@ -2,13 +2,14 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireLogin, requireBusinessScope } = require('../middleware/auth');
+const { requireLogin, requireBusinessScope, requireSuper } = require('../middleware/auth');
 const { BUSINESSES, listKeys, getBusiness } = require('../config/businesses');
 const pm2Status = require('../services/pm2Status');
 const botControl = require('../services/botControl');
 const logsReader = require('../services/logsReader');
 const leadsAdapters = require('../services/leadsAdapters');
 const qrReader = require('../services/qrReader');
+const accountStore = require('../services/accountStore');
 
 router.use(requireLogin);
 
@@ -194,6 +195,23 @@ router.get('/businesses/:key/qr.png', requireBusinessScope, (req, res) => {
 router.get('/owners', (req, res) => {
     if (req.session.user.role !== 'super') return res.status(403).json({ error: 'Solo super-admin.' });
     res.json(botControl.getAllOwners());
+});
+
+// Crear o editar una cuenta del panel — Fase 5: reemplaza tener que correr
+// scripts/create-account.js a mano por consola. Mismo motor de siempre
+// (accountStore, hash + roles + scoping), esto solo es la interfaz.
+router.post('/accounts', requireSuper, (req, res) => {
+    const { username, password, role, businessKey } = req.body || {};
+    if (!username || !String(username).trim()) return res.status(400).json({ error: 'Falta el usuario.' });
+    if (!password || String(password).length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
+    const finalRole = role === 'super' ? 'super' : 'business';
+    if (finalRole === 'business' && !getBusiness(businessKey)) return res.status(400).json({ error: 'Elige un negocio válido para esta cuenta.' });
+    try {
+        accountStore.upsertAccount(String(username).trim(), String(password), finalRole, businessKey);
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
 });
 
 module.exports = router;
