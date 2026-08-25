@@ -1577,7 +1577,40 @@ function detectBebidaNamesInText(text, ctx) {
  * Retorna true si envió una respuesta útil; false si no hay nada aplicable
  * (en ese caso el mensaje de error original del paso se muestra intacto).
  */
+const DOMICILIO_QUESTION_RE = /\b(domicilio|env[ií]o|delivery)\b/i;
+const DOMICILIO_PRICE_RE = /\b(cu[aá]nto|valor|precio|cuesta|cobran)\b/i;
+
+/**
+ * Avisa al equipo (mismo canal que las demas alertas de este flow) que un
+ * cliente pregunto el valor del domicilio para una direccion concreta - el
+ * bot no puede calcularlo solo (varia por zona), asi que alguien del equipo
+ * lo revisa y le responde aparte. A diferencia de handleHumanRequest, esto
+ * NO pone la fase en WAITING_HUMAN: el pedido sigue su curso normal.
+ */
+async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
+    const notificationService = require('../../services/notificationService');
+    try {
+        await notificationService.notifySystemAlert(sock, ctx, '🛵', 'CONSULTA VALOR DE DOMICILIO',
+            `Cliente: ${jid}\nDirección: ${direccion}\nHora: ${new Date().toLocaleString('es-CO')}`);
+    } catch (e) { /* ignore */ }
+}
+
 async function classifyOrderInput(sock, jid, text, userSession, ctx) {
+    // Si ya le preguntamos la dirección para cotizar el domicilio, ESTE
+    // mensaje es esa dirección - se toma tal cual, sin gastar una llamada a
+    // la IA para "interpretar" algo que ya sabemos qué es.
+    if (userSession.pendingDomicilioQuery) {
+        const direccion = text.trim();
+        userSession.pendingDomicilioQuery = false;
+        userSession.order = userSession.order || {};
+        userSession.order.address = direccion;
+        await notifyDomicilioQuery(sock, jid, direccion, ctx);
+        await say(sock, jid,
+            `📍 ¡Gracias! Ya estoy validando el valor del domicilio para *${direccion}* con mi equipo, en un momento te confirmamos. Mientras tanto, ¡sigamos con tu pedido! 😊`, ctx);
+        await reshowCurrentStep(sock, jid, userSession, ctx);
+        return true;
+    }
+
     const contextInfo = buildClassifierContext(userSession, ctx);
     const result = await heladeriaAi.interpretOrderText(text, contextInfo);
     if (!result) return false;
@@ -1586,6 +1619,26 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    perder progreso. Si la IA NO supo responder ("no tengo el dato" o
     //    falló), escalar al admin para que continúe la conversación.
     if (result.duda) {
+        // Caso especial: preguntar el valor del domicilio NUNCA lo sabe la
+        // IA/FAQ (varía por dirección/zona) - en vez de escalar a
+        // WAITING_HUMAN (lo que frena todo el pedido), se pide la dirección,
+        // se avisa al equipo, y el pedido sigue andando en paralelo.
+        if (DOMICILIO_QUESTION_RE.test(result.duda) && DOMICILIO_PRICE_RE.test(result.duda)) {
+            const direccionYaDada = result.direccion || (userSession.order && userSession.order.address);
+            if (direccionYaDada) {
+                userSession.order = userSession.order || {};
+                userSession.order.address = direccionYaDada;
+                await notifyDomicilioQuery(sock, jid, direccionYaDada, ctx);
+                await say(sock, jid,
+                    `📍 ¡Ya estoy validando el valor del domicilio para *${direccionYaDada}* con mi equipo, en un momento te confirmamos. Mientras tanto, sigamos con tu pedido! 😊`, ctx);
+                await reshowCurrentStep(sock, jid, userSession, ctx);
+            } else {
+                userSession.pendingDomicilioQuery = true;
+                await say(sock, jid, `📍 Para saber el valor del domicilio necesito tu dirección — ¿cuál es?`, ctx);
+            }
+            return true;
+        }
+
         const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
         if (!answer || heladeriaAi.isUnknownAnswer(answer)) {
             logger.info(`[${jid}] -> El bot no supo responder "${result.duda}", escalando al admin`);
