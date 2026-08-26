@@ -11,6 +11,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const envConfig = require('../config/env.loader');
 const notificationService = require('../services/notificationService');
+const { similarityScore } = require('../utils/fuzzySearch');
 // NOTA: Google Sheets se maneja desde el backend de Python (inventario/google_sheets.py)
 // const googleSheetsService = require('../services/googleSheetsService');
 const API_BASE = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
@@ -128,6 +129,20 @@ function generateCartSummary(userSession) {
     };
 }
 
+/**
+ * Reconoce el método de pago tolerando errores de tipeo (ej: "Transfetencia",
+ * "Tranferencia") - devuelve el valor CANÓNICO ('transferencia'/'efectivo')
+ * o null si no se reconoce. Bug real: sin esto, un typo se guardaba tal cual
+ * en userSession.order.paymentMethod y el chequeo exacto "=== 'transferencia'"
+ * (que dispara el QR de pago) nunca coincidía.
+ */
+function normalizePaymentMethod(cleanInput) {
+    if (['transferencia', 'efectivo'].includes(cleanInput)) return cleanInput;
+    if (similarityScore(cleanInput, 'transferencia') >= 0.75) return 'transferencia';
+    if (similarityScore(cleanInput, 'efectivo') >= 0.75) return 'efectivo';
+    return null;
+}
+
 function validateInput(input, expectedType, options = {}) {
     const cleanInput = input.toLowerCase().trim();
     switch (expectedType) {
@@ -145,7 +160,10 @@ function validateInput(input, expectedType, options = {}) {
         case 'edit':
             return ['editar'].includes(cleanInput);
         case 'payment':
-            return ['transferencia', 'efectivo'].includes(cleanInput);
+            // Tolerante a errores de tipeo (ej: "Transfetencia", "Tranferencia")
+            // - bug real: 2 typos seguidos disparaban el escalamiento por
+            // frustración en vez de simplemente aceptar el método de pago.
+            return normalizePaymentMethod(cleanInput) !== null;
         default:
             return cleanInput.length > 0;
     }
@@ -619,8 +637,9 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
 
 async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterPaymentMethod. Método de pago recibido: "${input}"`);
-    const paymentMethod = input.toLowerCase().trim();
-    if (!validateInput(paymentMethod, 'payment')) {
+    const cleanInput = input.toLowerCase().trim();
+    const paymentMethod = normalizePaymentMethod(cleanInput);
+    if (!paymentMethod) {
         userSession.errorCount++;
         // Modo híbrido: intentar IA antes del mensaje genérico
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
