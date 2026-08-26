@@ -641,6 +641,7 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         `*Datos de entrega:*\n` +
         `👤 Nombre: ${userSession.order.name}\n` +
         `🏠 Dirección: ${userSession.order.address}\n` +
+        `📞 Teléfono: ${userSession.order.telefono}\n` +
         `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
         `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 

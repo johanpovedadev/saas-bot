@@ -69,12 +69,8 @@ async function send(text) {
         check(s.phase === PHASE.FINALIZE_ORDER, `finalmente muestra el resumen (fase: ${s.phase})`);
         check(/Nombre: Juan Pérez/.test(out5), 'el resumen incluye el nombre');
         check(/Direcci[oó]n: Cra 10 #20-30 Barrio Central/.test(out5), 'el resumen incluye la dirección');
+        check(/Tel[eé]fono: 3139848800/.test(out5), 'el resumen incluye el teléfono');
         check(/Pago: efectivo/.test(out5), 'el resumen incluye el pago');
-        // NOTA: el resumen que arma handleEnterPaymentMethod (a diferencia del
-        // de askNextMissingCheckoutField) no incluye la línea de Teléfono -
-        // inconsistencia preexistente en handlers/checkoutHandler.js, anterior
-        // a esta sesión, fuera de alcance de este pedido puntual.
-        check(s.order.telefono === '3139848800', 'el teléfono SÍ quedó guardado en la orden (aunque no se muestre en este resumen)');
 
         console.log(failures === 0 ? '\nTodos los tests pasaron.' : `\n${failures} FALLOS`);
         process.exitCode = failures === 0 ? 0 : 1;
