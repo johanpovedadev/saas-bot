@@ -1429,6 +1429,30 @@ function textAfterGreeting(rawText) {
 }
 
 /**
+ * ¿Está la heladería abierta ahora mismo? Compara la hora actual (zona
+ * horaria del negocio) contra business.hours (weekday/weekend). Si no hay
+ * horario configurado, devuelve true (fail-open: nunca bloquea pedidos por
+ * un dato faltante).
+ */
+function isWithinBusinessHours(now = new Date()) {
+    const hours = envConfig.business.hours;
+    if (!hours || !hours.weekday || !hours.weekday.open || !hours.weekday.close) return true;
+    const tz = (envConfig.business.location && envConfig.business.location.timezone) || envConfig.business.timezone || 'America/Bogota';
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short'
+    }).formatToParts(now);
+    const get = (type) => (parts.find(p => p.type === type) || {}).value;
+    const isWeekend = ['Sat', 'Sun'].includes(get('weekday'));
+    const range = (isWeekend && hours.weekend && hours.weekend.open) ? hours.weekend : hours.weekday;
+    const toMinutes = (hhmm) => {
+        const [h, m] = String(hhmm).split(':').map(Number);
+        return (h || 0) * 60 + (m || 0);
+    };
+    const nowMinutes = parseInt(get('hour'), 10) * 60 + parseInt(get('minute'), 10);
+    return nowMinutes >= toMinutes(range.open) && nowMinutes < toMinutes(range.close);
+}
+
+/**
  * Bienvenida con PERSONA (heladería 🍦). NO pide el nombre en el saludo:
  * el nombre solo se solicita en el envío (checkout). Texto estático
  * (0 calls de IA).
@@ -1451,6 +1475,17 @@ async function showWelcome(sock, jid, ctx, text) {
 _Escribe el número de la opción (1, 2 o 3)._`;
     const greeting = editableConfig.getEditableConfig(ctx, 'Saludo de bienvenida', fallbackGreeting);
     await say(sock, jid, greeting, ctx);
+
+    // Pedido de Johan: si escriben fuera del horario de atención, avisar
+    // (sin bloquear) que el pedido queda como el primero en salir apenas
+    // abran - no se pierde el cliente por escribir a deshora.
+    if (!isWithinBusinessHours()) {
+        const hours = envConfig.business.hours;
+        const rango = (hours && hours.weekday && hours.weekday.open) ? `${hours.weekday.open} a ${hours.weekday.close}` : '';
+        await say(sock, jid,
+            `🕐 En este momento estamos *cerrados*${rango ? ` (atendemos de ${rango})` : ''}, ¡pero tranquilo! Si quieres, sigue armando tu pedido y será el primero en salir apenas abramos. 😊`, ctx);
+    }
+
     await sendMenuImages(sock, jid, ctx);
 
     // Bug real reportado por Johan: "Hola quiero un car con un jugo" solo
@@ -2325,5 +2360,6 @@ module.exports = {
      */
     getCheckoutConfig: () => ({
         numericConfirm: true
-    })
+    }),
+    isWithinBusinessHours
 };
