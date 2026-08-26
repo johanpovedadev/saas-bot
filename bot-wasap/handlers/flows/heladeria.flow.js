@@ -126,6 +126,19 @@ function getCounts(producto) {
     };
 }
 
+/**
+ * Suma el precio de los toppings elegidos - la mayoría no tienen costo
+ * adicional, pero algunos sí (ej: frutos secos, extras premium). Bug real:
+ * al armar el ítem del carrito solo se guardaba el NOMBRE del topping y su
+ * precio se perdía por completo, así que nunca se cobraba.
+ */
+function sumToppingsPrice(toppings, dbFields) {
+    return (toppings || []).reduce((sum, t) => {
+        const raw = t && typeof t === 'object' ? t[dbFields.productPrice] : null;
+        return sum + (parseFloat(String(raw || '').replace(/[^0-9]/g, '')) || 0);
+    }, 0);
+}
+
 function getProductName(producto) {
     const dbFields = getDbFields();
     return producto[dbFields.productName] || producto.NombreProducto || 'producto';
@@ -778,7 +791,8 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
 
     // Precios en formato COP pueden venir como string "4.000" o número 4000.
     // Eliminar separadores de miles antes de parsear (parseFloat("4.000") === 4, bug).
-    const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const precioBase = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const precio = precioBase + sumToppingsPrice(flow.toppingsSeleccionados, dbFields);
 
     const cartItem = {
         codigo: product[dbFields.productCode] || product.CodigoProducto || `TEMP-${Date.now()}`,
@@ -1073,7 +1087,8 @@ async function finalizeSameCustomization(sock, jid, userSession, ctx) {
     const product = flow.product;
     const dbFields = getDbFields();
     const nombre = getProductName(product);
-    const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const precioBase = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const precio = precioBase + sumToppingsPrice(flow.toppingsSeleccionados, dbFields);
 
     const cartItem = {
         codigo: product[dbFields.productCode] || product.CodigoProducto || `TEMP-${Date.now()}`,
@@ -1099,19 +1114,22 @@ async function finalizeEachCustomization(sock, jid, userSession, ctx) {
     const product = flow.product;
     const dbFields = getDbFields();
     const nombre = getProductName(product);
-    const precio = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    const precioBase = parseFloat(String(product[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
     const baseCodigo = product[dbFields.productCode] || product.CodigoProducto || 'TEMP';
 
-    const cartItems = customization.units.map((unit, i) => ({
-        codigo: `${baseCodigo}-${i + 1}`,
-        nombre,
-        precio,
-        cantidad: 1,
-        observaciones: unit.observaciones || '',
-        sabores: (unit.sabores || []).map(s => s[dbFields.productName] || s),
-        toppings: (unit.toppings || []).map(t => t[dbFields.productName] || t),
-        subtotal: precio
-    }));
+    const cartItems = customization.units.map((unit, i) => {
+        const precio = precioBase + sumToppingsPrice(unit.toppings, dbFields);
+        return {
+            codigo: `${baseCodigo}-${i + 1}`,
+            nombre,
+            precio,
+            cantidad: 1,
+            observaciones: unit.observaciones || '',
+            sabores: (unit.sabores || []).map(s => s[dbFields.productName] || s),
+            toppings: (unit.toppings || []).map(t => t[dbFields.productName] || t),
+            subtotal: precio
+        };
+    });
     ensureCarrito(userSession).push(...cartItems);
     await afterAddToCarrito(sock, jid, userSession, ctx, cartItems);
 }
