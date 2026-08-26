@@ -438,29 +438,46 @@ function classifyDeliveryParts(parts, userSession) {
  * todos juntos, en varios mensajes, o fuera de orden.
  */
 async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
-    if (!userSession.order.address) {
-        userSession.phase = PHASE.CHECK_DIR;
-        await say(sock, jid, '🏠 No logré identificar tu *dirección de entrega*. Por favor, escríbela (ej: Cra 23 #10-05).', ctx);
-        return;
-    }
-    if (!userSession.order.name) {
-        userSession.phase = PHASE.CHECK_NAME;
-        await say(sock, jid, `👤 ¿A nombre de quién va el pedido? Escribe tu nombre completo.`, ctx);
-        return;
-    }
-    if (!userSession.order.telefono) {
-        userSession.phase = PHASE.CHECK_TELEFONO;
-        await say(sock, jid, '📞 Por favor, escribe tu número de teléfono (mínimo 7 dígitos).', ctx);
-        return;
-    }
-    if (!userSession.order.paymentMethod) {
-        userSession.phase = PHASE.CHECK_PAGO;
-        await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
-        return;
+    const cfg = getTenantCheckoutConfig();
+
+    if (cfg.skipNameAndPhone) {
+        // Checkout simplificado (heladeria): solo método de pago y dirección,
+        // en ese orden - sin pedir nombre/teléfono (el número de WhatsApp del
+        // cliente ya lo identifica).
+        if (!userSession.order.paymentMethod) {
+            userSession.phase = PHASE.CHECK_PAGO;
+            await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+            return;
+        }
+        if (!userSession.order.address) {
+            userSession.phase = PHASE.CHECK_DIR;
+            await say(sock, jid, '🏠 Ahora dime tu *dirección de entrega* (ej: Cra 23 #10-05).', ctx);
+            return;
+        }
+    } else {
+        if (!userSession.order.address) {
+            userSession.phase = PHASE.CHECK_DIR;
+            await say(sock, jid, '🏠 No logré identificar tu *dirección de entrega*. Por favor, escríbela (ej: Cra 23 #10-05).', ctx);
+            return;
+        }
+        if (!userSession.order.name) {
+            userSession.phase = PHASE.CHECK_NAME;
+            await say(sock, jid, `👤 ¿A nombre de quién va el pedido? Escribe tu nombre completo.`, ctx);
+            return;
+        }
+        if (!userSession.order.telefono) {
+            userSession.phase = PHASE.CHECK_TELEFONO;
+            await say(sock, jid, '📞 Por favor, escribe tu número de teléfono (mínimo 7 dígitos).', ctx);
+            return;
+        }
+        if (!userSession.order.paymentMethod) {
+            userSession.phase = PHASE.CHECK_PAGO;
+            await say(sock, jid, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+            return;
+        }
     }
 
     userSession.phase = PHASE.FINALIZE_ORDER;
-    const cfg = getTenantCheckoutConfig();
     const summary = generateCartSummary(userSession);
     userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
@@ -474,9 +491,9 @@ async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
         `Domicilio: ${deliveryText}\n` +
         `*Total a pagar: ${money(orderTotal)}*\n\n` +
         `*Datos de entrega:*\n` +
-        `👤 Nombre: ${userSession.order.name}\n` +
+        (userSession.order.name ? `👤 Nombre: ${userSession.order.name}\n` : '') +
         `🏠 Dirección: ${userSession.order.address}\n` +
-        `📞 Teléfono: ${userSession.order.telefono}\n` +
+        (userSession.order.telefono ? `📞 Teléfono: ${userSession.order.telefono}\n` : '') +
         `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
         `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 
@@ -486,8 +503,16 @@ async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
 
 async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitialCall = false) {
     logger.info(`[${jid}] -> Entrando a handleEnterAddress. Dirección: "${address}", Inicio: ${isInitialCall}`);
+    const cfg = getTenantCheckoutConfig();
 
     if (isInitialCall) {
+        if (cfg.skipNameAndPhone) {
+            // Checkout simplificado (heladeria): primero método de pago, la
+            // dirección se pide después (ver askNextMissingCheckoutField).
+            userSession.phase = PHASE.CHECK_PAGO;
+            await say(sock, jid, '💳 ¡Perfecto! Para continuar, ¿cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', ctx);
+            return;
+        }
         userSession.phase = PHASE.CHECK_DIR;
         await say(sock, jid, '🏠 ¡Perfecto! Para continuar, por favor escribe tu *dirección de entrega*.' +
             '\n\nSi prefieres, puedes enviar todos los datos en UN SOLO MENSAJE, separados por comas (en cualquier orden funciona, pero recomendamos): *Dirección, Nombre, Teléfono, Método de pago*.' +
@@ -502,6 +527,21 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     }
 
     const raw = address.trim();
+
+    if (cfg.skipNameAndPhone) {
+        // Ya no hay nombre/teléfono que clasificar en el mismo mensaje - todo
+        // el texto es la dirección.
+        if (!validateInput(raw, 'address')) {
+            userSession.errorCount = (userSession.errorCount || 0) + 1;
+            await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
+            return;
+        }
+        if (!userSession.order) userSession.order = {};
+        userSession.order.address = raw;
+        userSession.errorCount = 0;
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+        return;
+    }
 
     // Soporte para enviar los datos en UN SOLO MENSAJE:
     //  - Con comas (formato recomendado): campos separados por coma, EN
@@ -598,6 +638,14 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         } else {
             await say(sock, jid, 'Realiza el pago a Nequi 313 6939663. Recuerda enviarnos el comprobante.', ctx);
         }
+    }
+
+    // Checkout simplificado (heladeria): el pago ya no es necesariamente el
+    // último dato - todavía puede faltar la dirección. Deja que el
+    // gap-filler centralizado decida el siguiente paso.
+    if (getTenantCheckoutConfig().skipNameAndPhone) {
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+        return;
     }
 
     if (!PHASE.FINALIZE_ORDER) {
