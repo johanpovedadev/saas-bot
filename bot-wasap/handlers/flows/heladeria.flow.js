@@ -2001,6 +2001,39 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
     const t = String(text || '').toLowerCase().trim();
 
     if (phase === PHASE.CONFIRM_ORDER) {
+        // Pregunta por el valor del domicilio justo en el resumen final: mismo
+        // caso especial que classifyOrderInput (fases guiadas), pero aquí sin
+        // IA - el resto de este fallback ya es 100% determinista por diseño.
+        // Bug real (log de producción): el cliente preguntaba esto en
+        // CONFIRM_ORDER y caía directo en "❌ Opción no válida" porque este
+        // fallback solo conocía confirmar/seguir/editar/cancelar.
+        if (userSession.pendingDomicilioQuery) {
+            const direccion = String(text || '').trim();
+            userSession.pendingDomicilioQuery = false;
+            userSession.order = userSession.order || {};
+            userSession.order.address = direccion;
+            userSession.errorCount = 0;
+            await notifyDomicilioQuery(sock, jid, direccion, ctx);
+            await say(sock, jid,
+                `📍 ¡Gracias! Ya estoy validando el valor del domicilio para *${direccion}* con mi equipo, en un momento te confirmamos. Mientras tanto, ¡sigamos con tu pedido! 😊`, ctx);
+            await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+            return true;
+        }
+        if (DOMICILIO_QUESTION_RE.test(t) && DOMICILIO_PRICE_RE.test(t)) {
+            userSession.errorCount = 0;
+            const direccionYaDada = userSession.order && userSession.order.address;
+            if (direccionYaDada) {
+                await notifyDomicilioQuery(sock, jid, direccionYaDada, ctx);
+                await say(sock, jid,
+                    `📍 ¡Ya estoy validando el valor del domicilio para *${direccionYaDada}* con mi equipo, en un momento te confirmamos. Mientras tanto, sigamos con tu pedido! 😊`, ctx);
+                await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+            } else {
+                userSession.pendingDomicilioQuery = true;
+                await say(sock, jid, `📍 Para saber el valor del domicilio necesito tu dirección — ¿cuál es?`, ctx);
+            }
+            return true;
+        }
+
         if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
             userSession.errorCount = 0;
             await checkoutHandler.handleEnterAddress(sock, jid, '', userSession, ctx, true);
