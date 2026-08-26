@@ -217,7 +217,8 @@ function sendPostAddOptions(sock, jid, ctx, userSession) {
         `*1)* 🍦 Seguir comprando\n` +
         `*2)* 💳 Ir a pagar (confirmar o editar el pedido)\n` +
         `*3)* 📋 Ver menú principal\n\n` +
-        `Escribe el número de la opción.`, ctx);
+        `Escribe el número de la opción.\n\n` +
+        `_Tip: cuando vayas a pagar, si quieres puedes enviar de una vez dirección, nombre, teléfono y método de pago juntos en un solo mensaje separados por comas (ej: Cra 23 #10-05, Juan Pérez, 3139848800, efectivo)._`, ctx);
 }
 
 function formatList(items, prefix, dbFields) {
@@ -1973,9 +1974,9 @@ async function sendLocalFinalSummary(sock, jid, userSession, ctx) {
         `Domicilio: ${deliveryText}\n` +
         `*Total a pagar: ${money(orderTotal)}*\n\n` +
         `*Datos de entrega:*\n` +
-        (userSession.order.name ? `👤 Nombre: ${userSession.order.name}\n` : '') +
+        `👤 Nombre: ${userSession.order.name}\n` +
         `🏠 Dirección: ${userSession.order.address}\n` +
-        (userSession.order.telefono ? `📞 Teléfono: ${userSession.order.telefono}\n` : '') +
+        `📞 Teléfono: ${userSession.order.telefono}\n` +
         `💳 Pago: ${userSession.order.paymentMethod}\n\n` +
         `¿Está todo correcto?\nEscribe *1* para confirmar o *2* para editar.`;
     await say(sock, jid, summaryText, ctx);
@@ -2069,14 +2070,7 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
             if (!userSession.order) userSession.order = {};
             userSession.order.paymentMethod = pay;
             userSession.errorCount = 0;
-            // Checkout simplificado: el pago ya no es el último dato si aún
-            // falta la dirección (orden: pago -> dirección -> resumen).
-            if (!userSession.order.address) {
-                userSession.phase = PHASE.CHECK_DIR;
-                await say(sock, jid, '🏠 Ahora dime tu *dirección de entrega* (ej: Cra 23 #10-05).', ctx);
-            } else {
-                await sendLocalFinalSummary(sock, jid, userSession, ctx);
-            }
+            await sendLocalFinalSummary(sock, jid, userSession, ctx);
             return true;
         }
         return false;
@@ -2246,12 +2240,9 @@ module.exports = {
     /**
      * Reglas de checkout del tenant (consumidas por checkoutHandler):
      *  - numericConfirm: confirmar/editar con números (1/2), sin la palabra "confirmar".
-     *  - skipNameAndPhone: no se pide nombre ni teléfono por separado - el
-     *    checkout queda en solo 2 pasos (método de pago, luego dirección) ya
-     *    que el número de WhatsApp del cliente ya identifica el pedido.
+     * El nombre solo se pide en el envío (checkout); el saludo NO lo pide.
      */
     getCheckoutConfig: () => ({
-        numericConfirm: true,
-        skipNameAndPhone: true
+        numericConfirm: true
     })
 };
