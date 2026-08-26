@@ -67,6 +67,19 @@ async function delegateToAI(sock, jid, text, userSession, ctx) {
     return false;
 }
 
+/**
+ * Nombre de un topping para mostrar, con su precio adicional si tiene (ej:
+ * "brownie ($ 4.000)") - acepta objeto {nombre/NombreProducto, precio/...} o
+ * un string plano (compatibilidad con datos antiguos sin precio guardado).
+ */
+function formatToppingWithPrice(t) {
+    if (!t || typeof t !== 'object') return t;
+    const name = t.NombreProducto || t.nombre;
+    if (!name) return t;
+    const priceRaw = Number(t.Precio_Venta || t.Precio || t.precio || t.Price || 0);
+    return priceRaw > 0 ? `${name} (${money(priceRaw)})` : name;
+}
+
 function generateCartSummary(userSession) {
     if (!userSession || !userSession.order || !userSession.order.items) {
         return { text: 'Tu carrito está vacío.', total: 0 };
@@ -101,15 +114,7 @@ function generateCartSummary(userSession) {
         // Toppings fallback: accept array of objects or strings, include price if available
         let toppingsArr = [];
         if (item.toppings && Array.isArray(item.toppings) && item.toppings.length > 0) {
-            toppingsArr = item.toppings.map(t => {
-                if (t && (t.NombreProducto || t.nombre)) {
-                    const name = t.NombreProducto || t.nombre;
-                    const priceRaw = t.Precio_Venta || t.Precio || t.precio || t.Price || null;
-                    if (priceRaw || priceRaw === 0) return `${name} (${money(Number(priceRaw) || 0)})`;
-                    return name;
-                }
-                return t;
-            });
+            toppingsArr = item.toppings.map(formatToppingWithPrice);
         }
         if (toppingsArr.length > 0) {
             itemText += `\n  toppings: _${toppingsArr.join(', ')}_`;
@@ -141,6 +146,19 @@ function normalizePaymentMethod(cleanInput) {
     if (similarityScore(cleanInput, 'transferencia') >= 0.75) return 'transferencia';
     if (similarityScore(cleanInput, 'efectivo') >= 0.75) return 'efectivo';
     return null;
+}
+
+/**
+ * Pela un envoltorio en lenguaje natural del valor que se está pidiendo (ej:
+ * "la dirección es Cra 23 #10-05" -> "Cra 23 #10-05", "mi nombre es Juan" ->
+ * "Juan") - bug real: el cliente respondía frases completas en vez de solo
+ * el dato, y la frase entera se guardaba como si fuera el valor. Si no
+ * matchea el patrón, devuelve null (el llamador usa el texto original tal
+ * cual, sin romper la respuesta directa de siempre).
+ */
+function extractAfterLabel(text, labelRe) {
+    const m = String(text || '').trim().match(labelRe);
+    return (m && m[1] && m[1].trim()) ? m[1].trim() : null;
 }
 
 function validateInput(input, expectedType, options = {}) {
@@ -236,7 +254,7 @@ function showEditCartOptions(sock, jid, userSession, ctx) {
     const items = userSession.order.items || [];
     const lines = items.map((it, i) => {
         const sabores = (it.sabores && it.sabores.length) ? ` (${it.sabores.map(s => s.NombreProducto || s).join(', ')})` : '';
-        const toppings = (it.toppings && it.toppings.length) ? ` (${it.toppings.map(t => t.NombreProducto || t).join(', ')})` : '';
+        const toppings = (it.toppings && it.toppings.length) ? ` (${it.toppings.map(formatToppingWithPrice).join(', ')})` : '';
         return `*${i + 1}.* ${it.nombre || it.producto}${sabores}${toppings} x${it.cantidad || 1}`;
     }).join('\n');
     return say(sock, jid,
@@ -519,7 +537,7 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         return;
     }
 
-    const raw = address.trim();
+    const raw = (extractAfterLabel(address, /^(?:mi|la)\s+direcci[oó]n(?:\s+de\s+entrega)?\s*(?:es|:)\s*(.+)$/i) || address).trim();
 
     // Soporte para enviar los datos en UN SOLO MENSAJE:
     //  - Con comas (formato recomendado): campos separados por coma, EN
@@ -572,8 +590,9 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
 
 async function handleEnterName(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterName. Nombre recibido: "${input}"`);
-    if (validateInput(input, 'string', { minLength: 3 })) {
-        userSession.order.name = input.trim();
+    const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i) || input;
+    if (validateInput(cleanInput, 'string', { minLength: 3 })) {
+        userSession.order.name = cleanInput.trim();
         userSession.errorCount = 0;
         await askNextMissingCheckoutField(sock, jid, userSession, ctx);
     } else {
@@ -584,7 +603,8 @@ async function handleEnterName(sock, jid, input, userSession, ctx) {
 
 async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterTelefono.`);
-    const telefono = input.replace(/[^0-9]/g, '').trim();
+    const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i) || input;
+    const telefono = cleanInput.replace(/[^0-9]/g, '').trim();
     if (!validateInput(telefono, 'string', { minLength: 7 })) {
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, escribe un número de teléfono válido (mínimo 7 dígitos).', ctx);
@@ -598,7 +618,10 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
 async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterPaymentMethod. Método de pago recibido: "${input}"`);
     const cleanInput = input.toLowerCase().trim();
-    const paymentMethod = normalizePaymentMethod(cleanInput);
+    // "voy a pagar en efectivo" / "prefiero transferencia" - busca la palabra
+    // clave DENTRO de la frase antes de comparar la respuesta completa.
+    const wordMatch = /transferencia|efectivo/i.exec(cleanInput);
+    const paymentMethod = wordMatch ? wordMatch[0].toLowerCase() : normalizePaymentMethod(cleanInput);
     if (!paymentMethod) {
         userSession.errorCount++;
         // Modo híbrido: intentar IA antes del mensaje genérico
@@ -668,7 +691,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             const saboresText = (i.sabores && i.sabores.length)
                 ? i.sabores.map(s => s.NombreProducto || s).join(', ')
                 : (i.sabor ? i.sabor : null);
-            const toppingsText = i.toppings && i.toppings.length ? i.toppings.map(t => t.NombreProducto || t).join(', ') : null;
+            const toppingsText = i.toppings && i.toppings.length ? i.toppings.map(formatToppingWithPrice).join(', ') : null;
             const obsText = i.observaciones ? `; Observaciones: ${i.observaciones}` : '';
             const saborPart = saboresText ? ` (Sabores: ${saboresText})` : '';
             const toppingPart = toppingsText ? ` (Toppings: ${toppingsText})` : '';
@@ -686,7 +709,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
                 item.sabores.map(s => (s && (s.NombreProducto || s.nombre)) ? (s.NombreProducto || s.nombre) : s).filter(Boolean).join(', ') : '';
             
             const toppingsTexto = (item.toppings && item.toppings.length) ?
-                item.toppings.map(t => (t && (t.NombreProducto || t.nombre)) ? (t.NombreProducto || t.nombre) : (typeof t === 'string' ? t : '')).filter(Boolean).join(', ') : '';
+                item.toppings.map(formatToppingWithPrice).filter(Boolean).join(', ') : '';
             
             // Formato: "Fresas Magicas (C-FRESA-M) (Sabores: fresa; Toppings: Fresas Frescas, perlas) x1"
             if (saboresTexto || toppingsTexto) {
@@ -835,7 +858,10 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         // entera aunque la IA "se haga cargo" del mensaje.
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         // Modo híbrido: intentar IA antes del mensaje genérico
-        if (await delegateToAI(sock, jid, finalAction, userSession, ctx)) return;
+        // Pasa el texto ORIGINAL (no el ya minusculizado finalAction) para que
+        // una corrección en lenguaje natural ("La dirección es CRA 23...")
+        // conserve las mayúsculas tal como las escribió el cliente.
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
         const invalidHint = (cfg && cfg.numericConfirm)
             ? 'escribe *1* para confirmar o *2* para editar'
             : 'escribe *confirmar* o *editar*';
@@ -898,7 +924,7 @@ async function sendOrderNotification(sock, userOrder, ctx) {
     const summary = generateCartSummary(userOrder);
     const productsText = userOrder.items.map(i => {
         const sabores = i.sabores && i.sabores.length ? ` (Sabores: ${i.sabores.map(s => s.NombreProducto || s).join(', ')})` : '';
-        const toppings = i.toppings && i.toppings.length ? ` (Toppings: ${i.toppings.map(t => t.NombreProducto || t).join(', ')})` : '';
+        const toppings = i.toppings && i.toppings.length ? ` (Toppings: ${i.toppings.map(formatToppingWithPrice).join(', ')})` : '';
         return `${i.nombre}${sabores}${toppings} x${i.cantidad}`;
     }).join('\n');
 

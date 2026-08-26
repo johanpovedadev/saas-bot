@@ -139,6 +139,36 @@ function sumToppingsPrice(toppings, dbFields) {
     }, 0);
 }
 
+/**
+ * Convierte los toppings elegidos (objetos del catálogo) a {nombre, precio}
+ * para poder mostrar el precio de cada uno en los resúmenes - antes se
+ * guardaba solo el nombre y el precio individual se perdía (aunque ya se
+ * sumara al total, el cliente no veía CUÁL topping tenía costo adicional).
+ */
+function mapToppingsWithPrice(toppings, dbFields) {
+    return (toppings || []).map(t => {
+        if (t && typeof t === 'object') {
+            return {
+                nombre: t[dbFields.productName] || '',
+                precio: parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0
+            };
+        }
+        return { nombre: String(t), precio: 0 };
+    });
+}
+
+/**
+ * Formatea una lista de toppings ya normalizados a {nombre, precio} - los que
+ * tienen costo adicional muestran "(+$X)" junto al nombre.
+ */
+function formatToppingsList(toppings) {
+    return (toppings || []).map(t => {
+        const nombre = (t && typeof t === 'object') ? (t.nombre || t.NombreProducto || '') : String(t);
+        const precio = (t && typeof t === 'object') ? Number(t.precio || 0) : 0;
+        return precio > 0 ? `${nombre} (+${money(precio)})` : nombre;
+    }).join(', ');
+}
+
 function getProductName(producto) {
     const dbFields = getDbFields();
     return producto[dbFields.productName] || producto.NombreProducto || 'producto';
@@ -204,8 +234,7 @@ function formatCarritoSummary(carrito) {
         let text = `*${cant}x* ${item.nombre} - *${money(itemTotal)}*`;
         const saboresArr = Array.isArray(item.sabores) ? item.sabores.map(s => (s && (s.NombreProducto || s.nombre)) || s) : [];
         if (saboresArr.length) text += `\n  sabores: _${saboresArr.join(', ')}_`;
-        const toppingsArr = Array.isArray(item.toppings) ? item.toppings.map(t => (t && (t.NombreProducto || t.nombre)) || t) : [];
-        if (toppingsArr.length) text += `\n  toppings: _${toppingsArr.join(', ')}_`;
+        if (Array.isArray(item.toppings) && item.toppings.length) text += `\n  toppings: _${formatToppingsList(item.toppings)}_`;
         if (item.observaciones) text += `\n  Obs: _${item.observaciones}_`;
         return text;
     });
@@ -801,7 +830,7 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
         cantidad: qty,
         observaciones: observacionesFinal,
         sabores: flow.saboresSeleccionados.map(s => s[dbFields.productName] || s),
-        toppings: flow.toppingsSeleccionados.map(t => t[dbFields.productName] || t),
+        toppings: mapToppingsWithPrice(flow.toppingsSeleccionados, dbFields),
         subtotal: precio * qty
     };
 
@@ -821,7 +850,7 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
     userSession.awaitingField = null;
 
     const saboresText = cartItem.sabores.length ? ` · Sabores: ${cartItem.sabores.join(', ')}` : '';
-    const toppingsText = cartItem.toppings.length ? ` · Toppings: ${cartItem.toppings.join(', ')}` : '';
+    const toppingsText = cartItem.toppings.length ? ` · Toppings: ${formatToppingsList(cartItem.toppings)}` : '';
     const obsText = observacionesFinal ? ` · Obs: ${observacionesFinal}` : '';
     await say(sock, jid,
         `✅ ${qty}x *${nombre}*${saboresText}${toppingsText}${obsText} - *${money(precio * qty)}*`, ctx);
@@ -1097,7 +1126,7 @@ async function finalizeSameCustomization(sock, jid, userSession, ctx) {
         cantidad: qty,
         observaciones: flow.observaciones || '',
         sabores: flow.saboresSeleccionados.map(s => s[dbFields.productName] || s),
-        toppings: flow.toppingsSeleccionados.map(t => t[dbFields.productName] || t),
+        toppings: mapToppingsWithPrice(flow.toppingsSeleccionados, dbFields),
         subtotal: precio * qty
     };
     ensureCarrito(userSession).push(cartItem);
@@ -1126,7 +1155,7 @@ async function finalizeEachCustomization(sock, jid, userSession, ctx) {
             cantidad: 1,
             observaciones: unit.observaciones || '',
             sabores: (unit.sabores || []).map(s => s[dbFields.productName] || s),
-            toppings: (unit.toppings || []).map(t => t[dbFields.productName] || t),
+            toppings: mapToppingsWithPrice(unit.toppings, dbFields),
             subtotal: precio
         };
     });
@@ -1155,7 +1184,7 @@ async function afterAddToCarrito(sock, jid, userSession, ctx, cartItems) {
 
     const lines = cartItems.map(it => {
         const saboresText = it.sabores.length ? ` · Sabores: ${it.sabores.join(', ')}` : '';
-        const toppingsText = it.toppings.length ? ` · Toppings: ${it.toppings.join(', ')}` : '';
+        const toppingsText = it.toppings.length ? ` · Toppings: ${formatToppingsList(it.toppings)}` : '';
         const obsText = it.observaciones ? ` · Obs: ${it.observaciones}` : '';
         return `✅ ${it.cantidad}x *${it.nombre}*${saboresText}${toppingsText}${obsText} - *${money(it.precio * it.cantidad)}*`;
     }).join('\n');
@@ -1973,7 +2002,7 @@ function buildLocalSummary(order) {
         total += precio * cantidad;
         let t = `*${cantidad}x* ${i.nombre || 'Producto'} - *${money(precio * cantidad)}*`;
         if (i.sabores && i.sabores.length) t += `\n  sabores: _${i.sabores.map(s => (s && (s.NombreProducto || s.nombre)) ? (s.NombreProducto || s.nombre) : s).join(', ')}_`;
-        if (i.toppings && i.toppings.length) t += `\n  toppings: _${i.toppings.map(x => (x && (x.NombreProducto || x.nombre)) ? (x.NombreProducto || x.nombre) : x).join(', ')}_`;
+        if (i.toppings && i.toppings.length) t += `\n  toppings: _${formatToppingsList(i.toppings)}_`;
         if (i.observaciones) t += `\n  Observaciones: _${i.observaciones}_`;
         return t;
     });
@@ -2007,6 +2036,28 @@ const CHECKOUT_EDIT_WORDS = ['editar', 'edita', 'corregir', 'cambiar', 'cambio',
 function hasWord(input, words) {
     const tokens = String(input || '').toLowerCase().replace(/[^a-z0-9áéíóúüñ\s]/gi, ' ').trim().split(/\s+/);
     return tokens.some(w => words.includes(w));
+}
+
+/**
+ * Detecta una CORRECCIÓN de un dato del pedido en lenguaje natural en vez de
+ * responder solo con la opción numérica (ej: "la dirección es Cra 23 #10-05"
+ * en el resumen final, en vez de 1/2). Bug real: esto caía en "Opción no
+ * válida" y escalaba a atención humana. Devuelve {field, value} o null.
+ */
+function detectOrderFieldCorrection(text) {
+    const t = String(text || '').trim();
+    let m = t.match(/^(?:mi|la)\s+direcci[oó]n(?:\s+de\s+entrega)?\s*(?:es|:)\s*(.+)$/i);
+    if (m) return { field: 'address', value: m[1].trim() };
+    m = t.match(/^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i);
+    if (m) return { field: 'name', value: m[1].trim() };
+    m = t.match(/^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i);
+    if (m) {
+        const digits = m[1].replace(/[^0-9]/g, '');
+        if (digits.length >= 7) return { field: 'telefono', value: digits };
+    }
+    m = /transferencia|efectivo/i.exec(t);
+    if (m && /pag/i.test(t)) return { field: 'paymentMethod', value: m[0].toLowerCase() };
+    return null;
 }
 
 /**
@@ -2103,6 +2154,18 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
         if (hasWord(t, CHECKOUT_EDIT_WORDS)) {
             userSession.errorCount = 0;
             await checkoutHandler.handleFinalizeOrder(sock, jid, '2', userSession, ctx);
+            return true;
+        }
+        // Corrección espontánea en lenguaje natural (ej: "la dirección es
+        // Cra 23 #10-05") en vez de escribir 1/2 - actualiza el dato y vuelve
+        // a mostrar el resumen ya corregido, sin perder progreso ni escalar.
+        const correction = detectOrderFieldCorrection(text);
+        if (correction) {
+            userSession.order = userSession.order || {};
+            userSession.order[correction.field] = correction.value;
+            userSession.errorCount = 0;
+            await say(sock, jid, '✅ Listo, quedó actualizado.', ctx);
+            await sendLocalFinalSummary(sock, jid, userSession, ctx);
             return true;
         }
         return false;

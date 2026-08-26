@@ -61,7 +61,8 @@ async function handle(text, s) {
         const esperado = precioBase + precioTopping;
         check(item.precio === esperado, `el precio del ítem incluye el topping (esperado: ${esperado}, real: ${item.precio})`);
         check(item.subtotal === esperado, `el subtotal también lo incluye (esperado: ${esperado}, real: ${item.subtotal})`);
-        check(item.toppings.includes(toppingConPrecio[dbFields.productName]), 'el topping elegido sigue apareciendo por nombre en el ítem');
+        check(item.toppings.some(t => t.nombre === toppingConPrecio[dbFields.productName]), 'el topping elegido sigue apareciendo por nombre en el ítem');
+        check(item.toppings.some(t => t.precio === precioTopping), `el topping guarda su propio precio individual (${JSON.stringify(item.toppings)})`);
 
         // Regresión: producto SIN toppings elegidos -> precio queda igual al
         // precio base (no se inventa un cobro de la nada).

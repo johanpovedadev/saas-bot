@@ -231,8 +231,9 @@ async function handle(text, userSession) {
     const r13 = await handle('1', s13);
     check(s13.carrito.length === 1 && s13.carrito[0].cantidad === 2,
         `UNITS-same: un solo ítem con cantidad 2 (${s13.carrito.length} ítem, qty=${s13.carrito[0] && s13.carrito[0].cantidad})`);
-    check((s13.carrito[0].sabores || []).length === 2 && /oreo/i.test(s13.carrito[0].toppings[0]),
-        `UNITS-same: conserva sabores (${(s13.carrito[0].sabores || []).join(', ')}) y topping (${(s13.carrito[0].toppings || []).join(', ')})`);
+    const topping13Nombre = s13.carrito[0].toppings[0] && (s13.carrito[0].toppings[0].nombre || s13.carrito[0].toppings[0]);
+    check((s13.carrito[0].sabores || []).length === 2 && /oreo/i.test(topping13Nombre),
+        `UNITS-same: conserva sabores (${(s13.carrito[0].sabores || []).join(', ')}) y topping (${topping13Nombre})`);
     check(s13.phase === 'HELADO_POST_ADD', `UNITS-same: llega a post-add (fase: ${s13.phase})`);
 
     // 2) Cada una diferente → recorre unidad por unidad
@@ -259,7 +260,8 @@ async function handle(text, userSession) {
     const s1n = (items14[0].sabores || []).join(',');
     const s2n = (items14[1].sabores || []).join(',');
     check(s1n !== s2n, `UNITS-each: sabores distintos por unidad (${s1n} vs ${s2n})`);
-    check((items14[1].toppings || []).length === 1 && /oreo/i.test(items14[1].toppings[0]),
+    const topping14Nombre = items14[1].toppings[0] && (items14[1].toppings[0].nombre || items14[1].toppings[0]);
+    check((items14[1].toppings || []).length === 1 && /oreo/i.test(topping14Nombre),
         'UNITS-each: unidad 2 lleva oreo');
     check(s14.phase === 'HELADO_POST_ADD', `UNITS-each: llega a post-add (fase: ${s14.phase})`);
     check((r14c.match(/1x \*Copa Osito\*/g) || []).length === 2,
