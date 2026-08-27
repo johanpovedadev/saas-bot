@@ -1741,7 +1741,56 @@ async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
     } catch (e) { /* ignore */ }
 }
 
+/**
+ * Categoría "Fresas_Con_Crema" (Pedido de Isa/Johan): varios productos
+ * parecidos (Fresas con Crema, Fresas con Crema y Helado, Fresas Magicas,
+ * Burbucream, Fresas XL) - si el cliente pregunta genéricamente por "fresas
+ * con crema" sin especificar cuál, se muestran TODAS las opciones de la
+ * categoría en vez de adivinar una sola (antes resolveProducts() se quedaba
+ * con la PRIMERA que encontrara, silenciosamente).
+ */
+const CATEGORIA_FRESAS_CREMA = 'Fresas_Con_Crema';
+const FRESAS_CREMA_GENERIC_RE = /\bfresas?\s+con\s+crema\b/i;
+// Si el cliente ya especifica cuál quiere, no es ambiguo - se deja resolver normal.
+const FRESAS_CREMA_ESPECIFICO_RE = /\b(helado|magicas?|burbucream|burbucrem|xl|clasicas?|sencillas?|sin helado)\b/i;
+
+function getFresasConCremaCategoria(ctx) {
+    return getProducts(ctx).filter(p => (p.Categoria || '') === CATEGORIA_FRESAS_CREMA);
+}
+
+/**
+ * Muestra las opciones de la categoría e invita a elegir por NOMBRE (no por
+ * número): un número aquí podría chocar con el menú numerado de la fase en
+ * la que esté el cliente (ej: "1" ya significa "ver menú" en el saludo
+ * inicial, o "confirmar" en post-venta) - el nombre en cambio ya lo resuelve
+ * normal el clasificador de producto de siempre (mismo camino que cualquier
+ * otro pedido en lenguaje natural).
+ */
+async function showFresasConCremaOptions(sock, jid, userSession, ctx) {
+    const dbFields = getDbFields();
+    const productos = getFresasConCremaCategoria(ctx);
+    if (productos.length === 0) return false;
+    const lista = productos.map(p => {
+        const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+        const desc = p.Descripcion || p.descripcion || '';
+        return `🍓 *${getProductName(p)}* — ${money(precio)}\n_${desc}_`;
+    }).join('\n\n');
+    userSession.lastMentionedProducts = productos;
+    await say(sock, jid,
+        `¡Tenemos varias opciones de fresas con crema!\n\n${lista}\n\n¿Cuál te provoca? Escribe el nombre 😊`, ctx);
+    return true;
+}
+
 async function classifyOrderInput(sock, jid, text, userSession, ctx) {
+    // Pregunta genérica por "fresas con crema" sin especificar cuál - mostrar
+    // TODAS las opciones de la categoría en vez de adivinar una sola.
+    {
+        const t = stripAccents(String(text || '').toLowerCase());
+        if (FRESAS_CREMA_GENERIC_RE.test(t) && !FRESAS_CREMA_ESPECIFICO_RE.test(t)) {
+            if (await showFresasConCremaOptions(sock, jid, userSession, ctx)) return true;
+        }
+    }
+
     // Si ya le preguntamos la dirección para cotizar el domicilio, ESTE
     // mensaje es esa dirección - se toma tal cual, sin gastar una llamada a
     // la IA para "interpretar" algo que ya sabemos qué es.

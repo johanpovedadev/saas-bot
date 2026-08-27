@@ -42,10 +42,10 @@ function getAdminJids() {
     return getBusinessAdminJids();
 }
 
-async function _sendToJids(sock, jids, msg, ctx, excludeJid) {
+async function _sendToJids(sock, jids, msg, ctx) {
     for (const jid of jids) {
         try {
-            if (jid && jid !== excludeJid) {
+            if (jid) {
                 let resolved = jid;
                 if (sock && typeof sock.getNumberId === 'function') {
                     try {
@@ -117,13 +117,16 @@ async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
 
         if (payload.plan) {
             const msg = `📋 *NUEVO LEAD SEGUROS*\n\n👤 *Titular:* ${payload.nombreTitular || 'N/A'}\n📞 *Telefono:* ${payload.telefono || 'N/A'}\n🏠 *Direccion:* ${payload.direccion || 'N/A'}\n📧 *Email:* ${payload.correoElectronico || 'N/A'}\n\n🐾 *Mascota:* ${payload.nombreMascota || 'N/A'}\n🎂 *Edad:* ${payload.edadMascota || 'N/A'} anos\n🦴 *Raza:* ${payload.raza || 'N/A'}\n🎨 *Color:* ${payload.color || 'N/A'}\n⚤ *Genero:* ${payload.genero || 'N/A'}\n\n📦 *Plan:* ${payload.plan}${payload.tipoMascota ? ' (' + payload.tipoMascota + ')' : ''}\n📊 *Estado:* ${payload.estado || 'pendiente'}${payload.motivoCancelacion ? '\n❌ Motivo: ' + payload.motivoCancelacion : ''}\n\n🔗 Abrir chat: ${chatLink}`;
-            await _sendToJids(sock, admins, msg, ctx, jid);
+            await _sendToJids(sock, admins, msg, ctx);
             logger.info(`Notificados admins negocio sobre lead seguro de ${jid}`);
             return;
         }
 
         const msg = `📦 *NUEVO PEDIDO CONFIRMADO*\n\n👤 *Cliente:* ${payload.nombre || jid.split('@')[0]}\n📞 *Telefono:* ${payload.telefono || 'N/A'}\n🏠 *Direccion:* ${payload.direccion || 'N/A'}\n\n🛒 *Productos:*\n${payload.producto || 'N/A'}\n\n💰 *Total:* $${total.toLocaleString('es-CO')}\n💳 *Metodo de pago:* ${payload.pago || 'N/A'}\n📊 *Estado:* ${payload.estado || 'Por despachar'}\n\n🔗 Abrir chat: ${chatLink}`;
-        await _sendToJids(sock, admins, msg, ctx, jid);
+        // NUNCA excluir al admin aunque su JID coincida con el del cliente (ej:
+        // Johan probando desde su propio numero, que tambien es admin) - bug
+        // real: se filtraba silenciosamente y el admin nunca veia el aviso.
+        await _sendToJids(sock, admins, msg, ctx);
         logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
     } catch (e) {
         logger.error(`Error en notifyAdminsNewOrder: ${e.message}`);
