@@ -44,6 +44,7 @@ const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
 const { say } = require('./modules/handler.utils');
+const { sendTypingIndicator } = require('../services/bot_core');
 
 // ===================================
 // IMPORTS - Services
@@ -269,7 +270,17 @@ async function processIncomingMessage(sock, messageData, ctx) {
         if (adminHandler.isChatMuted(jid, ctx)) {
             logger.info(`[${jid}] Chat silenciado, ignorando mensaje`);
             return;
-        }        // 3. Inicializar sesión del usuario
+        }
+
+        // Pedido de Johan: mostrar "escribiendo..." apenas llega el mensaje
+        // (mientras el bot "piensa" - clasifica intención, llama a la IA,
+        // etc.), no solo justo antes de enviar la respuesta. Plantilla base
+        // para TODOS los tenants actuales y futuros (vive en el dispatcher
+        // genérico, no en un flow específico). No bloquea el procesamiento
+        // si falla (ej: canal sin soporte de "typing", como Telegram).
+        sendTypingIndicator(sock, jid).catch(() => {});
+
+        // 3. Inicializar sesión del usuario
         const userSession = initializeUserSession(jid, ctx);
         // Datos del transporte (Telegram) para el flow de finanzas (registro de usuarios)
         if (messageData.username) userSession.telegramUsername = messageData.username;

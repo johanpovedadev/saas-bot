@@ -225,15 +225,15 @@ function addToCart(ctx, jid, item, quantity = 1) {
 }
 
 
-async function say(sock, jid, text, ctx) {
-    if (!ctx.lastSent) {
-        ctx.lastSent = {};
-    }
-    ctx.lastSent[jid] = text;
-    console.log(`[${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}] 🤖 Bot: "${text.split('\n')[0]}..."`);
-    logConversation(jid, text, true);
-    
-    // whatsapp-web.js: sendStateTyping via chat object
+/**
+ * Muestra "escribiendo..." en el chat (whatsapp-web.js: sendStateTyping vía
+ * el objeto Chat). Plantilla base para TODOS los tenants (carrito de ventas
+ * y futuros proyectos): se llama tanto apenas llega un mensaje (mientras el
+ * bot "piensa" - clasifica intención, llama a la IA, etc.) como justo antes
+ * de enviar la respuesta, para que el indicador se mantenga visible durante
+ * todo el procesamiento y no solo el instante final.
+ */
+async function sendTypingIndicator(sock, jid) {
     try {
         if (sock.getChatById) {
             const chat = await sock.getChatById(jid);
@@ -244,14 +244,28 @@ async function say(sock, jid, text, ctx) {
     } catch (error) {
         logger.debug(`No se pudo enviar typing indicator: ${error.message}`);
     }
+}
+
+async function say(sock, jid, text, ctx) {
+    if (!ctx.lastSent) {
+        ctx.lastSent = {};
+    }
+    ctx.lastSent[jid] = text;
+    console.log(`[${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}] 🤖 Bot: "${text.split('\n')[0]}..."`);
+    logConversation(jid, text, true);
+
+    await sendTypingIndicator(sock, jid);
 
     // Determine writing simulation timeout from several sources (env, secrets, config) with fallback
+    // Default subido de 1ms a 900ms: con 1ms el "escribiendo..." pasaba tan
+    // rápido que el cliente nunca alcanzaba a verlo - el indicador quedaba
+    // ahí solo de nombre, sin efecto real.
     const writingMs = Number(
         (envConfig.time && envConfig.time.writingSimulationMs) ||
         process.env.TIME_WRITING_SIMULATION_MS ||
         process.env.WRITING_SIMULATION_MS ||
-        1
-    ) || 1;
+        900
+    ) || 900;
 
     try {
         await sleep(writingMs);    } catch (err) {
@@ -571,6 +585,7 @@ async function startEncargoBrowse(sock, jid, ctx) {
 // Exportamos las funciones necesarias. Se eliminan las que no se usan o son internas.
 module.exports = {
     say,
+    sendTypingIndicator,
     sendImage,
     resetChat,
     addToCart,
