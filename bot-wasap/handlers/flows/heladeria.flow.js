@@ -26,6 +26,8 @@ const path = require('path');
 const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
+const businessHours = require('../../utils/businessHours');
+const { textAfterGreeting } = require('../../utils/textAfterGreeting');
 const menuHandler = require('../modules/menu.handler');
 const checkoutHandler = require('../checkoutHandler');
 const reservationsHandler = require('../modules/reservations.handler');
@@ -1419,39 +1421,6 @@ async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg'
  * "hola" = 1, "buenos dias" = 2) - para saber si sobra texto después del
  * saludo (un pedido real venía pegado al saludo).
  */
-function textAfterGreeting(rawText) {
-    const { getMatchingGreeting } = require('../../config/greetings/greetings.colombia');
-    const matched = getMatchingGreeting ? getMatchingGreeting(rawText) : null;
-    if (!matched) return String(rawText || '').trim();
-    const words = String(rawText || '').trim().split(/\s+/);
-    const greetingWordCount = matched.trim().split(/\s+/).length;
-    return words.slice(greetingWordCount).join(' ').trim();
-}
-
-/**
- * ¿Está la heladería abierta ahora mismo? Compara la hora actual (zona
- * horaria del negocio) contra business.hours (weekday/weekend). Si no hay
- * horario configurado, devuelve true (fail-open: nunca bloquea pedidos por
- * un dato faltante).
- */
-function isWithinBusinessHours(now = new Date()) {
-    const hours = envConfig.business.hours;
-    if (!hours || !hours.weekday || !hours.weekday.open || !hours.weekday.close) return true;
-    const tz = (envConfig.business.location && envConfig.business.location.timezone) || envConfig.business.timezone || 'America/Bogota';
-    const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short'
-    }).formatToParts(now);
-    const get = (type) => (parts.find(p => p.type === type) || {}).value;
-    const isWeekend = ['Sat', 'Sun'].includes(get('weekday'));
-    const range = (isWeekend && hours.weekend && hours.weekend.open) ? hours.weekend : hours.weekday;
-    const toMinutes = (hhmm) => {
-        const [h, m] = String(hhmm).split(':').map(Number);
-        return (h || 0) * 60 + (m || 0);
-    };
-    const nowMinutes = parseInt(get('hour'), 10) * 60 + parseInt(get('minute'), 10);
-    return nowMinutes >= toMinutes(range.open) && nowMinutes < toMinutes(range.close);
-}
-
 /**
  * Bienvenida con PERSONA (heladería 🍦). NO pide el nombre en el saludo:
  * el nombre solo se solicita en el envío (checkout). Texto estático
@@ -1479,11 +1448,9 @@ _Escribe el número de la opción (1, 2 o 3)._`;
     // Pedido de Johan: si escriben fuera del horario de atención, avisar
     // (sin bloquear) que el pedido queda como el primero en salir apenas
     // abran - no se pierde el cliente por escribir a deshora.
-    if (!isWithinBusinessHours()) {
-        const hours = envConfig.business.hours;
-        const rango = (hours && hours.weekday && hours.weekday.open) ? `${hours.weekday.open} a ${hours.weekday.close}` : '';
-        await say(sock, jid,
-            `🕐 En este momento estamos *cerrados*${rango ? ` (atendemos de ${rango})` : ''}, ¡pero tranquilo! Si quieres, sigue armando tu pedido y será el primero en salir apenas abramos. 😊`, ctx);
+    const closedNotice = businessHours.outOfHoursNotice();
+    if (closedNotice) {
+        await say(sock, jid, closedNotice, ctx);
     }
 
     await sendMenuImages(sock, jid, ctx);
@@ -2123,28 +2090,6 @@ function hasWord(input, words) {
 }
 
 /**
- * Detecta una CORRECCIÓN de un dato del pedido en lenguaje natural en vez de
- * responder solo con la opción numérica (ej: "la dirección es Cra 23 #10-05"
- * en el resumen final, en vez de 1/2). Bug real: esto caía en "Opción no
- * válida" y escalaba a atención humana. Devuelve {field, value} o null.
- */
-function detectOrderFieldCorrection(text) {
-    const t = String(text || '').trim();
-    let m = t.match(/^(?:mi|la)\s+direcci[oó]n(?:\s+de\s+entrega)?\s*(?:es|:)\s*(.+)$/i);
-    if (m) return { field: 'address', value: m[1].trim() };
-    m = t.match(/^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i);
-    if (m) return { field: 'name', value: m[1].trim() };
-    m = t.match(/^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i);
-    if (m) {
-        const digits = m[1].replace(/[^0-9]/g, '');
-        if (digits.length >= 7) return { field: 'telefono', value: digits };
-    }
-    m = /transferencia|efectivo/i.exec(t);
-    if (m && /pag/i.test(t)) return { field: 'paymentMethod', value: m[0].toLowerCase() };
-    return null;
-}
-
-/**
  * Respaldo DETERMINISTA para las fases de checkout (CONFIRM_ORDER, CHECK_PAGO,
  * FINALIZE_ORDER): cubre sinónimos de confirmar/editar y métodos de pago que el
  * validador genérico no acepta (nequi, daviplata, tarjeta). Retorna true si
@@ -2155,39 +2100,10 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
     const t = String(text || '').toLowerCase().trim();
 
     if (phase === PHASE.CONFIRM_ORDER) {
-        // Pregunta por el valor del domicilio justo en el resumen final: mismo
-        // caso especial que classifyOrderInput (fases guiadas), pero aquí sin
-        // IA - el resto de este fallback ya es 100% determinista por diseño.
-        // Bug real (log de producción): el cliente preguntaba esto en
-        // CONFIRM_ORDER y caía directo en "❌ Opción no válida" porque este
-        // fallback solo conocía confirmar/seguir/editar/cancelar.
-        if (userSession.pendingDomicilioQuery) {
-            const direccion = String(text || '').trim();
-            userSession.pendingDomicilioQuery = false;
-            userSession.order = userSession.order || {};
-            userSession.order.address = direccion;
-            userSession.errorCount = 0;
-            await notifyDomicilioQuery(sock, jid, direccion, ctx);
-            await say(sock, jid,
-                `📍 ¡Gracias! Ya estoy validando el valor del domicilio para *${direccion}* con mi equipo, en un momento te confirmamos. Mientras tanto, ¡sigamos con tu pedido! 😊`, ctx);
-            await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-            return true;
-        }
-        if (DOMICILIO_QUESTION_RE.test(t) && DOMICILIO_PRICE_RE.test(t)) {
-            userSession.errorCount = 0;
-            const direccionYaDada = userSession.order && userSession.order.address;
-            if (direccionYaDada) {
-                await notifyDomicilioQuery(sock, jid, direccionYaDada, ctx);
-                await say(sock, jid,
-                    `📍 ¡Ya estoy validando el valor del domicilio para *${direccionYaDada}* con mi equipo, en un momento te confirmamos. Mientras tanto, sigamos con tu pedido! 😊`, ctx);
-                await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-            } else {
-                userSession.pendingDomicilioQuery = true;
-                await say(sock, jid, `📍 Para saber el valor del domicilio necesito tu dirección — ¿cuál es?`, ctx);
-            }
-            return true;
-        }
-
+        // NOTA: la pregunta por el valor del domicilio ya se maneja de forma
+        // genérica y compartida en handlers/checkoutHandler.js#handleConfirmOrderChoice
+        // (se prueba ANTES de llegar aquí, así que si el mensaje llegó hasta
+        // este fallback, ya sabemos que no era una pregunta de domicilio).
         if (hasWord(t, ['1', ...CHECKOUT_CONFIRM_WORDS])) {
             userSession.errorCount = 0;
             await checkoutHandler.handleEnterAddress(sock, jid, '', userSession, ctx, true);
@@ -2240,18 +2156,10 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
             await checkoutHandler.handleFinalizeOrder(sock, jid, '2', userSession, ctx);
             return true;
         }
-        // Corrección espontánea en lenguaje natural (ej: "la dirección es
-        // Cra 23 #10-05") en vez de escribir 1/2 - actualiza el dato y vuelve
-        // a mostrar el resumen ya corregido, sin perder progreso ni escalar.
-        const correction = detectOrderFieldCorrection(text);
-        if (correction) {
-            userSession.order = userSession.order || {};
-            userSession.order[correction.field] = correction.value;
-            userSession.errorCount = 0;
-            await say(sock, jid, '✅ Listo, quedó actualizado.', ctx);
-            await sendLocalFinalSummary(sock, jid, userSession, ctx);
-            return true;
-        }
+        // NOTA: la corrección de datos en lenguaje natural ya se maneja de
+        // forma genérica y compartida en
+        // handlers/checkoutHandler.js#handleFinalizeOrder (se prueba ANTES de
+        // llegar aquí).
         return false;
     }
 
@@ -2410,5 +2318,5 @@ module.exports = {
     getCheckoutConfig: () => ({
         numericConfirm: true
     }),
-    isWithinBusinessHours
+    isWithinBusinessHours: businessHours.isWithinBusinessHours
 };

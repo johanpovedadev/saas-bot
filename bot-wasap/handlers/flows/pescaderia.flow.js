@@ -23,6 +23,8 @@ const menuHandler = require('../modules/menu.handler');
 const checkoutHandler = require('../checkoutHandler');
 const reservationsHandler = require('../modules/reservations.handler');
 const { money } = require('../../utils/util');
+const { textAfterGreeting } = require('../../utils/textAfterGreeting');
+const businessHours = require('../../utils/businessHours');
 
 const FLOW_TYPE = 'RESTAURANT';
 
@@ -107,8 +109,13 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
     userSession.errorCount = 0;
 
     const lines = resolved.map(r => `• ${r.cantidad}x ${r.product[envConfig.backend.fields.productName]} - *${money(r.precio * r.cantidad)}*`);
+    // Pedido de Johan (ya aplicado en heladería): mostrar el CARRITO COMPLETO
+    // cada vez que se agrega un producto, no solo lo recién agregado, para
+    // que el cliente pueda confirmar o editar viendo todo de una.
+    const cartBlock = cartService.formatCart(jid, ctx);
     await say(sock, jid,
         `🐟 ¡Listo! Agregué a tu pedido:\n\n${lines.join('\n')}\n\n` +
+        `${cartBlock}\n\n` +
         `¿Qué deseas hacer?\n\n` +
         `1️⃣ Seguir comprando\n` +
         `2️⃣ Ir a pagar\n` +
@@ -263,8 +270,15 @@ async function handle(sock, jid, text, userSession, ctx) {
  * - Usuario conocido: saludo por nombre + menú principal.
  * Texto estático (0 calls de IA) para no consumir cuota, como el greeting
  * estático que usa finance. El menú sigue saliendo igual después del saludo.
+ *
+ * Bug real (ya corregido en heladería): si el cliente pega un pedido justo
+ * después del saludo (ej: "Hola quiero una bandeja de camarones"), antes se
+ * mostraba solo el saludo y el pedido se descartaba en silencio - el
+ * cliente tenía que repetirlo, y esa repetición a veces disparaba el
+ * detector de loop. Solo aplica cuando el cliente YA tiene nombre (si es
+ * nuevo, el siguiente paso es pedirle el nombre, no interpretar un pedido).
  */
-async function showWelcome(sock, jid, ctx) {
+async function showWelcome(sock, jid, ctx, text) {
     const userStore = require('../../services/userStore');
     const user = userStore.getUser(jid);
     const userSession = ctx.sessions && ctx.sessions[jid];
@@ -282,7 +296,22 @@ async function showWelcome(sock, jid, ctx) {
         ? `🐟 ¡Hola ${name}! Bienvenido a *Ricuras del Pacífico* 🐟. ¿Qué deseas ordenar hoy?`
         : '🐟 ¡Hola! Bienvenido a *Ricuras del Pacífico*. ¿Qué deseas ordenar hoy?';
     await say(sock, jid, greeting, ctx);
+
+    // Si escriben fuera del horario de atención, avisar (sin bloquear) que
+    // el pedido queda como el primero en salir apenas abran.
+    const closedNotice = businessHours.outOfHoursNotice();
+    if (closedNotice) {
+        await say(sock, jid, closedNotice, ctx);
+    }
+
     await menuHandler.sendMainMenu(sock, jid, ctx);
+
+    if (userSession) {
+        const resto = textAfterGreeting(text);
+        if (resto.length >= 3) {
+            await handleNotUnderstood(sock, jid, text, userSession, ctx);
+        }
+    }
 }
 
 /**

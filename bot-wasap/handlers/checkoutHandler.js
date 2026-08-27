@@ -161,6 +161,88 @@ function extractAfterLabel(text, labelRe) {
     return (m && m[1] && m[1].trim()) ? m[1].trim() : null;
 }
 
+/**
+ * ====================================================================
+ * PLANTILLA BASE PARA CARRITO DE VENTAS (heladería, pescadería, y
+ * cualquier tenant futuro con checkout compartido): estos dos bloques
+ * viven acá, en el módulo COMPARTIDO, para que todos los tenants los
+ * tengan igual sin reimplementarlos cada uno. Se probaron primero en
+ * heladería (donde salió el bug real en producción) y se centralizaron
+ * aquí para que pescadería y futuros tenants los reciban gratis.
+ * ====================================================================
+ */
+
+// --- 1) Pregunta por el valor del domicilio en cualquier fase de checkout ---
+// El bot nunca puede saber el valor exacto (varía por dirección/zona), así
+// que en vez de caer en "opción no válida" o escalar a WAITING_HUMAN (lo que
+// frena todo el pedido), se pide la dirección si falta, se avisa al equipo
+// SIN cambiar de fase, y el pedido sigue su curso normal en paralelo.
+const DOMICILIO_QUESTION_RE = /\b(domicilio|env[ií]o|delivery)\b/i;
+const DOMICILIO_PRICE_RE = /\b(cu[aá]nto|valor|precio|cuesta|cobran)\b/i;
+
+async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
+    try {
+        await notificationService.notifySystemAlert(sock, ctx, '🛵', 'CONSULTA VALOR DE DOMICILIO',
+            `Cliente: ${jid}\nDirección: ${direccion}\nHora: ${new Date().toLocaleString('es-CO')}`);
+    } catch (e) { /* ignore */ }
+}
+
+/**
+ * Retorna true si manejó una pregunta de domicilio (pidió dirección o avisó
+ * al equipo), false si el texto no aplica y debe seguir el flujo normal.
+ */
+async function handleDomicilioQuestion(sock, jid, text, userSession, ctx) {
+    const t = String(text || '').toLowerCase();
+
+    if (userSession.pendingDomicilioQuery) {
+        const direccion = String(text || '').trim();
+        userSession.pendingDomicilioQuery = false;
+        userSession.order = userSession.order || {};
+        userSession.order.address = direccion;
+        userSession.errorCount = 0;
+        await notifyDomicilioQuery(sock, jid, direccion, ctx);
+        await say(sock, jid,
+            `📍 ¡Gracias! Ya estoy validando el valor del domicilio para *${direccion}* con mi equipo, en un momento te confirmamos. Mientras tanto, ¡sigamos con tu pedido! 😊`, ctx);
+        return true;
+    }
+
+    if (DOMICILIO_QUESTION_RE.test(t) && DOMICILIO_PRICE_RE.test(t)) {
+        userSession.errorCount = 0;
+        const direccionYaDada = userSession.order && userSession.order.address;
+        if (direccionYaDada) {
+            await notifyDomicilioQuery(sock, jid, direccionYaDada, ctx);
+            await say(sock, jid,
+                `📍 ¡Ya estoy validando el valor del domicilio para *${direccionYaDada}* con mi equipo, en un momento te confirmamos. Mientras tanto, sigamos con tu pedido! 😊`, ctx);
+        } else {
+            userSession.pendingDomicilioQuery = true;
+            await say(sock, jid, '📍 Para saber el valor del domicilio necesito tu dirección — ¿cuál es?', ctx);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+// --- 2) Corrección espontánea de un dato del pedido en lenguaje natural ---
+// (ej: "la dirección es Cra 23 #10-05" en vez de responder 1/2 en el resumen
+// final) - bug real: esto caía en "Opción no válida" y escalaba a atención
+// humana en un solo intento. Devuelve {field, value} o null.
+function detectOrderFieldCorrection(text) {
+    const t = String(text || '').trim();
+    let m = t.match(/^(?:mi|la)\s+direcci[oó]n(?:\s+de\s+entrega)?\s*(?:es|:)\s*(.+)$/i);
+    if (m) return { field: 'address', value: m[1].trim() };
+    m = t.match(/^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i);
+    if (m) return { field: 'name', value: m[1].trim() };
+    m = t.match(/^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i);
+    if (m) {
+        const digits = m[1].replace(/[^0-9]/g, '');
+        if (digits.length >= 7) return { field: 'telefono', value: digits };
+    }
+    m = /transferencia|efectivo/i.exec(t);
+    if (m && /pag/i.test(t)) return { field: 'paymentMethod', value: m[0].toLowerCase() };
+    return null;
+}
+
 function validateInput(input, expectedType, options = {}) {
     const cleanInput = input.toLowerCase().trim();
     switch (expectedType) {
@@ -392,6 +474,14 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
         return;
     }
     
+    // Pregunta por el valor del domicilio justo en el resumen final: el bot
+    // no puede saberlo (varía por dirección/zona), así que se pide la
+    // dirección si falta y se avisa al equipo, sin perder el pedido.
+    if (await handleDomicilioQuestion(sock, jid, input, userSession, ctx)) {
+        await handleCartSummary(sock, jid, userSession, ctx);
+        return;
+    }
+
     // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
     if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
@@ -851,7 +941,24 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
 
     } else if (validateInput(finalAction, 'edit') || (cfg && cfg.numericConfirm && finalAction === '2')) {
         await say(sock, jid, '✏️ De acuerdo. ¿Qué dato deseas editar? (Dirección, Nombre, Pago)', ctx);
+    } else if (await handleDomicilioQuestion(sock, jid, input, userSession, ctx)) {
+        // Pregunta por el valor del domicilio en vez de 1/2 - ya se manejó
+        // (pidió dirección o avisó al equipo), se vuelve a mostrar el resumen.
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
     } else {
+        // Corrección espontánea en lenguaje natural (ej: "la dirección es
+        // Cra 23 #10-05") en vez de 1/2 - bug real: esto caía en "Opción no
+        // válida" y escalaba a atención humana en un solo intento.
+        const correction = detectOrderFieldCorrection(input);
+        if (correction) {
+            userSession.order = userSession.order || {};
+            userSession.order[correction.field] = correction.value;
+            userSession.errorCount = 0;
+            await say(sock, jid, '✅ Listo, quedó actualizado.', ctx);
+            await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+            return;
+        }
+
         // Sube errorCount ANTES de intentar la IA: cuenta como intento fallido
         // sin importar si la IA resuelve el mensaje o no (mismo patrón que
         // handleEnterPaymentMethod) - así el chequeo global de frustración se
