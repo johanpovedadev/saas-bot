@@ -23,7 +23,7 @@ const __wwebMsgPatch = (function () {
 })();
 if (__wwebMsgPatch) console.log('🩹 Patch whatsapp-web.js aplicado: id._serialized ← id.$1');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { say, loadAllProductsCache } = require('./services/bot_core');
+const { say, loadAllProductsCache, startProductsCacheRefresher } = require('./services/bot_core');
 const { setupSocketHandlers } = require('./handlers/handler');
 const notificationService = require('./services/notificationService');
 const editableConfig = require('./services/editableConfig');
@@ -427,6 +427,12 @@ const startBot = async () => {
     } catch (e) {
         console.warn('Warning: no se pudieron cargar productos en cache, continuando de todos modos:', e && e.message ? e.message : e);
     }
+
+    // Pedido de Johan: antes el catálogo (productos, sabores, toppings) solo
+    // se cargaba UNA vez al iniciar - un sabor/producto nuevo agregado al
+    // Sheet nunca aparecía hasta reiniciar el proceso a mano. Se refresca
+    // cada 5 min igual que la config editable de abajo.
+    startProductsCacheRefresher(ctx);
 
     // Config editable del negocio (pestañas "Configuración" y
     // "Preguntas_Frecuentes" del Sheet). No-op para tenants sin esas hojas.

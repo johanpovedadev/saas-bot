@@ -123,8 +123,27 @@ async function loadAllProductsCache(ctx) {
             statusText: e.response?.statusText,
             data: e.response?.data
         });
-        ctx.productsCache = [];
+        // Mantiene el cache previo si ya había uno (no lo vacía por un error
+        // transitorio del backend) - antes un fallo puntual dejaba a los
+        // clientes sin NINGÚN producto hasta el próximo refresco exitoso.
+        if (!Array.isArray(ctx.productsCache)) ctx.productsCache = [];
     }
+}
+
+const PRODUCTS_CACHE_REFRESH_MS = 5 * 60 * 1000;
+
+/**
+ * Refresca el catálogo de productos periódicamente (cada 5 min) - antes solo
+ * se cargaba UNA vez al iniciar el bot, así que un producto/sabor nuevo
+ * agregado al Sheet nunca aparecía hasta reiniciar el proceso a mano. Mismo
+ * patrón que editableConfig.js usa para Configuración/FAQs.
+ */
+function startProductsCacheRefresher(ctx) {
+    const timer = setInterval(() => {
+        loadAllProductsCache(ctx).catch(() => {});
+    }, PRODUCTS_CACHE_REFRESH_MS);
+    logger.info('Refresco de catálogo de productos iniciado (cada 5 min)');
+    return timer;
 }
 
 function resetChat(jid, ctx) {
@@ -559,5 +578,6 @@ module.exports = {
     startEncargoBrowse,
     askGemini,
     sleep,
-    loadAllProductsCache
+    loadAllProductsCache,
+    startProductsCacheRefresher
 };
