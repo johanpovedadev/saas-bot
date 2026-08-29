@@ -2101,6 +2101,27 @@ function hasWord(input, words) {
  * validador genérico no acepta (nequi, daviplata, tarjeta). Retorna true si
  * respondió; false si debe mostrarse el prompt de la fase.
  */
+/**
+ * Bug real de producción: un cliente preguntó "¿Qué diferencia tienen las
+ * cajas de helado?" en CONFIRM_ORDER (ni domicilio, ni 1/2/3/cancelar) y
+ * cayó directo en "❌ Opción no válida" - la pregunta se ignoró por
+ * completo, generando frustración y escalando a atención humana en 2
+ * mensajes. Se intenta responder la pregunta de verdad (mismo mecanismo de
+ * FAQ/IA que ya usa classifyOrderInput en las fases guiadas) ANTES de
+ * rendirse con el mensaje genérico. Retorna true si respondió.
+ */
+async function tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, reshow) {
+    const contextInfo = buildClassifierContext(userSession, ctx);
+    const result = await heladeriaAi.interpretOrderText(text, contextInfo);
+    if (!result || !result.duda) return false;
+    const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
+    if (!answer || heladeriaAi.isUnknownAnswer(answer)) return false;
+    userSession.errorCount = 0;
+    await say(sock, jid, `😊 ${answer}`, ctx);
+    await reshow(sock, jid, userSession, ctx);
+    return true;
+}
+
 async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
     const phase = userSession.phase;
     const t = String(text || '').toLowerCase().trim();
@@ -2134,6 +2155,7 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
             await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
             return true;
         }
+        if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, checkoutHandler.handleCartSummary)) return true;
         return false;
     }
 
@@ -2148,6 +2170,8 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
             await sendLocalFinalSummary(sock, jid, userSession, ctx);
             return true;
         }
+        const reaskPago = (s, j, u, c) => say(s, j, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', c);
+        if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, reaskPago)) return true;
         return false;
     }
 
@@ -2166,6 +2190,7 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
         // forma genérica y compartida en
         // handlers/checkoutHandler.js#handleFinalizeOrder (se prueba ANTES de
         // llegar aquí).
+        if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, sendLocalFinalSummary)) return true;
         return false;
     }
 
