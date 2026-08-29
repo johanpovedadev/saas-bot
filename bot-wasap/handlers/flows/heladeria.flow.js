@@ -1717,7 +1717,13 @@ async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
  * con la PRIMERA que encontrara, silenciosamente).
  */
 const CATEGORIA_FRESAS_CREMA = 'Fresas_Con_Crema';
-const FRESAS_CREMA_GENERIC_RE = /\bfresas?\s+con\s+crema\b/i;
+// Bug real (log de producción): "fresas con crema" YA disparaba la lista,
+// pero una pregunta más suelta ("¿tienes fresas?", "hola tienes fresas")
+// no - caía en la IA, que improvisaba una respuesta incompleta (solo
+// mencionaba 3 de los 5 productos). Se amplía a cualquier mención de
+// "fresas" con intención de pregunta/pedido (tienes/hay/manejan/venden/
+// dame/quiero...) o un mensaje corto que sea prácticamente solo "fresas".
+const FRESAS_CREMA_GENERIC_RE = /\bfresas?\s+con\s+crema\b|\b(tienes?|tienen|tenes|hay|manejan|venden|dame|quiero|regalame)\s+\w*\s*fresas?\b|^fresas?[.!?]*$/i;
 // Si el cliente ya especifica cuál quiere, no es ambiguo - se deja resolver normal.
 const FRESAS_CREMA_ESPECIFICO_RE = /\b(helado|magicas?|burbucream|burbucrem|xl|clasicas?|sencillas?|sin helado)\b/i;
 

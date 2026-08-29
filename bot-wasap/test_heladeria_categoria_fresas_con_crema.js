@@ -62,6 +62,20 @@ async function send(text) {
             check(/\$/.test(out), 'la lista muestra precios');
         }
 
+        // Caso 1b: pregunta SUELTA sin decir "con crema" ("Holaa tienes
+        // fresas") - bug real en producción: esto caía en la IA, que
+        // improvisaba una respuesta incompleta (solo 3 de los 5 productos).
+        {
+            const s = { phase: PHASE.SELECCION_OPCION, errorCount: 0 };
+            ctx.sessions[JID] = s;
+            aiCalled = false;
+            const out = await send('Holaa tienes fresas');
+            check(!aiCalled, 'la pregunta suelta también se resuelve sin IA');
+            for (const p of categoria) {
+                check(out.includes(p.NombreProducto.trim()), `(pregunta suelta) la lista incluye "${p.NombreProducto.trim()}"`);
+            }
+        }
+
         // Caso 2: el cliente YA especifica cuál quiere -> NO se muestra la lista,
         // se deja resolver como pedido normal de un producto específico.
         {
