@@ -17,6 +17,7 @@
 const { logger } = require('../../utils/logger');
 const PHASE = require('../../utils/phases');
 const { say, resetChat } = require('../../services/bot_core');
+const { money } = require('../../utils/util');
 const envConfig = require('../../config/env.loader');
 const frustrationService = require('../../services/frustrationService');
 
@@ -264,14 +265,37 @@ async function handleEncargoOption(sock, jid, userSession, ctx) {
     const emoji = envConfig.ui.emoji.main || '🎉';
     const productTypePlural = envConfig.nomenclature.productTypePlural || 'productos';
     const itemPrimarySingular = envConfig.nomenclature.itemPrimarySingular || 'item';
-    
+
     // Construir mensaje usando plantillas
     const customOrderStart = envConfig.messages.render(envConfig.messages.templates.customOrderStart);
     const customOrderExamples = envConfig.messages.render(envConfig.messages.templates.customOrderExamples);
-    
+
+    // Bug real (heladería): la opción "Pedidos por encargo" solo mostraba
+    // texto genérico ("describe tu pedido"), sin mencionar las cajas de
+    // helado que existen para eso - el cliente nunca se enteraba de que
+    // existían ni de sus precios/sabores. Si el tenant define
+    // ENCARGO_CATEGORIES (ej: "Helados"), se listan en vivo los productos
+    // de esas categorías desde el catálogo (siempre al día, sin texto fijo
+    // que se desactualice). Tenants sin esa variable no ven ningún cambio.
+    let catalogBlock = '';
+    const encargoCategories = (process.env.ENCARGO_CATEGORIES || '').split(',').map(c => c.trim()).filter(Boolean);
+    if (encargoCategories.length > 0) {
+        const dbFields = envConfig.backend.fields;
+        const items = (ctx.productsCache || []).filter(p => encargoCategories.includes(p[dbFields.productCategory] || ''));
+        if (items.length > 0) {
+            const lines = items.map(p => {
+                const nombre = String(p[dbFields.productName] || '').trim();
+                const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                const desc = p.Descripcion || p.descripcion || '';
+                return `🎁 *${nombre}* — ${money(precio)}\n_${desc}_`;
+            }).join('\n\n');
+            catalogBlock = `\n\n${lines}\n`;
+        }
+    }
+
     const encargoText = `${emoji} *¡Genial! Pedidos Especiales* ${emoji}
 
-${customOrderStart}
+${customOrderStart}${catalogBlock}
 
 ${customOrderExamples}
 
