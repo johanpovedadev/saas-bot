@@ -14,9 +14,35 @@
 // en lion-platform-api sobre no persistir contenido de chat de clientes.
 
 const { detectSignals, levelFromSignals, classifyWithAI } = require('./lion-intent-classifier-readonly');
+const socketRef = require('./lion-socket-ref-readonly');
 
 const leads = new Map(); // phone (remoteJid) -> lead record expuesto por /leads
 const signalsByPhone = new Map(); // phone -> Set<string>, interno, nunca se expone
+const picFetchInFlight = new Set(); // phone -> evita pedir la misma foto dos veces a la vez
+
+// Foto de perfil pública de WhatsApp (Lion Platform la muestra en la bandeja
+// de leads). Se pide una sola vez por lead y se cachea en memoria — no bloquea
+// el mensaje que la dispara, y si el número no comparte foto (privacidad) o el
+// bot no está conectado, falla en silencio y sigue sin foto (se reintenta en
+// el próximo mensaje de/hacia ese lead).
+async function fetchProfilePic(phone) {
+    if (picFetchInFlight.has(phone)) return;
+    picFetchInFlight.add(phone);
+    try {
+        const sock = socketRef.getActiveSocket();
+        if (!sock) return;
+        const url = await sock.profilePictureUrl(phone, 'image');
+        const existing = leads.get(phone);
+        if (existing && url) {
+            existing.profilePicUrl = url;
+            leads.set(phone, existing);
+        }
+    } catch (_) {
+        // Sin foto pública o el número no la comparte — no es un error real.
+    } finally {
+        picFetchInFlight.delete(phone);
+    }
+}
 
 function recordInboundMessage(phone, text, options = {}) {
 	if (!phone) return;
@@ -31,6 +57,8 @@ function recordInboundMessage(phone, text, options = {}) {
 
 	existing.intentionLevel = levelFromSignals(signals);
 	leads.set(phone, existing);
+
+	if (!existing.profilePicUrl) fetchProfilePic(phone);
 
 	// Escalamiento opcional a IA — apagado por defecto (LION_INTENT_AI_ENABLED),
 	// no bloquea este mensaje y nunca lanza si falla.
@@ -55,6 +83,8 @@ function recordOutboundMessage(phone, messageId) {
 	existing.lastOutboundMessageId = messageId;
 	existing.lastOutboundStatus = 'PENDING';
 	leads.set(phone, existing);
+
+	if (!existing.profilePicUrl) fetchProfilePic(phone);
 }
 
 function recordOutboundStatusUpdate(phone, messageId, statusName) {
