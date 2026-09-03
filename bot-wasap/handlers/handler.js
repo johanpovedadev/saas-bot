@@ -45,6 +45,11 @@ const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
 const { say } = require('./modules/handler.utils');
 const { sendTypingIndicator } = require('../services/bot_core');
+const dailyActivityStore = require('../services/dailyActivityStore');
+const pendingAdminQuestion = require('../services/pendingAdminQuestion');
+const unansweredQuestionsStore = require('../services/unansweredQuestionsStore');
+const sheetsWriter = require('../services/sheetsWriter');
+const configUpdateAi = require('../services/configUpdateAi');
 
 // ===================================
 // IMPORTS - Services
@@ -251,6 +256,121 @@ async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
     }
 }
 
+// Prefijos de comandos de admin ya existentes (mute/mia/toma-control) - si el
+// mensaje empieza con uno de estos, ni se molesta en llamar a Gemini para el
+// clasificador de actualizacion de Sheet (Caso B): son comandos, no una
+// instruccion de negocio.
+const KNOWN_ADMIN_COMMAND_PREFIXES = [
+    'silenciar ', 'mute ', 'desilenciar ', 'unmute ', 'mia ', 'yo continuo',
+    'reactivar', 'prender', 'apagar', '/pm2'
+];
+
+// Bug real (2026-09-03): el dueño probando su propio pedido como cliente
+// ("Cra 23 #10-05, Juan Pérez, 3139848800, efectivo") quedó atrapado por el
+// clasificador de IA de Caso B, que lo interpretó como "actualizar un campo
+// del Sheet" y guardó basura en vez de dejarlo seguir el checkout normal.
+// Mismo filtro determinístico que KNOWN_ADMIN_COMMAND_PREFIXES, para este
+// patrón específico: dirección/nombre/teléfono/pago en un solo mensaje con
+// comas - nunca es una instrucción de negocio, ni ambigua, así que ni
+// siquiera se llama a Gemini para decidir.
+function looksLikeCheckoutMessage(text) {
+    const parts = String(text || '').split(',').map(p => p.trim()).filter(Boolean);
+    if (parts.length < 3) return false;
+    const hasPhone = parts.some(p => {
+        const digits = p.replace(/[^0-9]/g, '');
+        return digits.length >= 7 && p.replace(/[0-9\s]/g, '').length <= 3;
+    });
+    const hasPayment = parts.some(p => /efectivo|transferencia|nequi|daviplata|tarjeta/i.test(p));
+    return hasPhone && hasPayment;
+}
+
+/**
+ * Intercepta mensajes del DUENO del negocio (issue "reporte diario +
+ * preguntas graduales", Parte 3) ANTES del flujo normal:
+ *  - Caso A: si hay una pregunta pendiente (services/pendingAdminQuestion.js
+ *    - una pregunta real sin responder, o el campo de onboarding del dia),
+ *    el mensaje ES la respuesta - se guarda en el Sheet y se confirma.
+ *  - Caso B: si no hay nada pendiente, se pasa el mensaje por un
+ *    clasificador (services/configUpdateAi.js) para ver si es una
+ *    instruccion de actualizar un precio/dato del negocio. Si es ambiguo,
+ *    se pregunta en vez de adivinar; si no es una actualizacion, se deja
+ *    pasar (el dueno puede seguir usando el bot como cliente de prueba).
+ * Devuelve true si el mensaje quedo resuelto acá (no debe seguir al flow).
+ */
+async function handleAdminSheetUpdate(sock, jid, text, ctx) {
+    const businessKey = process.env.BUSINESS_KEY;
+    const sheetId = process.env.GOOGLE_SHEET_ID;
+    const onboardingStore = require('../services/onboardingStore');
+    const { money } = require('../utils/util');
+
+    const pending = pendingAdminQuestion.getPending(businessKey);
+    if (pending) {
+        try {
+            const value = String(text || '').trim();
+            if (pending.type === 'unanswered_question') {
+                if (sheetId) await sheetsWriter.appendFaqRow(sheetId, pending.payload.question, value);
+                unansweredQuestionsStore.markAnswered(businessKey, pending.payload.id, value);
+            } else if (pending.type === 'onboarding_field') {
+                const field = pending.payload;
+                if (field.kind === 'faq') {
+                    if (sheetId) await sheetsWriter.appendFaqRow(sheetId, field.faqQuestion, value);
+                } else if (sheetId) {
+                    await sheetsWriter.updateConfigField(sheetId, field.sheetTab, field.matchLabel, value);
+                }
+                onboardingStore.saveAnswer(businessKey, field.key, value);
+            }
+            pendingAdminQuestion.clearPending(businessKey);
+            await say(sock, jid, '¡Listo, ya quedó guardado! 🙌', ctx);
+        } catch (e) {
+            logger.error(`handleAdminSheetUpdate: error guardando respuesta pendiente: ${e.message}`);
+            await say(sock, jid, `⚠️ No pude guardar eso en el Sheet: ${e.message}`, ctx);
+        }
+        return true;
+    }
+
+    if (!sheetId) return false; // sin Sheet configurado no hay nada que actualizar por chat
+    const lower = String(text || '').trim().toLowerCase();
+    if (KNOWN_ADMIN_COMMAND_PREFIXES.some(p => lower.startsWith(p))) return false;
+    if (looksLikeCheckoutMessage(text)) return false;
+
+    let result;
+    try {
+        const products = (ctx.productsCache || []).map(p => p.NombreProducto || p.nombre).filter(Boolean).slice(0, 200);
+        result = await configUpdateAi.interpretUpdateInstruction(text, { products });
+    } catch (e) {
+        logger.error(`handleAdminSheetUpdate: error clasificando actualizacion: ${e.message}`);
+        return false;
+    }
+    if (!result || !result.isUpdate || result.confidence < 0.6) return false;
+
+    try {
+        if (result.kind === 'product_price' && result.product && result.newPrice) {
+            const tab = process.env.SHEET_NAME_PRODUCTS || 'Inventario';
+            const outcome = await sheetsWriter.updateProductPrice(sheetId, tab, result.product, result.newPrice);
+            if (outcome.ok) {
+                await say(sock, jid, `${outcome.product} ahora en ${money(result.newPrice)} ✅`, ctx);
+                return true;
+            }
+            if (outcome.candidates && outcome.candidates.length > 1) {
+                await say(sock, jid, `¿Te referís a ${outcome.candidates.join(' o ')}?`, ctx);
+                return true;
+            }
+            await say(sock, jid, `No encontré ningún producto que coincida con "${result.product}" en el inventario. ¿Podés escribir el nombre exacto?`, ctx);
+            return true;
+        }
+        if (result.kind === 'field' && result.field && result.value) {
+            await sheetsWriter.appendFaqRow(sheetId, result.field, result.value);
+            await say(sock, jid, `¡Listo, guardé "${result.field}: ${result.value}"! ✅`, ctx);
+            return true;
+        }
+    } catch (e) {
+        logger.error(`handleAdminSheetUpdate: error escribiendo actualizacion proactiva: ${e.message}`);
+        await say(sock, jid, `⚠️ No pude guardar eso en el Sheet: ${e.message}`, ctx);
+        return true;
+    }
+    return false;
+}
+
 /**
  * Procesa un mensaje entrante y lo delega al módulo correspondiente
  *
@@ -279,6 +399,21 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // genérico, no en un flow específico). No bloquea el procesamiento
         // si falla (ej: canal sin soporte de "typing", como Telegram).
         sendTypingIndicator(sock, jid).catch(() => {});
+
+        // Reporte diario + edicion del Sheet por chat (issue "reporte diario
+        // automatico + preguntas graduales"): si quien escribe es el dueno
+        // del negocio, se intercepta ANTES del flow normal - o esta
+        // respondiendo una pregunta pendiente, o esta pidiendo actualizar
+        // algo del Sheet. Si no aplica ninguno de los dos casos, sigue de
+        // largo (el dueno puede seguir usando el bot como cliente de prueba).
+        if (adminHandler.isAdmin(jid, ctx)) {
+            const handled = await handleAdminSheetUpdate(sock, jid, text, ctx);
+            if (handled) return;
+        } else {
+            // Cuenta para el resumen diario ("respondi en X conversaciones") -
+            // solo conversaciones de clientes, no los mensajes del propio dueno.
+            dailyActivityStore.recordActivity(process.env.BUSINESS_KEY, jid);
+        }
 
         // 3. Inicializar sesión del usuario
         const userSession = initializeUserSession(jid, ctx);
