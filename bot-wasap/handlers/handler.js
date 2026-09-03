@@ -305,27 +305,48 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
 
     const pending = pendingAdminQuestion.getPending(businessKey);
     if (pending) {
-        try {
-            const value = String(text || '').trim();
+        // Pedido de Johan (2026-09-03): una pregunta escalada sin responder
+        // no debe bloquear la cola para siempre, ni tragarse un mensaje real
+        // del dueño (ej: probando su propio pedido) como si fuera la
+        // respuesta. 3+ horas sin contestar → se descarta sola y ESTE
+        // mensaje sigue su camino normal (no se toma como respuesta).
+        const STALE_PENDING_MS = 3 * 60 * 60 * 1000;
+        if (Date.now() - (pending.askedAt || 0) > STALE_PENDING_MS) {
             if (pending.type === 'unanswered_question') {
-                if (sheetId) await sheetsWriter.appendFaqRow(sheetId, pending.payload.question, value);
-                unansweredQuestionsStore.markAnswered(businessKey, pending.payload.id, value);
-            } else if (pending.type === 'onboarding_field') {
-                const field = pending.payload;
-                if (field.kind === 'faq') {
-                    if (sheetId) await sheetsWriter.appendFaqRow(sheetId, field.faqQuestion, value);
-                } else if (sheetId) {
-                    await sheetsWriter.updateConfigField(sheetId, field.sheetTab, field.matchLabel, value);
-                }
-                onboardingStore.saveAnswer(businessKey, field.key, value);
+                unansweredQuestionsStore.skip(businessKey, pending.payload.id, 'expiró sin respuesta (3+ horas)');
             }
             pendingAdminQuestion.clearPending(businessKey);
-            await say(sock, jid, '¡Listo, ya quedó guardado! 🙌', ctx);
-        } catch (e) {
-            logger.error(`handleAdminSheetUpdate: error guardando respuesta pendiente: ${e.message}`);
-            await say(sock, jid, `⚠️ No pude guardar eso en el Sheet: ${e.message}`, ctx);
+            // Sin "return true": este mensaje NO era la respuesta, sigue de largo.
+        } else if (pending.type === 'unanswered_question' && /^(2|no|omitir|saltar|skip)$/i.test(String(text || '').trim())) {
+            // Responder "2" (u otro sinónimo de "no") descarta la pregunta
+            // sin inventar ni guardar ninguna respuesta.
+            unansweredQuestionsStore.skip(businessKey, pending.payload.id, 'omitida por el dueño');
+            pendingAdminQuestion.clearPending(businessKey);
+            await say(sock, jid, '👍 Listo, no la actualizo.', ctx);
+            return true;
+        } else {
+            try {
+                const value = String(text || '').trim();
+                if (pending.type === 'unanswered_question') {
+                    if (sheetId) await sheetsWriter.appendFaqRow(sheetId, pending.payload.question, value);
+                    unansweredQuestionsStore.markAnswered(businessKey, pending.payload.id, value);
+                } else if (pending.type === 'onboarding_field') {
+                    const field = pending.payload;
+                    if (field.kind === 'faq') {
+                        if (sheetId) await sheetsWriter.appendFaqRow(sheetId, field.faqQuestion, value);
+                    } else if (sheetId) {
+                        await sheetsWriter.updateConfigField(sheetId, field.sheetTab, field.matchLabel, value);
+                    }
+                    onboardingStore.saveAnswer(businessKey, field.key, value);
+                }
+                pendingAdminQuestion.clearPending(businessKey);
+                await say(sock, jid, '¡Listo, ya quedó guardado! 🙌', ctx);
+            } catch (e) {
+                logger.error(`handleAdminSheetUpdate: error guardando respuesta pendiente: ${e.message}`);
+                await say(sock, jid, `⚠️ No pude guardar eso en el Sheet: ${e.message}`, ctx);
+            }
+            return true;
         }
-        return true;
     }
 
     if (!sheetId) return false; // sin Sheet configurado no hay nada que actualizar por chat
