@@ -65,9 +65,9 @@ async function runOnboardingTick(sock, ctx) {
     const nextUnanswered = unansweredQuestionsStore.getNextPending(businessKey);
     if (nextUnanswered) {
         await notificationService.notifyAdmin(sock, ctx,
-            `Te paso esta conversación: un cliente preguntó "${nextUnanswered.question}" y no supimos responder. ` +
-            `¿Cuál es la respuesta correcta? Te la guardo para la próxima vez que pregunten esto.\n\n` +
-            `_Responde *2* si no quieres actualizarla._`);
+            `Te paso esta conversación (responder es *opcional*): un cliente preguntó "${nextUnanswered.question}" y no supimos responder. ` +
+            `Si quieres, dime cuál es la respuesta correcta y la guardo para la próxima vez que pregunten esto.\n\n` +
+            `_Escribe *2* si no quieres actualizarla — sin problema, se descarta sola._`);
         pendingAdminQuestion.setPending(businessKey, 'unanswered_question', { id: nextUnanswered.id, question: nextUnanswered.question });
         return;
     }
