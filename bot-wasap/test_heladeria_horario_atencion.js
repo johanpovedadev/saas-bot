@@ -1,11 +1,12 @@
 'use strict';
 /**
- * Pedido de Johan: la heladería atiende de 2pm a 10pm todos los días. Si un
- * cliente escribe fuera de ese rango, el bot debe avisarlo (sin bloquear el
- * pedido) e indicar que, si quiere continuar, será el primer pedido en salir
- * apenas abran. Antes no existía ningún chequeo de horario - solo se
- * mostraban las horas si el cliente las preguntaba explícitamente, y encima
- * con datos placeholder (9am-8pm) que no eran el horario real.
+ * Pedido de Johan: la heladería atiende de 2pm a 10pm todos los días.
+ * isWithinBusinessHours() sigue siendo la fuente de verdad para el aviso
+ * puntual de "esto se prepara a partir de las 2:00pm" al agregar al
+ * carrito un producto que no se puede armar sin personal (ver
+ * test_heladeria_fuera_horario_solo_cajas.js). Corrección 2026-09-03:
+ * el saludo YA NO avisa "estamos cerrados" al inicio de la conversación -
+ * Johan pidió quitarlo, toma el pedido normal sin notificar nada al saludar.
  * Uso: node test_heladeria_horario_atencion.js
  */
 process.env.BUSINESS_KEY = 'heladeria';
@@ -43,21 +44,15 @@ function bogotaHour(hour, minute = 0) {
         check(heladeriaFlow.isWithinBusinessHours(bogotaHour(13, 59)) === false, '1:59pm (antes de abrir) cuenta como cerrado');
         check(heladeriaFlow.isWithinBusinessHours(bogotaHour(3, 0)) === false, '3:00am (madrugada) cuenta como cerrado');
 
-        // Integración con showWelcome: se valida contra la hora REAL (ya que
-        // isWithinBusinessHours() sin argumento usa "ahora"), así el test es
-        // determinista sin necesidad de simular la fecha del sistema.
-        const currentlyOpen = heladeriaFlow.isWithinBusinessHours();
+        // Integración con showWelcome: el saludo NUNCA debe mencionar estar
+        // cerrado (pedido de Johan 2026-09-03), sin importar la hora real -
+        // por eso este test ya no necesita ramificar por currentlyOpen.
         const s = { phase: 'seleccion_opcion', errorCount: 0 };
         ctx.sessions[JID] = s;
         sent.length = 0;
         await heladeriaFlow.showWelcome(sock, JID, ctx, 'Hola');
         const joined = sent.join('\n');
-        if (currentlyOpen) {
-            check(!/cerrados/i.test(joined), `dentro de horario (ahora mismo), el saludo NO menciona estar cerrado (${joined.slice(0, 100)})`);
-        } else {
-            check(/cerrados/i.test(joined), `fuera de horario (ahora mismo), el saludo avisa que está cerrado (${joined.slice(0, 200)})`);
-            check(/primero en salir|apenas abramos/i.test(joined), 'avisa que el pedido será el primero en salir apenas abran');
-        }
+        check(!/cerrados/i.test(joined), `el saludo nunca avisa "estamos cerrados", sin importar la hora (${joined.slice(0, 150)})`);
         check(/1\)|men[uú]/i.test(joined), 'el menú normal se sigue mostrando (no bloquea el pedido)');
 
         console.log(failures === 0 ? '\nTodos los tests pasaron.' : `\n${failures} FALLOS`);

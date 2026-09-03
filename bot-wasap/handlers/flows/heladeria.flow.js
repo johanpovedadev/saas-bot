@@ -1484,18 +1484,12 @@ _Escribe el número de la opción (1, 2 o 3)._`;
     const greeting = editableConfig.getEditableConfig(ctx, 'Saludo de bienvenida', fallbackGreeting);
     await say(sock, jid, greeting, ctx);
 
-    // Pedido de Johan: si escriben fuera del horario de atención, avisar
-    // (sin bloquear) que el pedido queda como el primero en salir apenas
-    // abran - no se pierde el cliente por escribir a deshora. Excepción
-    // propia de heladería: las cajas de helado (5L/10L) sí se reciben y
-    // pueden salir ya mismo aunque estemos cerrados; el resto de productos
-    // se preparan a partir de las 2:00pm.
-    const closedNotice = businessHours.outOfHoursNotice();
-    if (closedNotice) {
-        await say(sock, jid,
-            `${closedNotice}\n\n_📦 Eso sí: las cajas de helado (5L/10L) las recibimos y alistamos ya mismo aunque estemos cerrados. Los demás productos se preparan a partir de las 2:00pm._`,
-            ctx);
-    }
+    // Corrección 2026-09-03 (Johan): antes se avisaba "estamos cerrados" al
+    // inicio del saludo, fuera de horario. Johan pidió quitarlo — ya no se
+    // notifica nada al saludar, se toma el pedido normal. El aviso puntual
+    // de "esto se prepara a partir de las 2:00pm" sigue existiendo (y es
+    // donde de verdad importa) en afterAddToCarrito/handleQuantity, al
+    // agregar al carrito un producto que no se puede armar sin personal.
 
     await sendMenuImages(sock, jid, ctx);
 
