@@ -86,6 +86,7 @@ def get_gs_client(force_reload=False):
             sa_info = json.loads(raw.decode('utf8'))
             creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
             client = gspread.authorize(creds)
+            client.http_client.set_timeout(10)
             global_gs_client = client
             return client
         except Exception as e:
@@ -97,6 +98,7 @@ def get_gs_client(force_reload=False):
         try:
             creds = service_account.Credentials.from_service_account_file(str(sa_file), scopes=SCOPES)
             client = gspread.authorize(creds)
+            client.http_client.set_timeout(10)
             global_gs_client = client
             return client
         except Exception as e:

@@ -43,6 +43,19 @@ const MENU_IMAGES = [
     { path: path.join(__dirname, '../../assets/heladeria/menu_2.jpeg'), caption: '🍨 Más de nuestras delicias 😋' }
 ];
 
+// Pedido de Johan: fuera del horario de atención, lo ÚNICO que se puede
+// PEDIR (no solo preguntar) son cajas de helado en todas sus versiones
+// (H-CAJAS, H-CAJAHELADO-10L) y litros de helado (H-LITROS) - el resto de
+// productos se pueden cotizar/preguntar, pero el pedido en sí se toma recién
+// a partir de las 2:00pm. Códigos reales del Inventario (confirmados en el
+// Sheet), con override opcional por env var por si cambian los códigos.
+const OUT_OF_HOURS_ALLOWED_CODES = (process.env.OUT_OF_HOURS_PRODUCT_CODES || 'H-CAJAS,H-CAJAHELADO-10L,H-LITROS')
+    .split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+
+function isOutOfHoursOrderable(codigo) {
+    return OUT_OF_HOURS_ALLOWED_CODES.includes(String(codigo || '').trim().toUpperCase());
+}
+
 // Fases propias del flujo guiado de helados
 const HELADO_SABORES = 'HELADO_SABORES';
 const HELADO_TOPPINGS = 'HELADO_TOPPINGS';
@@ -338,6 +351,14 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
     const counts = getCounts(producto);
     const nombre = getProductName(producto);
     const dbFields = getDbFields();
+
+    // Corrección 2026-09-02 (Johan): antes esto bloqueaba por completo pedir
+    // cualquier producto fuera de horario salvo cajas/litros de helado - un
+    // cliente real se quedó sin poder pedir la ensalada de frutas aunque
+    // insistió varias veces. Ahora se toma el pedido igual que en horario;
+    // afterAddToCarrito ya avisa "lo preparamos a partir de las 2:00pm" y lo
+    // deja anotado para despachar apenas abra la tienda (mismo comportamiento
+    // que ya tenían los pedidos por texto/voz multi-producto).
 
     userSession.currentProduct = producto;
     userSession.errorCount = 0;
@@ -856,6 +877,15 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
     const obsText = observacionesFinal ? ` · Obs: ${observacionesFinal}` : '';
     await say(sock, jid,
         `✅ ${qty}x *${nombre}*${saboresText}${toppingsText}${obsText} - *${money(precio * qty)}*`, ctx);
+
+    // Corrección 2026-09-02 (Johan, mismo bug de la ensalada de frutas): este
+    // es el camino del flujo guiado interactivo (el que realmente usó el
+    // cliente real) - afterAddToCarrito ya avisaba "se prepara a partir de
+    // las 2:00pm" para pedidos por texto/voz, pero este camino se lo saltaba.
+    if (!businessHours.isWithinBusinessHours() && !isOutOfHoursOrderable(cartItem.codigo)) {
+        await say(sock, jid, `_⏰ ${nombre} lo preparamos a partir de las 2:00pm — ya te lo dejé anotado en el pedido._`, ctx);
+    }
+
     await sendPostAddOptions(sock, jid, ctx, userSession);
 }
 
@@ -1191,6 +1221,15 @@ async function afterAddToCarrito(sock, jid, userSession, ctx, cartItems) {
         return `✅ ${it.cantidad}x *${it.nombre}*${saboresText}${toppingsText}${obsText} - *${money(it.precio * it.cantidad)}*`;
     }).join('\n');
     await say(sock, jid, lines, ctx);
+
+    // Pedido de Johan: fuera de horario, solo las cajas de helado (5L/10L)
+    // se preparan de una vez - avisar si algo del carrito no aplica.
+    if (!businessHours.isWithinBusinessHours()) {
+        const noAplican = cartItems.filter(it => !isOutOfHoursOrderable(it.codigo));
+        if (noAplican.length > 0) {
+            await say(sock, jid, `_⏰ ${noAplican.map(it => it.nombre).join(', ')} lo preparamos a partir de las 2:00pm — ya te lo dejé anotado en el pedido._`, ctx);
+        }
+    }
     await sendPostAddOptions(sock, jid, ctx, userSession);
 }
 
@@ -1447,10 +1486,15 @@ _Escribe el número de la opción (1, 2 o 3)._`;
 
     // Pedido de Johan: si escriben fuera del horario de atención, avisar
     // (sin bloquear) que el pedido queda como el primero en salir apenas
-    // abran - no se pierde el cliente por escribir a deshora.
+    // abran - no se pierde el cliente por escribir a deshora. Excepción
+    // propia de heladería: las cajas de helado (5L/10L) sí se reciben y
+    // pueden salir ya mismo aunque estemos cerrados; el resto de productos
+    // se preparan a partir de las 2:00pm.
     const closedNotice = businessHours.outOfHoursNotice();
     if (closedNotice) {
-        await say(sock, jid, closedNotice, ctx);
+        await say(sock, jid,
+            `${closedNotice}\n\n_📦 Eso sí: las cajas de helado (5L/10L) las recibimos y alistamos ya mismo aunque estemos cerrados. Los demás productos se preparan a partir de las 2:00pm._`,
+            ctx);
     }
 
     await sendMenuImages(sock, jid, ctx);
@@ -2349,5 +2393,8 @@ module.exports = {
     getCheckoutConfig: () => ({
         numericConfirm: true
     }),
-    isWithinBusinessHours: businessHours.isWithinBusinessHours
+    isWithinBusinessHours: businessHours.isWithinBusinessHours,
+    // Solo para tests: acceso directo a funciones internas sin pasar por
+    // todo el flujo guiado de sabores/toppings.
+    _internal: { afterAddToCarrito, isOutOfHoursOrderable }
 };

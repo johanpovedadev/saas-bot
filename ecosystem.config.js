@@ -25,7 +25,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'pescaderia'
+        BUSINESS_KEY: 'pescaderia',
+        LION_STATUS_PORT: '8097',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-pescaderia-2026'
       }
     },
     {
@@ -53,7 +55,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'mascotas'
+        BUSINESS_KEY: 'mascotas',
+        LION_STATUS_PORT: '8100',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-mascotas-2026'
       }
     },
     {
@@ -66,7 +70,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'finance'
+        BUSINESS_KEY: 'finance',
+        LION_STATUS_PORT: '8101',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-finance-2026'
       }
     },
     {
@@ -95,7 +101,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'heladeria'
+        BUSINESS_KEY: 'heladeria',
+        LION_STATUS_PORT: '8096',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-mundo-helados-2026'
       }
     },
     {
@@ -121,7 +129,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'pilates'
+        BUSINESS_KEY: 'pilates',
+        LION_STATUS_PORT: '8102',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-pilates-2026'
       }
     },
     {
@@ -134,7 +144,9 @@ module.exports = {
       restart_delay: 5000,
       env: {
         NODE_ENV: 'production',
-        BUSINESS_KEY: 'pilates_clientas'
+        BUSINESS_KEY: 'pilates_clientas',
+        LION_STATUS_PORT: '8103',
+        LION_STATUS_TOKEN: 'dev-lion-status-token-pilates-clientas-2026'
       }
     },
     {

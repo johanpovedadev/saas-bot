@@ -10,6 +10,8 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const envConfig = require('../config/env.loader');
 const { getCategoriasGenericas } = require('./productService');
 const PHASE = require('../utils/phases');
+const leadsTracker = require('../lion-leads-readonly');
+const chatHistory = require('../lion-chat-readonly');
 
 // Validación y fallback para business.location
 if (!envConfig.business.location || typeof envConfig.business.location !== 'object') {
@@ -272,8 +274,36 @@ async function say(sock, jid, text, ctx) {
         console.warn('sleep failed in say():', err && err.message ? err.message : err);
     }
 
+    // whatsapp-web.js no sabe resolver un chat directamente para IDs @lid
+    // (el ID "oculto" que WhatsApp usa cuando el contacto tiene activada la
+    // privacidad de número) — sendMessage revienta con "Cannot read
+    // properties of undefined (reading 'getChat')". Si el número real detrás
+    // del lid es resoluble, mandamos ahí en su lugar; si no, seguimos
+    // intentando con el lid tal cual (mismo comportamiento de antes).
+    let sendTargetJid = jid;
+    if (typeof jid === 'string' && jid.endsWith('@lid') && typeof sock.getContactLidAndPhone === 'function') {
+        try {
+            const [resolved] = await sock.getContactLidAndPhone([jid]);
+            if (resolved && resolved.pn) {
+                sendTargetJid = resolved.pn;
+            }
+        } catch (resolveError) {
+            logger.debug(`No se pudo resolver el numero real detras de ${jid}: ${resolveError.message}`);
+        }
+    }
+
     try {
-        await sock.sendMessage(jid, text);
+        const sentMessage = await sock.sendMessage(sendTargetJid, text);
+        // Lion Platform (issue #7, FR1/FR2): tracking aditivo para GET
+        // /leads y /messages en lion-status-server.js — no cambia nada del
+        // envío real, solo registra lo que ya se mandó.
+        try {
+            const messageId = sentMessage?.id?._serialized || null;
+            if (messageId) leadsTracker.recordOutboundMessage(jid, messageId);
+            chatHistory.recordMessage(jid, true, text);
+        } catch (trackingError) {
+            logger.error('Error en tracking de Lion Platform (outbound):', trackingError.message);
+        }
     } catch (error) {
         logger.error(`Error al enviar mensaje a ${jid}: ${error.message}`);
         console.error(`[ERROR] No se pudo enviar mensaje a ${jid}: ${error.message}`);

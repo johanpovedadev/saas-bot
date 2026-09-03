@@ -10,6 +10,8 @@
 
 const { logger, logConversation } = require('../../utils/logger');
 const { say } = require('../../services/bot_core');
+const leadsTracker = require('../../lion-leads-readonly');
+const chatHistory = require('../../lion-chat-readonly');
 
 /**
  * Extrae datos del mensaje de WhatsApp
@@ -271,8 +273,18 @@ function isValidMessage(messageData) {
  */
 function logIncomingMessage(jid, text, userSession) {
     logMessage(jid, text, 'received');
-    logConversation(jid, 'user', text);
-    
+
+    // Lion Platform (issue #7, FR1/FR2): tracking aditivo en memoria, para que
+    // Lion pueda ver leads/conversaciones vía GET /leads y /messages en
+    // lion-status-server.js. No toca el flujo del bot ni el contenido se
+    // persiste a disco (ver lion-chat-readonly.js).
+    try {
+        leadsTracker.recordInboundMessage(jid, text, { geminiApiKey: process.env.GEMINI_API_KEY });
+        chatHistory.recordMessage(jid, false, text);
+    } catch (error) {
+        logger.error('Error en tracking de Lion Platform (inbound):', error.message);
+    }
+
     const phase = userSession?.phase || 'UNKNOWN';
     logger.info(`📨 [${jid}] Mensaje recibido (Fase: ${phase}): "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
 }

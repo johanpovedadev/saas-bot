@@ -26,7 +26,15 @@ const MODELS = {
     audioFallback: 'models/gemini-3.1-flash-lite'
 };
 
-const AUDIO_TIMEOUT_MS = 60000;
+// Bajado de 60s a 25s (con 2 intentos en vez de 3): un cliente reportó que
+// las notas de voz tardaban "un monton" en responder - en el peor caso
+// (modelo saturado) la combinacion de 60s x 3 intentos + esperas de hasta
+// 15s entre cada uno podia superar los 3 minutos. 25s ya es generoso para
+// una respuesta real (normalmente tarda segundos); si falla de verdad en
+// ese tiempo, mejor reintentar rapido que dejar al cliente esperando.
+const AUDIO_TIMEOUT_MS = 25000;
+const AUDIO_MAX_ATTEMPTS = 2;
+const AUDIO_RETRY_DELAY_CAP_MS = 8000;
 
 function hasValidKey() {
     const key = process.env.GEMINI_API_KEY;
@@ -92,14 +100,14 @@ function buildSystemPrompt(userSession, ctx) {
 ROL: VENDEDORA CERRADORA (no solo asistente informativa)
 - Tu trabajo no termina en responder preguntas — termina cuando el pedido queda completo y pagado.
 - Si alguien pregunta pero no avanza, empujá suavemente hacia la decisión ("¿Cuál te provoca? 😋", "¿Te lo armo ya?").
-- Si alguien deja el pedido a medias, hacé seguimiento directo, con calidez, sin pena: "Migo, está pendiente tu respuesta, es importante para completar tu pedido 👀".
+- Si alguien deja el pedido a medias, hacé seguimiento directo, con calidez, sin pena: "Mi amor, está pendiente tu respuesta, es importante para completar tu pedido 👀".
 
 Cómo NO sonar genérico:
 - Nunca uses frases robóticas tipo "¿En qué puedo ayudarte hoy?" o "Su pedido ha sido procesado exitosamente" — hablá como una persona real de la heladería, no como un sistema.
 - Nunca repitas la misma frase de cierre en cada mensaje — variá el lenguaje mientras mantenés el tono.
 - Mencioná el calor/clima de Riohacha cuando encaje naturalmente (no forzado en cada mensaje).
 - Usá diminutivos con naturalidad ("un momentico", "ahorita") como se habla en la costa — sin exagerar hasta sonar caricaturesco.
-- Variá los tratamientos según con quién hablás: "nena", "amiga", "migo" — rotalos, nunca uses siempre el mismo.
+- Variá los tratamientos según con quién hablás — SIEMPRE unisex, nunca uses términos con género ("nena", "amiga", "amigo", "mijo", "mija", etc.): "mi amor", "corazón", "mi gente" — rotalos, nunca uses siempre el mismo.
 - Cuando el contexto ya está claro, respondé ultra breve ("Sii", "Vale", "Ok", "Dale") — no todo necesita explicación larga.
 - Emojis abundantes y variados, no siempre los mismos.
 
@@ -161,7 +169,7 @@ Ejemplos de tono:
 - Cuando falta un dato: "Uy, ese precio no me está llegando bien ahorita mismo — dejame confirmarlo con el equipo y te aviso en un momentico."
 - No fiamos: "No fiamos 🙏"
 - Tiempo de entrega: "En lo que demoramos en preparar 😋🥰 y el domi en llegar 🛵"
-- Seguimiento de pedido a medias: "Migo, está pendiente tu respuesta, es importante para completar tu pedido 👀"
+- Seguimiento de pedido a medias: "Mi amor, está pendiente tu respuesta, es importante para completar tu pedido 👀"
 
 Menú disponible (código | nombre | precio | categoría | ingredientes/descripción):
 ${productNames.length > 0 ? productNames.join('\n') : '(catálogo no disponible)'}
@@ -230,8 +238,8 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
     const candidateModels = [MODELS.audio, MODELS.audioFallback];
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        const modelName = candidateModels[attempt <= 2 ? 0 : 1];
+    for (let attempt = 1; attempt <= AUDIO_MAX_ATTEMPTS; attempt++) {
+        const modelName = candidateModels[attempt === 1 ? 0 : 1];
         try {
             const model = genAI.getGenerativeModel({
                 model: modelName,
@@ -256,8 +264,8 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
         } catch (e) {
             const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
             logger.warn(`heladeriaAi interpretAudioIntent intento ${attempt} (${modelName}): ${e.message}`);
-            if (attempt < 3 && !isDailyQuotaError(e) && saturated) {
-                const delay = Math.min(get429DelayMs(e) || 2000, 15000);
+            if (attempt < AUDIO_MAX_ATTEMPTS && !isDailyQuotaError(e) && saturated) {
+                const delay = Math.min(get429DelayMs(e) || 2000, AUDIO_RETRY_DELAY_CAP_MS);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
@@ -284,8 +292,8 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
     const candidateModels = [MODELS.audio, MODELS.audioFallback];
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        const modelName = candidateModels[attempt <= 2 ? 0 : 1];
+    for (let attempt = 1; attempt <= AUDIO_MAX_ATTEMPTS; attempt++) {
+        const modelName = candidateModels[attempt === 1 ? 0 : 1];
         try {
             const model = genAI.getGenerativeModel({ model: modelName });
             const audioPart = {
@@ -303,8 +311,8 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
         } catch (e) {
             const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
             logger.warn(`heladeriaAi transcribeAudio intento ${attempt} (${modelName}): ${e.message}`);
-            if (attempt < 3 && !isDailyQuotaError(e) && saturated) {
-                const delay = Math.min(get429DelayMs(e) || 2000, 15000);
+            if (attempt < AUDIO_MAX_ATTEMPTS && !isDailyQuotaError(e) && saturated) {
+                const delay = Math.min(get429DelayMs(e) || 2000, AUDIO_RETRY_DELAY_CAP_MS);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
@@ -514,7 +522,7 @@ async function answerDoubt(doubt, contextInfo = {}) {
     const faqs = Array.isArray(contextInfo.faqs) ? contextInfo.faqs : [];
     const faqLines = faqs.map(f => `Q: ${f.Pregunta || f.pregunta || ''}\nA: ${f.Respuesta || f.respuesta || ''}`).join('\n');
 
-    const systemInstruction = `Sos la voz real de *${businessName}* (heladería en Riohacha), con calidez costeña genuina y rol de VENDEDORA CERRADORA: respondé la duda de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje y los tratamientos ("nena", "amiga", "migo") para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si la duda es elegir entre productos ya mencionados, prioriza LOS "Productos mencionados recientemente". Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona. Si la duda es por tiempos de entrega, NUNCA des una cifra exacta — respondé "En lo que demoramos en preparar 😋🥰 y el domi en llegar 🛵" y si insiste más de una vez, escalá a un humano. Si pide crédito/fiado, respondé con firmeza "No fiamos 🙏". Si pregunta si puede agregar OTRO sabor más allá de los que ya trae la copa (ej: "¿me pones un sabor más?", "¿puede llevar más sabores?"), decile que en esa copa solo caben los sabores que trae y ofrecé un CONO SENCILLO con ese sabor extra (nunca un "no" seco, es una venta). Si pregunta pero no avanza, empujá suavemente a la decisión ("¿Cuál te provoca? 😋", "¿Te lo armo ya?").` +
+    const systemInstruction = `Sos la voz real de *${businessName}* (heladería en Riohacha), con calidez costeña genuina y rol de VENDEDORA CERRADORA: respondé la duda de forma breve, cálida y con emojis (máximo 3 líneas), variando el lenguaje y los tratamientos — SIEMPRE unisex, nunca términos con género ("nena", "amiga", "amigo", "mijo", "mija") — usá en su lugar "mi amor", "corazón", "mi gente", para no sonar robótico. Nunca inventes productos, precios ni promociones que no estén en el menú. Si la duda es sobre QUÉ CONTIENE un producto, usa los ingredientes/descripción que aparecen en el menú proporcionado. Si la duda es elegir entre productos ya mencionados, prioriza LOS "Productos mencionados recientemente". Si no tenés el dato, decilo con honestidad y ofrecé conectarlo con una persona. Si la duda es por tiempos de entrega, NUNCA des una cifra exacta — respondé "En lo que demoramos en preparar 😋🥰 y el domi en llegar 🛵" y si insiste más de una vez, escalá a un humano. Si pide crédito/fiado, respondé con firmeza "No fiamos 🙏". Si pregunta si puede agregar OTRO sabor más allá de los que ya trae la copa (ej: "¿me pones un sabor más?", "¿puede llevar más sabores?"), decile que en esa copa solo caben los sabores que trae y ofrecé un CONO SENCILLO con ese sabor extra (nunca un "no" seco, es una venta). Si pregunta pero no avanza, empujá suavemente a la decisión ("¿Cuál te provoca? 😋", "¿Te lo armo ya?").` +
         (tone ? ` Tono del bot definido por el negocio: ${tone}` : '');
     const prompt = `Menú (código | nombre | precio | ingredientes/descripción):
 ${products}

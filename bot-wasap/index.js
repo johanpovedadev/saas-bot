@@ -36,6 +36,17 @@ const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'mascotas').replace(/[^a-z0-9_
 const AUTH_DIR = path.join(__dirname, 'auth', BUSINESS_KEY);
 const QR_PATH = path.join(__dirname, 'assets', BUSINESS_KEY, 'qr_code.png');
 
+// Lion Platform: expone el healthMonitor existente por HTTP (aditivo, no
+// duplica su lógica). Requiere LION_STATUS_TOKEN en .env para /status.
+// botName/businessSlug reales del negocio (antes hardcodeados a "Empanadas
+// Bot (dev)" para TODOS los negocios — hacía imposible distinguirlos desde
+// Lion Platform, que los identifica por este nombre).
+const lionEnvConfig = require('./config/env.loader');
+require('./lion-status-server').startStatusServer({
+    botName: lionEnvConfig.business.name,
+    businessSlug: BUSINESS_KEY
+});
+
 // ISSUE 58+59: Module-level references for graceful shutdown
 // ISSUE 60: Guard para evitar multiples inicializaciones concurrentes
 let currentSock = null;
@@ -478,6 +489,7 @@ const startBot = async () => {
             }
         } catch (_) {}
         currentSock = null;
+        require('./lion-socket-ref-readonly').setActiveSocket(null);
     }
 
     console.log(`🔐 Usando sesion: ${AUTH_DIR}`);
@@ -502,6 +514,20 @@ const startBot = async () => {
     });
 
     currentSock = sock;
+    require('./lion-socket-ref-readonly').setActiveSocket(sock);
+
+    // Lion Platform (issue #7, FR1/FR2): estado de entrega/lectura de lo ya
+    // enviado (say() en bot_core.js ya registra el mensaje al enviarlo).
+    sock.on('message_ack', (msg, ack) => {
+        try {
+            const remoteJid = msg.fromMe ? msg.to : msg.from;
+            if (!remoteJid || !msg.id?._serialized) return;
+            const ACK_NAMES = { '-1': 'ERROR', 0: 'PENDING', 1: 'SERVER_ACK', 2: 'DELIVERY_ACK', 3: 'READ', 4: 'PLAYED' };
+            require('./lion-leads-readonly').recordOutboundStatusUpdate(remoteJid, msg.id._serialized, ACK_NAMES[String(ack)] || String(ack));
+        } catch (e) {
+            logger.debug(`Lion Platform: no se pudo registrar message_ack: ${e.message}`);
+        }
+    });
 
     sock.on('qr', (qr) => {
         console.log('Escanea este código QR para conectar el bot:');
@@ -580,6 +606,19 @@ const startBot = async () => {
             }
         } catch (e) {
             console.warn('Jobs programados no disponibles:', e.message);
+        }
+
+        // Resumen diario automatico + preguntas graduales de conocimiento
+        // (issue "reporte diario + aprendizaje") - generico para cualquier
+        // bot de WhatsApp multi-tenant (heladeria/pescaderia/pilates), no
+        // depende de que el flow tenga nada especial. Leo Financiero no pasa
+        // por aca (usa index-telegram.js, un proceso separado).
+        try {
+            require('./services/dailySummaryScheduler').startDailySummaryJob(sock, ctx);
+            require('./services/onboardingScheduler').startOnboardingScheduler(sock, ctx);
+            console.log('✅ Resumen diario y preguntas graduales iniciados');
+        } catch (e) {
+            console.warn('Resumen diario/preguntas graduales no disponibles:', e.message);
         }
 
         // Detectar desconexion del browser (caida internet, crash)

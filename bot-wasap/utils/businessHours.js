@@ -10,17 +10,46 @@
  */
 
 const envConfig = require('../config/env.loader');
+const hoursStore = require('../services/hoursStore');
+
+function resolveTimezone() {
+    return (envConfig.business.location && envConfig.business.location.timezone) || envConfig.business.timezone || 'America/Bogota';
+}
+
+function todayInBusinessTz(now, tz) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+
+/**
+ * Horario efectivo (weekday/weekend) para el negocio: lo que haya guardado
+ * en hoursStore.js (editado desde Lion Platform — issue #7 FR5/FR6) tiene
+ * prioridad; si nunca se guardó nada, cae al config estático de siempre
+ * (config/businesses/<negocio>.json), sin cambiar el comportamiento de
+ * ningún negocio que no lo haya tocado.
+ */
+function effectiveHours() {
+    const stored = hoursStore.getHours(process.env.BUSINESS_KEY);
+    const staticHours = envConfig.business.hours;
+    if (!stored) return staticHours;
+    return {
+        weekday: stored.weekday || (staticHours && staticHours.weekday),
+        weekend: stored.weekend || (staticHours && staticHours.weekend)
+    };
+}
 
 /**
  * ¿Está el negocio abierto ahora mismo? Compara la hora actual (zona horaria
- * del negocio) contra business.hours (weekday/weekend). Si no hay horario
- * configurado, devuelve true (fail-open: nunca bloquea pedidos por un dato
- * faltante).
+ * del negocio) contra el horario efectivo (weekday/weekend). Si no hay
+ * horario configurado, devuelve true (fail-open: nunca bloquea pedidos por
+ * un dato faltante). Si el dueño marcó la fecha de hoy como "sin servicio"
+ * desde Lion Platform, devuelve false sin importar la hora.
  */
 function isWithinBusinessHours(now = new Date()) {
-    const hours = envConfig.business.hours;
+    const tz = resolveTimezone();
+    if (hoursStore.isClosedOnDate(process.env.BUSINESS_KEY, todayInBusinessTz(now, tz))) return false;
+
+    const hours = effectiveHours();
     if (!hours || !hours.weekday || !hours.weekday.open || !hours.weekday.close) return true;
-    const tz = (envConfig.business.location && envConfig.business.location.timezone) || envConfig.business.timezone || 'America/Bogota';
     const parts = new Intl.DateTimeFormat('en-US', {
         timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short'
     }).formatToParts(now);
@@ -41,7 +70,7 @@ function isWithinBusinessHours(now = new Date()) {
  */
 function outOfHoursNotice() {
     if (isWithinBusinessHours()) return null;
-    const hours = envConfig.business.hours;
+    const hours = effectiveHours();
     const rango = (hours && hours.weekday && hours.weekday.open) ? `${hours.weekday.open} a ${hours.weekday.close}` : '';
     return `🕐 En este momento estamos *cerrados*${rango ? ` (atendemos de ${rango})` : ''}, ¡pero tranquilo! Si quieres, sigue armando tu pedido y será el primero en salir apenas abramos. 😊`;
 }
