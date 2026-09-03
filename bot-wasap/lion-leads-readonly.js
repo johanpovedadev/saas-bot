@@ -25,13 +25,17 @@ const picFetchInFlight = new Set(); // phone -> evita pedir la misma foto dos ve
 // el mensaje que la dispara, y si el número no comparte foto (privacidad) o el
 // bot no está conectado, falla en silencio y sigue sin foto (se reintenta en
 // el próximo mensaje de/hacia ese lead).
+//
+// El bot real (index.js) y lion-readonly-bot.js usan whatsapp-web.js, no
+// Baileys — el método correcto es client.getProfilePicUrl(contactId), que
+// devuelve undefined (no lanza) si el número no comparte foto.
 async function fetchProfilePic(phone) {
     if (picFetchInFlight.has(phone)) return;
     picFetchInFlight.add(phone);
     try {
         const sock = socketRef.getActiveSocket();
         if (!sock) return;
-        const url = await sock.profilePictureUrl(phone, 'image');
+        const url = await sock.getProfilePicUrl(phone);
         const existing = leads.get(phone);
         if (existing && url) {
             existing.profilePicUrl = url;

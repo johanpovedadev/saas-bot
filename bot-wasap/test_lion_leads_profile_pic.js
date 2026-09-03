@@ -2,7 +2,7 @@
 /**
  * Pedido de Johan (2026-09-03): que la foto de perfil de WhatsApp aparezca en
  * la bandeja de leads de Lion Platform. lion-leads-readonly.js pide la foto
- * pública (sock.profilePictureUrl) al registrar actividad de un lead —
+ * pública (sock.getProfilePicUrl) al registrar actividad de un lead —
  * en segundo plano, sin bloquear, cacheada, y sin romper nada si el número
  * no la comparte o el bot está desconectado.
  * Uso: node test_lion_leads_profile_pic.js
@@ -25,7 +25,7 @@ function check(cond, msg) {
     try {
         // ---- Un mensaje entrante pide la foto en segundo plano y queda cacheada ----
         {
-            const fakeSock = { profilePictureUrl: async () => 'https://pps.whatsapp.net/foto-real.jpg' };
+            const fakeSock = { getProfilePicUrl: async () => 'https://pps.whatsapp.net/foto-real.jpg' };
             socketRef.setActiveSocket(fakeSock);
 
             leadsTracker.recordInboundMessage('573001@c.us', 'hola, cuanto cuesta');
@@ -35,9 +35,9 @@ function check(cond, msg) {
             check(lead?.profilePicUrl === 'https://pps.whatsapp.net/foto-real.jpg', `guardó la foto real (${lead?.profilePicUrl})`);
         }
 
-        // ---- Si el número no comparte foto (o Baileys tira error), no rompe nada ----
+        // ---- Si el número no comparte foto (o whatsapp-web.js tira error), no rompe nada ----
         {
-            const fakeSock = { profilePictureUrl: async () => { throw new Error('not-authorized'); } };
+            const fakeSock = { getProfilePicUrl: async () => { throw new Error('not-authorized'); } };
             socketRef.setActiveSocket(fakeSock);
 
             leadsTracker.recordInboundMessage('573002@c.us', 'hola');
@@ -62,7 +62,7 @@ function check(cond, msg) {
 
         // ---- Un envío nuestro (outbound-first, ej. outreach) también dispara el fetch ----
         {
-            const fakeSock = { profilePictureUrl: async () => 'https://pps.whatsapp.net/foto-outbound.jpg' };
+            const fakeSock = { getProfilePicUrl: async () => 'https://pps.whatsapp.net/foto-outbound.jpg' };
             socketRef.setActiveSocket(fakeSock);
 
             leadsTracker.recordOutboundMessage('573004@c.us', 'msg-id-1');
@@ -75,7 +75,7 @@ function check(cond, msg) {
         // ---- Ya con foto guardada, no se vuelve a pedir en cada mensaje nuevo ----
         {
             let calls = 0;
-            const fakeSock = { profilePictureUrl: async () => { calls++; return 'https://pps.whatsapp.net/otra.jpg'; } };
+            const fakeSock = { getProfilePicUrl: async () => { calls++; return 'https://pps.whatsapp.net/otra.jpg'; } };
             socketRef.setActiveSocket(fakeSock);
 
             leadsTracker.recordInboundMessage('573001@c.us', 'segundo mensaje');
