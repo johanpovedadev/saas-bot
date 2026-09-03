@@ -317,9 +317,13 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
             }
             pendingAdminQuestion.clearPending(businessKey);
             // Sin "return true": este mensaje NO era la respuesta, sigue de largo.
-        } else if (pending.type === 'unanswered_question' && /^(2|no|omitir|saltar|skip)$/i.test(String(text || '').trim())) {
-            // Responder "2" (u otro sinónimo de "no") descarta la pregunta
-            // sin inventar ni guardar ninguna respuesta.
+        } else if (pending.type === 'unanswered_question' && /^(2|no|omitir|saltar|skip|dejalo|déjalo|olvidalo|olvídalo|despues|después|luego|ahora no|otra cosa|hablemos de otra cosa|quiero hablar de otra cosa)$/i.test(String(text || '').trim())) {
+            // Responder "2" (o decir de forma explícita que quiere hablar de
+            // otra cosa / dejarlo para después) descarta la pregunta sin
+            // inventar ni guardar ninguna respuesta. Coincidencia EXACTA a
+            // propósito (no "contiene") — una respuesta real puede empezar
+            // con "No..." (ej: "No hacemos envíos fuera de la ciudad") y esa
+            // sí debe guardarse tal cual, no tratarse como un "no" de salida.
             unansweredQuestionsStore.skip(businessKey, pending.payload.id, 'omitida por el dueño');
             pendingAdminQuestion.clearPending(businessKey);
             await say(sock, jid, '👍 Listo, no la actualizo.', ctx);

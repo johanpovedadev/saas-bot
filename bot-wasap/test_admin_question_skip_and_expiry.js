@@ -72,6 +72,40 @@ const ADMIN_JID = process.env.ADMIN_JID;
             check(!stillPending, 'la pregunta ya no aparece como pendiente (quedó omitida, no respondida)');
         }
 
+        // ---- Decir "otra cosa" (frase natural, no solo "2") también descarta ----
+        {
+            const ctx = makeCtx();
+            const sent = [];
+            const sock = makeSock(sent);
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientez@c.us', '¿tienen parqueadero?', 'errorCount=2');
+            const q = unansweredQuestionsStore.getNextPending(process.env.BUSINESS_KEY);
+            pendingAdminQuestion.setPending(process.env.BUSINESS_KEY, 'unanswered_question', { id: q.id, question: q.question });
+
+            await send(sock, ctx, ADMIN_JID, 'otra cosa');
+
+            check(/no la actualizo/i.test(sent.join('\n')), `"otra cosa" también se reconoce como rechazo explícito (${sent.join(' | ')})`);
+            check(!pendingAdminQuestion.getPending(process.env.BUSINESS_KEY), 'limpió el estado pendiente');
+        }
+
+        // ---- Una respuesta REAL que empieza con "No" no se confunde con un rechazo ----
+        {
+            const ctx = makeCtx();
+            const sent = [];
+            const sock = makeSock(sent);
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientew@c.us', '¿Hacen envíos fuera de la ciudad?', 'errorCount=2');
+            const q = unansweredQuestionsStore.getNextPending(process.env.BUSINESS_KEY);
+            pendingAdminQuestion.setPending(process.env.BUSINESS_KEY, 'unanswered_question', { id: q.id, question: q.question });
+
+            const origAppend = require('./services/sheetsWriter').appendFaqRow;
+            let faqSaved = null;
+            require('./services/sheetsWriter').appendFaqRow = async (sheetId, question, answer) => { faqSaved = answer; };
+
+            await send(sock, ctx, ADMIN_JID, 'No, solo hacemos envíos dentro de la ciudad.');
+
+            check(faqSaved === 'No, solo hacemos envíos dentro de la ciudad.', `una respuesta real que empieza con "No..." SÍ se guarda tal cual, no se confunde con un rechazo (${faqSaved})`);
+            require('./services/sheetsWriter').appendFaqRow = origAppend;
+        }
+
         // ---- Una pregunta de más de 3 horas se descarta sola, y el mensaje real sigue su camino ----
         {
             const ctx = makeCtx();
