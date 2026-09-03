@@ -13,6 +13,8 @@ const healthMonitor = require('./services/healthMonitor');
 const mutedStore = require('./services/mutedStore');
 const waitingHumanStore = require('./services/waitingHumanStore');
 const hoursStore = require('./services/hoursStore');
+const bookingStore = require('./services/bookingStore');
+const businessHours = require('./utils/businessHours');
 const envConfig = require('./config/env.loader');
 const leadsTracker = require('./lion-leads-readonly');
 const chatHistory = require('./lion-chat-readonly');
@@ -185,6 +187,67 @@ function startStatusServer({ botName, businessSlug, port } = {}) {
             if (!DATE_RE.test(body.date || '')) return sendJson(res, 400, { ok: false, error: 'invalid_date' });
             hoursStore.setClosedDate(businessSlug, body.date, body.closed !== false);
             return sendJson(res, 200, { ok: true });
+        }
+
+        // Agendamiento de citas (issue #8) — generalización nueva sobre
+        // bookingStore.js, para negocios de cita 1:1 (clínica, veterinaria,
+        // peluquería), separada del sistema de clases grupales de pilates.
+        if (url.pathname === '/professionals' && req.method === 'GET') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            return sendJson(res, 200, { ok: true, professionals: bookingStore.listProfessionals(businessSlug) });
+        }
+
+        if (url.pathname === '/professionals' && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const body = await readJsonBody(req);
+            if (!body.name) return sendJson(res, 400, { ok: false, error: 'missing_name' });
+            const professional = bookingStore.addProfessional(businessSlug, body.name);
+            return sendJson(res, 200, { ok: true, professional });
+        }
+
+        if (url.pathname === '/availability' && req.method === 'GET') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const date = url.searchParams.get('date');
+            if (!DATE_RE.test(date || '')) return sendJson(res, 400, { ok: false, error: 'invalid_date' });
+            const professionalId = url.searchParams.get('professionalId') || null;
+            const durationMinutes = Number(url.searchParams.get('durationMinutes') || 30);
+            const slotMinutes = Number(url.searchParams.get('slotMinutes') || 30);
+            const hoursRange = businessHours.getEffectiveHoursForDate(date);
+            const slots = bookingStore.getAvailableSlots(businessSlug, professionalId, date, hoursRange, slotMinutes, durationMinutes);
+            return sendJson(res, 200, { ok: true, date, slots, closed: !hoursRange });
+        }
+
+        if (url.pathname === '/appointments' && req.method === 'GET') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const filters = {
+                date: url.searchParams.get('date') || undefined,
+                professionalId: url.searchParams.get('professionalId') || undefined,
+                phone: url.searchParams.get('phone') || undefined
+            };
+            return sendJson(res, 200, { ok: true, appointments: bookingStore.listAppointments(businessSlug, filters) });
+        }
+
+        if (url.pathname === '/appointments' && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const body = await readJsonBody(req);
+            const result = bookingStore.bookAppointment(businessSlug, body);
+            return sendJson(res, result.ok ? 200 : 409, result);
+        }
+
+        const rescheduleMatch = /^\/appointments\/([^/]+)\/reschedule$/.exec(url.pathname);
+        if (rescheduleMatch && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const body = await readJsonBody(req);
+            if (!body.startsAt) return sendJson(res, 400, { ok: false, error: 'missing_starts_at' });
+            const result = bookingStore.rescheduleAppointment(businessSlug, rescheduleMatch[1], body.startsAt);
+            return sendJson(res, result.ok ? 200 : 409, result);
+        }
+
+        const cancelMatch = /^\/appointments\/([^/]+)\/cancel$/.exec(url.pathname);
+        if (cancelMatch && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const cancelled = bookingStore.cancelAppointment(businessSlug, cancelMatch[1]);
+            return sendJson(res, cancelled ? 200 : 404, { ok: cancelled, error: cancelled ? undefined : 'not_found' });
         }
 
         sendJson(res, 404, { ok: false, error: 'not_found' });

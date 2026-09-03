@@ -75,4 +75,22 @@ function outOfHoursNotice() {
     return `🕐 En este momento estamos *cerrados*${rango ? ` (atendemos de ${rango})` : ''}, ¡pero tranquilo! Si quieres, sigue armando tu pedido y será el primero en salir apenas abramos. 😊`;
 }
 
-module.exports = { isWithinBusinessHours, outOfHoursNotice };
+/**
+ * Horario efectivo (open/close) para una fecha puntual (YYYY-MM-DD, zona
+ * horaria del negocio) — usado por el agendamiento de citas (issue #8) para
+ * calcular franjas disponibles de un día futuro, no solo "¿está abierto
+ * ahora mismo?". null si ese día el negocio no atiende (marcado como
+ * cerrado desde Lion Platform).
+ */
+function getEffectiveHoursForDate(dateISO) {
+    if (hoursStore.isClosedOnDate(process.env.BUSINESS_KEY, dateISO)) return null;
+    const hours = effectiveHours();
+    if (!hours || !hours.weekday || !hours.weekday.open || !hours.weekday.close) return null;
+    const [y, m, d] = dateISO.split('-').map(Number);
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: resolveTimezone(), weekday: 'short' })
+        .format(new Date(Date.UTC(y, m - 1, d, 12)));
+    const isWeekend = ['Sat', 'Sun'].includes(weekday);
+    return (isWeekend && hours.weekend && hours.weekend.open) ? hours.weekend : hours.weekday;
+}
+
+module.exports = { isWithinBusinessHours, outOfHoursNotice, getEffectiveHoursForDate };
