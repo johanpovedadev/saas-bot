@@ -285,6 +285,57 @@ function looksLikeCheckoutMessage(text) {
 }
 
 /**
+ * Pedido de Johan (2026-09-03): "la idea es que el usuario vea que tiene
+ * guardado y si quiere borrar algo sea fácil" — ver y borrar las preguntas
+ * ya guardadas en Preguntas_Frecuentes, por chat, sin tener que abrir el
+ * Sheet. Se revisa ANTES que la pregunta pendiente (Caso A) — si el dueño
+ * escribe "ver preguntas" en vez de contestar, eso no debe tratarse como
+ * la respuesta a lo que se le preguntó.
+ */
+async function handleFaqManagementCommand(sock, jid, text, ctx) {
+    const sheetId = process.env.GOOGLE_SHEET_ID;
+    if (!sheetId) return false;
+    const trimmed = String(text || '').trim();
+
+    if (/^(ver preguntas|ver faqs|mis preguntas( guardadas)?)$/i.test(trimmed)) {
+        try {
+            const rows = await sheetsWriter.getFaqRows(sheetId);
+            if (rows.length === 0) {
+                await say(sock, jid, 'Todavía no tienes ninguna pregunta guardada. 📋', ctx);
+                return true;
+            }
+            const lines = rows.map(r => `*${r.index})* ${r.question}\n   _${r.answer}_`);
+            await say(sock, jid,
+                `📋 *Preguntas guardadas (${rows.length}):*\n\n${lines.join('\n\n')}\n\n` +
+                `_Para borrar una, escribe "borrar pregunta <número>"._`, ctx);
+        } catch (e) {
+            logger.error(`handleFaqManagementCommand: error listando FAQs: ${e.message}`);
+            await say(sock, jid, `⚠️ No pude leer las preguntas guardadas: ${e.message}`, ctx);
+        }
+        return true;
+    }
+
+    const deleteMatch = /^(borrar|eliminar)\s+(pregunta|faq)\s+(\d+)$/i.exec(trimmed);
+    if (deleteMatch) {
+        const index = parseInt(deleteMatch[3], 10);
+        try {
+            const result = await sheetsWriter.deleteFaqRowByIndex(sheetId, index);
+            if (!result.ok) {
+                await say(sock, jid, `❌ No encontré la pregunta *${index}* — escribe "ver preguntas" para ver la lista actual.`, ctx);
+            } else {
+                await say(sock, jid, `🗑️ Listo, borré: "${result.question}"`, ctx);
+            }
+        } catch (e) {
+            logger.error(`handleFaqManagementCommand: error borrando FAQ: ${e.message}`);
+            await say(sock, jid, `⚠️ No pude borrar eso: ${e.message}`, ctx);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Intercepta mensajes del DUENO del negocio (issue "reporte diario +
  * preguntas graduales", Parte 3) ANTES del flujo normal:
  *  - Caso A: si hay una pregunta pendiente (services/pendingAdminQuestion.js
@@ -302,6 +353,8 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
     const sheetId = process.env.GOOGLE_SHEET_ID;
     const onboardingStore = require('../services/onboardingStore');
     const { money } = require('../utils/util');
+
+    if (await handleFaqManagementCommand(sock, jid, text, ctx)) return true;
 
     const pending = pendingAdminQuestion.getPending(businessKey);
     if (pending) {

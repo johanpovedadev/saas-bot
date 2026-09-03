@@ -134,4 +134,39 @@ async function updateProductPrice(sheetId, tabName, productName, newPrice, price
     return { ok: false, candidates: scored.slice(0, 3).map(e => e.name) };
 }
 
-module.exports = { updateConfigField, appendFaqRow, updateProductPrice };
+/**
+ * Lista las preguntas/respuestas guardadas en Preguntas_Frecuentes, con un
+ * índice de cara al dueño (1, 2, 3...) — pedido de Johan (2026-09-03): "que
+ * el usuario vea que tiene guardado y si quiere borrar algo sea fácil". El
+ * índice es solo para MOSTRAR y para que el dueño elija cuál borrar en el
+ * mismo mensaje de listado; no se persiste en ningún lado.
+ */
+async function getFaqRows(sheetId, tabName = 'Preguntas_Frecuentes') {
+    const sheet = await getSheetTab(sheetId, tabName);
+    const rows = await sheet.getRows();
+    const headers = sheet.headerValues || ['Pregunta', 'Respuesta'];
+    return rows.map((row, i) => ({
+        index: i + 1,
+        question: row.get(headers[0]) || '',
+        answer: row.get(headers[1]) || ''
+    }));
+}
+
+/**
+ * Borra la fila que ocupa `index` (1-based, el mismo número que muestra
+ * getFaqRows) — vuelve a leer la hoja antes de borrar para no depender de
+ * un listado ya viejo si alguien más la edita mientras tanto.
+ * @returns {{ok:boolean, question?:string, error?:string}}
+ */
+async function deleteFaqRowByIndex(sheetId, index, tabName = 'Preguntas_Frecuentes') {
+    const sheet = await getSheetTab(sheetId, tabName);
+    const rows = await sheet.getRows();
+    const row = rows[index - 1];
+    if (!row) return { ok: false, error: 'not_found' };
+    const headers = sheet.headerValues || ['Pregunta', 'Respuesta'];
+    const question = row.get(headers[0]) || '';
+    await row.delete();
+    return { ok: true, question };
+}
+
+module.exports = { updateConfigField, appendFaqRow, updateProductPrice, getFaqRows, deleteFaqRowByIndex };
