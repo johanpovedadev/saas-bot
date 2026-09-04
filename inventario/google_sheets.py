@@ -82,6 +82,25 @@ print(f"   Pagina Entregas: {ENTREGAS_SHEET_NAME}")
 _gspread_client = None
 
 # ============================================================================
+# CACHE DE INVENTARIO (pedido de Johan, 2026-09-04)
+# ============================================================================
+# Antes get_clean_inventory() le pegaba a Google Sheets en CADA request (cada
+# busqueda de producto de cada cliente, no solo el refresco periodico del
+# bot) - eso, sumado a inestabilidad de DNS/red local, causaba timeouts y
+# 500 intermitentes. Ahora se cachea indefinido en memoria hasta que alguien
+# pida un refresco explicito (invalidate_inventory_cache(), disparado por el
+# endpoint /api/refrescar_inventario/ cuando el dueno le escribe "actualizar
+# inventario" al bot). Si el fetch falla y ya habia un cache bueno, se
+# devuelve ese en vez de [] para no tumbar el bot por un error transitorio.
+_inventory_cache = None  # None = nunca se pidio con exito todavia
+
+def invalidate_inventory_cache():
+    """Fuerza que la proxima llamada a get_clean_inventory() vuelva a pedirle
+    el inventario a Google Sheets en vez de devolver el cache."""
+    global _inventory_cache
+    _inventory_cache = None
+
+# ============================================================================
 # ESTADO DE CONEXION (para health_check real, ver views.py:health_check)
 # ============================================================================
 _sheets_status = {'status': 'unknown', 'last_error': None, 'last_check': None}
@@ -115,17 +134,22 @@ def _get_gspread_client():
 # FUNCIONES DE ACCESO A INVENTARIO (GENÉRICO)
 # ============================================================================
 
-def get_clean_inventory():
+def get_clean_inventory(force_refresh=False):
     """
     Obtiene el inventario desde Google Sheets y retorna JSON normalizado.
-    
+
+    CACHE: se cachea indefinido en memoria (ver _inventory_cache arriba) - no
+    vuelve a pedirle a Google Sheets hasta que force_refresh=True o alguien
+    llame invalidate_inventory_cache() primero. Si el fetch falla y ya habia
+    un cache bueno, devuelve ese en vez de [].
+
     ARQUITECTURA DE ATRIBUTOS DINÁMICOS:
     - NO conoce nombres de productos (helado, empanada, etc.)
     - Mapea columnas numéricas a atributos genéricos: Atributo_1_Cantidad, Atributo_2_Cantidad
     - Elimina duplicados por CodigoProducto usando Pandas
     - Valida tipos de datos y lanza errores descriptivos
     - Retorna Array de objetos con estructura predecible
-    
+
     MAPEO DE COLUMNAS:
     - Numero_de_Sabores → Se mantiene como está (el bot mapea dinámicamente)
     - Numero_de_Toppings → Se mantiene como está (el bot mapea dinámicamente)
@@ -133,10 +157,14 @@ def get_clean_inventory():
     - Stock_Actual → Convertido a int
       Returns:
         list: Array de diccionarios con productos normalizados
-        
+
     Raises:
         Exception: Si falta la columna CodigoProducto o hay error de conexión
     """
+    global _inventory_cache
+    if _inventory_cache is not None and not force_refresh:
+        return _inventory_cache
+
     try:
         client = _get_gspread_client()
         sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(INVENTARIO_SHEET_NAME)
@@ -212,6 +240,7 @@ def get_clean_inventory():
             print(f"Ejemplo de producto: {clean_data[0]}")
 
         _report_sheets_ok()
+        _inventory_cache = clean_data
         return clean_data
 
     except Exception as e:
@@ -220,6 +249,9 @@ def get_clean_inventory():
         print(f"Error al obtener inventario limpio: {e}")
         print(f"Trace completo:\n{error_trace}")
         _report_sheets_error(str(e))
+        if _inventory_cache is not None:
+            print(f"Usando el ultimo inventario cacheado ({len(_inventory_cache)} productos) por error de conexion")
+            return _inventory_cache
         return []
 
 def conectar_sheet():

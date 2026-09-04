@@ -223,13 +223,14 @@ def obtener_categorias_genericas():
     categoria2 = os.environ.get('ITEM_SECONDARY_PLURAL', 'categoria2')
     return categoria1, categoria2
 
-def obtener_inventario():
+def obtener_inventario(force_refresh=False):
     """
     Obtiene el inventario limpio y sin duplicados.
-    Usa google_sheets.get_clean_inventory() para obtener datos limpios.
+    Usa google_sheets.get_clean_inventory() para obtener datos limpios
+    (cacheado indefinido salvo force_refresh=True - ver google_sheets.py).
     """
     from . import google_sheets
-    return google_sheets.get_clean_inventory()
+    return google_sheets.get_clean_inventory(force_refresh=force_refresh)
 
 def obtener_categorias_desde_inventario():
     """Obtiene las categorías presentes en la hoja de inventario, según columnas genéricas."""
@@ -609,6 +610,19 @@ def obtener_todos_los_productos(request):
     if not inv_raw:
         return JsonResponse({'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
     return JsonResponse({'matches': inv_raw})
+
+@csrf_exempt
+def refrescar_inventario(request):
+    """Fuerza un refresco real del inventario desde Google Sheets, saltando el
+    cache. Lo llama el bot cuando el dueno escribe "actualizar inventario"
+    (pedido de Johan, 2026-09-04) - el resto del tiempo el inventario se
+    sirve desde cache indefinido, no en cada busqueda de producto."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Usar POST'}, status=405)
+    inv_raw = obtener_inventario(force_refresh=True)
+    if not inv_raw:
+        return JsonResponse({'ok': False, 'error': 'No se pudo obtener el inventario de Google Sheets.'}, status=500)
+    return JsonResponse({'ok': True, 'productos': len(inv_raw)})
 
 @csrf_exempt
 def consultar_configuracion(request):

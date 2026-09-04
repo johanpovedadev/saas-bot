@@ -44,7 +44,8 @@ const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
 const { say } = require('./modules/handler.utils');
-const { sendTypingIndicator } = require('../services/bot_core');
+const { sendTypingIndicator, loadAllProductsCache } = require('../services/bot_core');
+const axios = require('axios');
 const dailyActivityStore = require('../services/dailyActivityStore');
 const pendingAdminQuestion = require('../services/pendingAdminQuestion');
 const unansweredQuestionsStore = require('../services/unansweredQuestionsStore');
@@ -336,6 +337,37 @@ async function handleFaqManagementCommand(sock, jid, text, ctx) {
 }
 
 /**
+ * Pedido de Johan (2026-09-04): "se está refrescando muy rápido" — el
+ * inventario ya no se pide a Google Sheets en cada búsqueda de producto
+ * (ver inventario/google_sheets.py, cacheado indefinido). Este comando le
+ * da al dueño una forma explícita de forzar el refresco cuando de verdad
+ * cambió algo en la hoja, en vez de esperar un timer.
+ */
+async function handleInventoryRefreshCommand(sock, jid, text, ctx) {
+    const trimmed = String(text || '').trim();
+    if (!/^(actualizar|refrescar)\s+inventario$/i.test(trimmed)) return false;
+
+    const rawBase = (envConfig.backend.apiBase || process.env.API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+    const apiBase = rawBase.includes('/api') ? rawBase : rawBase + '/api';
+    const bizId = process.env.BIZ_ID || process.env.BUSINESS_ID;
+
+    try {
+        const response = await axios.post(`${apiBase}/refrescar_inventario/`, {}, {
+            params: bizId ? { biz_id: bizId } : {},
+            timeout: 15000
+        });
+        if (!response.data?.ok) throw new Error(response.data?.error || 'respuesta sin ok');
+
+        await loadAllProductsCache(ctx);
+        await say(sock, jid, `✅ Inventario actualizado — ${response.data.productos} productos cargados desde el Sheet.`, ctx);
+    } catch (e) {
+        logger.error(`handleInventoryRefreshCommand: error refrescando inventario: ${e.message}`);
+        await say(sock, jid, `⚠️ No pude actualizar el inventario: ${e.message}`, ctx);
+    }
+    return true;
+}
+
+/**
  * Intercepta mensajes del DUENO del negocio (issue "reporte diario +
  * preguntas graduales", Parte 3) ANTES del flujo normal:
  *  - Caso A: si hay una pregunta pendiente (services/pendingAdminQuestion.js
@@ -355,6 +387,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
     const { money } = require('../utils/util');
 
     if (await handleFaqManagementCommand(sock, jid, text, ctx)) return true;
+    if (await handleInventoryRefreshCommand(sock, jid, text, ctx)) return true;
 
     const pending = pendingAdminQuestion.getPending(businessKey);
     if (pending) {
