@@ -14,68 +14,19 @@
 // en lion-platform-api sobre no persistir contenido de chat de clientes.
 
 const { detectSignals, levelFromSignals, classifyWithAI } = require('./lion-intent-classifier-readonly');
-const socketRef = require('./lion-socket-ref-readonly');
 
 const leads = new Map(); // phone (remoteJid) -> lead record expuesto por /leads
 const signalsByPhone = new Map(); // phone -> Set<string>, interno, nunca se expone
 
-// Foto de perfil pública de WhatsApp (Lion Platform la muestra en la bandeja
-// de leads). Se pide una sola vez por lead y se cachea en memoria — no bloquea
-// el mensaje que la dispara, y si el número no comparte foto (privacidad) o el
-// bot no está conectado, falla en silencio y sigue sin foto (se reintenta en
-// el próximo mensaje de/hacia ese lead).
-//
-// El bot real (index.js) y lion-readonly-bot.js usan whatsapp-web.js, no
-// Baileys — el método correcto es client.getProfilePicUrl(contactId), que
-// devuelve undefined (no lanza) si el número no comparte foto.
-//
-// En cola, una por vez, con espera entre cada una (2026-09-03: el bot de
-// solo lectura de Service Store VIP —que mira TODO el WhatsApp real, no una
-// lista curada de clientes— perdió la sesión ("problema de sincronización")
-// poco después de que esta función empezó a correr con tráfico real. Pedir
-// muchas fotos de perfil en ráfaga (una por cada contacto distinto que
-// escribe) parece actividad automatizada sospechosa para WhatsApp. Esta cola
-// evita disparar varias `getProfilePicUrl` al mismo tiempo.
-const PIC_FETCH_SPACING_MS = 2000;
-const picPending = new Set(); // phone -> ya está en la cola o pidiéndose ahora mismo
-const picQueue = [];
-let picQueueRunning = false;
-
-function queueProfilePicFetch(phone) {
-    if (picPending.has(phone)) return;
-    picPending.add(phone);
-    picQueue.push(phone);
-    runPicFetchQueue();
-}
-
-async function runPicFetchQueue() {
-    if (picQueueRunning) return;
-    picQueueRunning = true;
-    while (picQueue.length > 0) {
-        const phone = picQueue.shift();
-        await fetchOneProfilePic(phone);
-        picPending.delete(phone);
-        if (picQueue.length > 0) {
-            await new Promise((resolve) => setTimeout(resolve, PIC_FETCH_SPACING_MS));
-        }
-    }
-    picQueueRunning = false;
-}
-
-async function fetchOneProfilePic(phone) {
-    try {
-        const sock = socketRef.getActiveSocket();
-        if (!sock) return;
-        const url = await sock.getProfilePicUrl(phone);
-        const existing = leads.get(phone);
-        if (existing && url) {
-            existing.profilePicUrl = url;
-            leads.set(phone, existing);
-        }
-    } catch (_) {
-        // Sin foto pública o el número no la comparte — no es un error real.
-    }
-}
+// 2026-09-03: se intentó pedir la foto de perfil real de WhatsApp
+// (client.getProfilePicUrl) por cada lead nuevo, pero el bot de solo lectura
+// de Service Store VIP —que mira TODO el WhatsApp real, no una lista curada
+// de clientes— perdió la sesión ("problema de sincronización") poco después
+// de que esa función empezara a correr con tráfico real, incluso ya
+// encolada/espaciada. Decisión de Johan: quitarla del todo — el riesgo de
+// perder la sesión de WhatsApp no vale la foto. `getAllLeads()` sigue
+// exponiendo `profilePicUrl` (siempre null/undefined); Lion Platform ya cae
+// a un círculo con la inicial del teléfono cuando no hay foto.
 
 function recordInboundMessage(phone, text, options = {}) {
 	if (!phone) return;
@@ -90,8 +41,6 @@ function recordInboundMessage(phone, text, options = {}) {
 
 	existing.intentionLevel = levelFromSignals(signals);
 	leads.set(phone, existing);
-
-	if (!existing.profilePicUrl) queueProfilePicFetch(phone);
 
 	// Escalamiento opcional a IA — apagado por defecto (LION_INTENT_AI_ENABLED),
 	// no bloquea este mensaje y nunca lanza si falla.
@@ -116,8 +65,6 @@ function recordOutboundMessage(phone, messageId) {
 	existing.lastOutboundMessageId = messageId;
 	existing.lastOutboundStatus = 'PENDING';
 	leads.set(phone, existing);
-
-	if (!existing.profilePicUrl) queueProfilePicFetch(phone);
 }
 
 function recordOutboundStatusUpdate(phone, messageId, statusName) {
