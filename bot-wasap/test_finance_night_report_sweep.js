@@ -81,14 +81,19 @@ let realUsersSnapshot = [];
         financeAdmin.registerUser(JID_ALREADY_REPORTED, 'YaReportado');
         financeAdmin.registerUser(JID_NO_DATA, 'SinDatos');
 
+        // date en formato 'YYYY-MM-DD' — el mismo que guarda saveAndConfirm()
+        // en la vida real (ver bug: generateNightReport comparaba esto contra
+        // toDateString(), que nunca hace match, y el informe siempre mostraba
+        // $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto).
+        const todayIso = new Date().toISOString().split('T')[0];
         financeStore.saveFinance(JID_NO_SESSION, {
             name: 'SinSesion', balance: 50000, todaySpending: 10000,
-            transactions: [{ type: 'expense', amount: 10000, category: 'Alimentacion', description: 'almuerzo', date: new Date().toDateString(), timestamp: Date.now() }],
+            transactions: [{ type: 'expense', amount: 10000, category: 'Alimentacion', description: 'almuerzo', date: todayIso, timestamp: Date.now() }],
             loans: [], streak: 1, lastReportDate: ''
         });
         financeStore.saveFinance(JID_ALREADY_REPORTED, {
             name: 'YaReportado', balance: 20000, todaySpending: 0,
-            transactions: [{ type: 'income', amount: 20000, category: 'Salario', description: 'pago', date: new Date().toDateString(), timestamp: Date.now() }],
+            transactions: [{ type: 'income', amount: 20000, category: 'Salario', description: 'pago', date: todayIso, timestamp: Date.now() }],
             loans: [], streak: 0, lastReportDate: new Date().toDateString() // ya se le mandó hoy
         });
         financeStore.saveFinance(JID_NO_DATA, {
@@ -102,7 +107,7 @@ let realUsersSnapshot = [];
                 [JID_WITH_SESSION]: {
                     finance: {
                         name: 'ConSesion', balance: 30000, todaySpending: 5000,
-                        transactions: [{ type: 'expense', amount: 5000, category: 'Transporte', description: 'bus', date: new Date().toDateString(), timestamp: Date.now() }],
+                        transactions: [{ type: 'expense', amount: 5000, category: 'Transporte', description: 'bus', date: todayIso, timestamp: Date.now() }],
                         loans: [], streak: 2, lastReportDate: ''
                     }
                 }
@@ -113,11 +118,19 @@ let realUsersSnapshot = [];
         await runNightReportSweep(sock, ctx);
 
         const gotReport = (jid) => sent.some(m => m.jid === jid && /Informe de la noche/i.test(m.text));
+        const reportText = (jid) => (sent.find(m => m.jid === jid && /Informe de la noche/i.test(m.text)) || {}).text || '';
 
         check(gotReport(JID_NO_SESSION), 'usuario SIN sesión en memoria (bot reiniciado) SÍ recibe su informe, cargado desde la DB');
         check(gotReport(JID_WITH_SESSION), 'usuario CON sesión en memoria sigue recibiendo su informe (sin romper el caso normal)');
         check(!gotReport(JID_ALREADY_REPORTED), 'usuario que YA recibió su informe hoy no se le manda de nuevo');
         check(!gotReport(JID_NO_DATA), 'usuario registrado pero sin transacciones no recibe informe (nada que reportar)');
+
+        // Bug real reportado por Johan (2026-09-03): "no trae los gastos e
+        // ingresos diarios, solo bota el balance bien" — el informe SÍ traía
+        // el mensaje, pero con $0 en gastos/ingresos de hoy por el mismatch
+        // de formato de fecha. Estas verificaciones fallan si vuelve a pasar.
+        check(/Compraste: \$10\.000/.test(reportText(JID_NO_SESSION)), `el gasto de hoy aparece con su monto real, no $0 (${reportText(JID_NO_SESSION).slice(0, 120)})`);
+        check(/Compraste: \$5\.000/.test(reportText(JID_WITH_SESSION)), `también en el caso con sesión viva (${reportText(JID_WITH_SESSION).slice(0, 120)})`);
 
         // Verifica que lastReportDate se guardó en la DB para el que no tenía sesión.
         const updated = financeStore.loadFinance(JID_NO_SESSION);

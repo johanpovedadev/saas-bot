@@ -1705,7 +1705,10 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
  */
 async function generateNightReport(sock, jid, fin, ctx) {
     if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
-    const today = new Date().toDateString();
+    // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
+    // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
+    // mostraba $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto.
+    const today = new Date().toISOString().split('T')[0];
     const todayTx = fin.transactions.filter(t => t.date === today);
     const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
