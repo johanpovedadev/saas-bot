@@ -84,6 +84,38 @@ function check(cond, msg) {
             check(calls === 0, 'no volvió a pedir la foto de un lead que ya la tenía cacheada');
         }
 
+        // ---- Varios contactos nuevos al tiempo NO disparan varias getProfilePicUrl a la vez ----
+        // (el bot de solo lectura de Service Store VIP mira todo el WhatsApp real de Johan —
+        // una ráfaga de pedidos simultáneos de foto de perfil parece actividad automatizada
+        // sospechosa y le costó la sesión el 2026-09-03. Deben ir en cola, de a una.)
+        {
+            const callTimestamps = [];
+            const fakeSock = {
+                getProfilePicUrl: async (phone) => {
+                    callTimestamps.push(Date.now());
+                    return `https://pps.whatsapp.net/${phone}.jpg`;
+                },
+            };
+            socketRef.setActiveSocket(fakeSock);
+
+            leadsTracker.recordInboundMessage('573010@c.us', 'hola');
+            leadsTracker.recordInboundMessage('573011@c.us', 'hola');
+            leadsTracker.recordInboundMessage('573012@c.us', 'hola');
+
+            await wait(4500); // deja correr la cola completa (2 esperas de 2s entre 3 pedidos)
+
+            check(callTimestamps.length === 3, `pidió las 3 fotos, ninguna se perdió (${callTimestamps.length})`);
+            const gap1 = callTimestamps[1] - callTimestamps[0];
+            const gap2 = callTimestamps[2] - callTimestamps[1];
+            check(gap1 >= 1900, `esperó entre la 1ra y 2da foto en vez de pedirlas juntas (${gap1}ms)`);
+            check(gap2 >= 1900, `esperó entre la 2da y 3ra foto en vez de pedirlas juntas (${gap2}ms)`);
+
+            const l10 = leadsTracker.getAllLeads().find(l => l.phone === '573010@c.us');
+            const l12 = leadsTracker.getAllLeads().find(l => l.phone === '573012@c.us');
+            check(l10?.profilePicUrl?.includes('573010'), 'la primera igual consiguió su foto correcta');
+            check(l12?.profilePicUrl?.includes('573012'), 'la última de la cola también consiguió su foto correcta');
+        }
+
         console.log(failures === 0 ? '\nTodos los tests pasaron.' : `\n${failures} FALLOS`);
         process.exitCode = failures === 0 ? 0 : 1;
     } catch (e) {

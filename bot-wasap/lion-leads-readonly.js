@@ -18,7 +18,6 @@ const socketRef = require('./lion-socket-ref-readonly');
 
 const leads = new Map(); // phone (remoteJid) -> lead record expuesto por /leads
 const signalsByPhone = new Map(); // phone -> Set<string>, interno, nunca se expone
-const picFetchInFlight = new Set(); // phone -> evita pedir la misma foto dos veces a la vez
 
 // Foto de perfil pública de WhatsApp (Lion Platform la muestra en la bandeja
 // de leads). Se pide una sola vez por lead y se cachea en memoria — no bloquea
@@ -29,9 +28,41 @@ const picFetchInFlight = new Set(); // phone -> evita pedir la misma foto dos ve
 // El bot real (index.js) y lion-readonly-bot.js usan whatsapp-web.js, no
 // Baileys — el método correcto es client.getProfilePicUrl(contactId), que
 // devuelve undefined (no lanza) si el número no comparte foto.
-async function fetchProfilePic(phone) {
-    if (picFetchInFlight.has(phone)) return;
-    picFetchInFlight.add(phone);
+//
+// En cola, una por vez, con espera entre cada una (2026-09-03: el bot de
+// solo lectura de Service Store VIP —que mira TODO el WhatsApp real, no una
+// lista curada de clientes— perdió la sesión ("problema de sincronización")
+// poco después de que esta función empezó a correr con tráfico real. Pedir
+// muchas fotos de perfil en ráfaga (una por cada contacto distinto que
+// escribe) parece actividad automatizada sospechosa para WhatsApp. Esta cola
+// evita disparar varias `getProfilePicUrl` al mismo tiempo.
+const PIC_FETCH_SPACING_MS = 2000;
+const picPending = new Set(); // phone -> ya está en la cola o pidiéndose ahora mismo
+const picQueue = [];
+let picQueueRunning = false;
+
+function queueProfilePicFetch(phone) {
+    if (picPending.has(phone)) return;
+    picPending.add(phone);
+    picQueue.push(phone);
+    runPicFetchQueue();
+}
+
+async function runPicFetchQueue() {
+    if (picQueueRunning) return;
+    picQueueRunning = true;
+    while (picQueue.length > 0) {
+        const phone = picQueue.shift();
+        await fetchOneProfilePic(phone);
+        picPending.delete(phone);
+        if (picQueue.length > 0) {
+            await new Promise((resolve) => setTimeout(resolve, PIC_FETCH_SPACING_MS));
+        }
+    }
+    picQueueRunning = false;
+}
+
+async function fetchOneProfilePic(phone) {
     try {
         const sock = socketRef.getActiveSocket();
         if (!sock) return;
@@ -43,8 +74,6 @@ async function fetchProfilePic(phone) {
         }
     } catch (_) {
         // Sin foto pública o el número no la comparte — no es un error real.
-    } finally {
-        picFetchInFlight.delete(phone);
     }
 }
 
@@ -62,7 +91,7 @@ function recordInboundMessage(phone, text, options = {}) {
 	existing.intentionLevel = levelFromSignals(signals);
 	leads.set(phone, existing);
 
-	if (!existing.profilePicUrl) fetchProfilePic(phone);
+	if (!existing.profilePicUrl) queueProfilePicFetch(phone);
 
 	// Escalamiento opcional a IA — apagado por defecto (LION_INTENT_AI_ENABLED),
 	// no bloquea este mensaje y nunca lanza si falla.
@@ -88,7 +117,7 @@ function recordOutboundMessage(phone, messageId) {
 	existing.lastOutboundStatus = 'PENDING';
 	leads.set(phone, existing);
 
-	if (!existing.profilePicUrl) fetchProfilePic(phone);
+	if (!existing.profilePicUrl) queueProfilePicFetch(phone);
 }
 
 function recordOutboundStatusUpdate(phone, messageId, statusName) {
