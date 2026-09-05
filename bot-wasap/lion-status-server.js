@@ -20,6 +20,7 @@ const leadsTracker = require('./lion-leads-readonly');
 const chatHistory = require('./lion-chat-readonly');
 const socketRef = require('./lion-socket-ref-readonly');
 const { say } = require('./services/bot_core');
+const pm2Control = require('./services/pm2Control');
 
 const PHONE_RE = /\d{7,15}/;
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -77,6 +78,28 @@ function startStatusServer({ botName, businessSlug, port } = {}) {
             const connected = detail.whatsapp?.status === 'OK';
             sendJson(res, 200, { ok: true, botName, businessSlug, connected, detail });
             return;
+        }
+
+        // Kill switch real desde Lion Platform (issue #17) — mismo pm2Control.js
+        // y misma lista blanca PM2_APP_MAP que ya usan los comandos de WhatsApp
+        // /apagar y /prender (admin.handler.js). businessKey va en el body, NO
+        // se asume "este bot": así cualquier bot vivo (el "relevo") puede
+        // pausar/reanudar CUALQUIER otro, igual que ya pasa por WhatsApp — esto
+        // es necesario porque al pausar un bot, su propio proceso (y por lo
+        // tanto su propio lion-status-server) muere con él, así que /resume
+        // nunca podría llegarle a sí mismo.
+        if (url.pathname === '/pause' && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const body = await readJsonBody(req);
+            const result = await pm2Control.pm2Action('stop', body.businessKey);
+            return sendJson(res, result.ok ? 200 : 400, result);
+        }
+
+        if (url.pathname === '/resume' && req.method === 'POST') {
+            if (!isAuthorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+            const body = await readJsonBody(req);
+            const result = await pm2Control.pm2Action('start', body.businessKey);
+            return sendJson(res, result.ok ? 200 : 400, result);
         }
 
         // Leads/mensajes (issue #7, FR1/FR2) — alimentados por say() (bot_core.js)
