@@ -48,12 +48,17 @@ function getClient() {
 }
 
 /**
- * Crea el evento en Google Calendar para una reserva ya guardada en
- * pilatesStore. Devuelve { synced: boolean, eventId?: string }.
- * Nunca lanza — si algo falla, solo lo loguea (la reserva local ya quedó
- * a salvo antes de llamar esta función).
+ * Crea el evento en Google Calendar para una reserva ya guardada localmente
+ * (pilatesStore o bookingStore, según el negocio). Devuelve
+ * { synced: boolean, eventId?: string }. Nunca lanza — si algo falla, solo
+ * lo loguea (la reserva local ya quedó a salvo antes de llamar esta función).
+ *
+ * `summary`/`description` son genéricos a propósito (issue: generalizar más
+ * allá de Bri Pilates) — si no se pasan, cae al texto original de Pilates
+ * para no romper a los llamadores existentes (pilates.flow.js,
+ * pilates_clientas.flow.js).
  */
-async function bookAppointment({ name, phone, dateISO, startTime, endTime, notes }) {
+async function bookAppointment({ name, phone, dateISO, startTime, endTime, notes, summary, description }) {
     if (!isConfigured()) {
         logger.warn('calendarService: GOOGLE_CALENDAR_ID/credenciales no configuradas todavia — reserva solo local, sin sincronizar');
         return { synced: false };
@@ -61,8 +66,8 @@ async function bookAppointment({ name, phone, dateISO, startTime, endTime, notes
     try {
         const calendar = getClient();
         const event = {
-            summary: `Clase Pilates — ${name || 'Cliente'}`,
-            description: `${notes || 'Reserva agendada por WhatsApp/Telegram.'}\nTeléfono: ${phone || 'N/A'}`,
+            summary: summary || `Clase Pilates — ${name || 'Cliente'}`,
+            description: description || `${notes || 'Reserva agendada por WhatsApp/Telegram.'}\nTeléfono: ${phone || 'N/A'}`,
             start: { dateTime: `${dateISO}T${startTime}:00`, timeZone: 'America/Bogota' },
             end: { dateTime: `${dateISO}T${endTime}:00`, timeZone: 'America/Bogota' }
         };

@@ -110,7 +110,8 @@ function bookAppointment(businessKey, { professionalId, phone, customerName, ser
         status: 'BOOKED',
         createdAt: new Date().toISOString(),
         remindedAt: null,
-        dayBeforeRemindedAt: null
+        dayBeforeRemindedAt: null,
+        calendarEventId: null
     };
     business.appointments.push(appointment);
     writeAll(all);
@@ -120,6 +121,23 @@ function bookAppointment(businessKey, { professionalId, phone, customerName, ser
 function getAppointment(businessKey, appointmentId) {
     const business = readAll()[businessKey];
     return business ? business.appointments.find(a => a.id === appointmentId) || null : null;
+}
+
+/**
+ * Guarda el id del evento de Google Calendar creado para esta cita (ver
+ * services/calendarService.js) — separado de bookAppointment porque la
+ * sincronización con Calendar pasa DESPUÉS de guardar la cita localmente
+ * (la reserva local nunca depende de que Calendar responda). No falla si
+ * la cita ya no existe, solo no hace nada.
+ */
+function attachCalendarEvent(businessKey, appointmentId, calendarEventId) {
+    if (!businessKey || !appointmentId || !calendarEventId) return false;
+    const all = readAll();
+    const appointment = all[businessKey] && all[businessKey].appointments.find(a => a.id === appointmentId);
+    if (!appointment) return false;
+    appointment.calendarEventId = calendarEventId;
+    writeAll(all);
+    return true;
 }
 
 /**
@@ -216,6 +234,6 @@ function markDayBeforeReminded(businessKey, appointmentId) {
 
 module.exports = {
     listProfessionals, addProfessional, removeProfessional,
-    bookAppointment, getAppointment, rescheduleAppointment, cancelAppointment,
+    bookAppointment, getAppointment, attachCalendarEvent, rescheduleAppointment, cancelAppointment,
     listAppointments, getAvailableSlots, markReminded, markDayBeforeReminded
 };

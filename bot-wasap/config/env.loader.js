@@ -83,6 +83,13 @@ try {
             admin: {
                 business_admin_jids: raw.business_admin_jids || [],
                 system_admin_jids: raw.system_admin_jids || [],
+                // Admin de pedidos/escalamiento humano (separado del admin de
+                // sistema/cambios) - pedido de Johan: dos números distintos,
+                // uno para cambios/informes (business_admin_jids) y otro
+                // para validar pedidos terminados o chats que necesitan
+                // ayuda humana. Si un tenant no lo configura, cae de vuelta
+                // a business_admin_jids (comportamiento anterior, sin split).
+                orders_admin_jids: raw.orders_admin_jids || [],
                 jids: raw.business_admin_jids || []
             },
             backend: {
@@ -163,6 +170,11 @@ const envConfig = {
             email: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.email) || process.env.BUSINESS_EMAIL || '',
             website: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.website) || process.env.BUSINESS_WEBSITE || '',
             googleMapsLink: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.googleMapsLink) || process.env.BUSINESS_GOOGLE_MAPS_LINK || '',
+            // Link directo para dejar reseña en Google (distinto de
+            // googleMapsLink, que es solo para ver el negocio). Formato
+            // típico: https://search.google.com/local/writereview?placeid=XXXX
+            // o el link corto https://g.page/r/XXXX/review que da Google.
+            googleReviewLink: (businessConfig.business && businessConfig.business.contact && businessConfig.business.contact.googleReviewLink) || process.env.BUSINESS_GOOGLE_REVIEW_LINK || '',
         },
         
         socialMedia: {

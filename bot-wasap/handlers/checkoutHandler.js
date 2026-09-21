@@ -11,6 +11,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const envConfig = require('../config/env.loader');
 const notificationService = require('../services/notificationService');
+const reviewRequestService = require('../services/reviewRequestService');
 const { similarityScore } = require('../utils/fuzzySearch');
 // NOTA: Google Sheets se maneja desde el backend de Python (inventario/google_sheets.py)
 // const googleSheetsService = require('../services/googleSheetsService');
@@ -893,6 +894,10 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
             await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
+            // Solo envía algo si el negocio configuró un link de reseña de
+            // Google — ver services/reviewRequestService.js. Nunca bloquea
+            // ni rompe el flujo de checkout si falla.
+            await reviewRequestService.maybeSendReviewRequest(sock, jid, ctx);
 
             resetChat(jid, ctx);
             userSession.phase = PHASE.SELECCION_OPCION;} catch (error) {

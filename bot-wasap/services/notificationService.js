@@ -37,6 +37,21 @@ function getSystemAdminJids() {
     return getBusinessAdminJids();
 }
 
+/**
+ * Admin de PEDIDOS/ESCALAMIENTO HUMANO - pedido de Johan: número separado
+ * del admin de sistema/cambios (getBusinessAdminJids), para validar pedidos
+ * terminados o chats que necesitan ayuda de una persona. Si el tenant no
+ * configuró "orders_admin_jids" todavía, cae de vuelta a business_admin_jids
+ * (mismo comportamiento de siempre, sin romper tenants sin el split).
+ */
+function getOrdersAdminJids() {
+    const config = envConfig.admin?.orders_admin_jids;
+    if (config && Array.isArray(config) && config.length > 0) {
+        return config.map(normalizeJid).filter(Boolean);
+    }
+    return getBusinessAdminJids();
+}
+
 // ISSUE #29 - Compatibilidad: getAdminJids retorna business_admin_jids
 function getAdminJids() {
     return getBusinessAdminJids();
@@ -66,7 +81,7 @@ async function _sendToJids(sock, jids, msg, ctx) {
 
 async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
         const msg = `🔔 Atencion: Cliente con dificultades.\n\nCliente: ${jid.split('@')[0]}\nUltimo mensaje: "${lastMessage}"\nAbrir chat: ${chatLink}\n\nPor favor, toma el control de este chat.`;
         await _sendToJids(sock, admins, msg, ctx);
@@ -78,7 +93,7 @@ async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
 
 async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
         const msg = `🔴 Error de MIA\n\nCliente: ${jid.split('@')[0]}\nError: ${error.message}\nAbrir chat: ${chatLink}\n\nLa IA ha sido desactivada para este chat.`;
         await _sendToJids(sock, admins, msg, ctx);
@@ -90,7 +105,7 @@ async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
 
 async function notifyAdminsAboutReservation(sock, jid, reserva, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const msg = `📣 Nueva reserva registrada:\n\n- ID: ${reserva.id || 'N/A'}\n- Cliente: ${jid.split('@')[0]}\n- Nombre: ${reserva.name || 'N/A'}\n- Telefono: ${reserva.telefono || 'N/A'}\n- Tipo: ${reserva.tipo || 'N/A'}\n- Direccion: ${reserva.address || 'N/A'}\n- Pago: ${reserva.payment || 'efectivo'}`;
         await _sendToJids(sock, admins, msg, ctx);
     } catch (e) {
@@ -109,10 +124,11 @@ async function notifyAdminsAboutCriticalError(sock, jid, message, error, ctx) {
     }
 }
 
-// ISSUE #29 - notificaciones comerciales a business_admin_jids
+// ISSUE #29 - notificaciones comerciales a orders_admin_jids (validar
+// pedidos terminados) - separado de business_admin_jids (cambios/informes).
 async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
 
         if (payload.plan) {
@@ -133,13 +149,42 @@ async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
     }
 }
 
+// ISSUE #39 - Resumen diario automatico al dueno del negocio (push, no
+// on-demand) + preguntas graduales de conocimiento. Van a business_admin_jids
+// (el dueno del negocio), por el MISMO bot de WhatsApp que ya le habla a sus
+// clientes - no requiere numero ni bot nuevo.
+
+/**
+ * Mensaje de texto libre para el dueno del negocio (usado por el resumen
+ * diario y por la pregunta gradual de onboarding/aprendizaje).
+ */
+async function notifyAdmin(sock, ctx, text) {
+    const admins = getBusinessAdminJids();
+    if (admins.length === 0) return;
+    await _sendToJids(sock, admins, text, ctx);
+}
+
+/**
+ * Resumen diario: cuantas conversaciones respondio el bot hoy vs cuantas
+ * siguen esperando atencion humana. Ver services/dailySummaryScheduler.js
+ * para cuando se dispara.
+ */
+async function notifyDailySummary(sock, ctx, { respondidas, pendientes }) {
+    const businessName = envConfig.business?.name || 'tu negocio';
+    const msg = `¡Hola! Resumen de hoy en ${businessName}:\n\n` +
+        `✅ Respondí en ${respondidas} conversacion${respondidas === 1 ? '' : 'es'}\n` +
+        `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} necesita${pendientes === 1 ? '' : 'n'} tu atención (escalada${pendientes === 1 ? '' : 's'} o sin resolver)\n\n` +
+        `¿Necesitás algo más? Escribime.`;
+    await notifyAdmin(sock, ctx, msg);
+    logger.info(`Resumen diario enviado a admins negocio: ${respondidas} respondidas, ${pendientes} pendientes`);
+}
+
 // =====================================================
 // ISSUE #30 - Alerta de desconexion WhatsApp
 // ISSUE #31 - Alerta de reconexion WhatsApp
 // ISSUE #32 - Monitoreo Google Sheets
 // ISSUE #33 - Health Check Django
 // ISSUE #34 - Heartbeat General
-// ISSUE #39 - Resumen Diario
 // =====================================================
 // Todas estas notificaciones tecnicas van a system_admin_jids
 
@@ -212,11 +257,14 @@ module.exports = {
     getAdminJids,
     getBusinessAdminJids,
     getSystemAdminJids,
+    getOrdersAdminJids,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,
     notifyAdminsAboutCriticalError,
     notifyAdminsNewOrder,
+    notifyAdmin,
+    notifyDailySummary,
     notifyBotDisconnected,
     notifyBotReconnected,
     notifySheetsError,
