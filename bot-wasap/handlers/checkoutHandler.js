@@ -59,8 +59,15 @@ async function delegateToAI(sock, jid, text, userSession, ctx) {
         const flowRegistry = require('./flowRegistry');
         const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
         if (aiFlow) {
-            await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
-            return true;
+            // Bug real (25 sep 2026): esto devolvía `true` sin condición
+            // apenas la llamada terminaba sin tirar error - así que CUALQUIER
+            // dato de checkout inválido (ej. "no" como dirección) se trataba
+            // como "la IA ya lo resolvió" y el caller (handleEnterAddress,
+            // etc.) nunca subía su propio errorCount. handleNotUnderstood
+            // ahora sí devuelve si de verdad resolvió algo o si cayó en su
+            // respaldo genérico - se propaga ese valor real.
+            const resolved = await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
+            return resolved === true;
         }
     } catch (aiErr) {
         logger.error(`[${jid}] Error delegando a IA en checkout: ${aiErr.message}`);
@@ -577,11 +584,20 @@ function looksLikeAddress(p) {
  */
 function captureSideChannelFields(text, userSession) {
     if (!text || typeof text !== 'string') return;
+    // Bug real (25 sep 2026): looksLikeAddress() acepta CUALQUIER texto con
+    // un dígito como fallback (diseñado para cuando el bot YA pidió la
+    // dirección explícitamente, donde un "1" suelto nunca llega ahí). Acá
+    // este captador corre en CUALQUIER fase, así que un simple "1" de menú o
+    // de confirmación (el caso más común de todos) se guardaba como
+    // dirección. Un dígito de menú (1-2 dígitos) nunca es un dato de
+    // entrega real - se descarta antes de intentar clasificar nada.
+    if (/^\d{1,2}$/.test(text.trim())) return;
     const parts = text.includes(',')
         ? text.split(',').map(p => p.trim()).filter(Boolean)
         : [text.trim()];
     if (!userSession.order) userSession.order = {};
     for (const p of parts) {
+        if (/^\d{1,2}$/.test(p)) continue; // mismo guard que arriba, por parte individual
         const digitsOnly = p.replace(/[^0-9]/g, '');
         // Un teléfono real (con o sin indicativo de país) tiene entre 7 y 13
         // dígitos. Un número de tarjeta (16 dígitos) o una clave larga NO debe

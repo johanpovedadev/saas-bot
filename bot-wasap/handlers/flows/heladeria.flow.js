@@ -2764,6 +2764,18 @@ async function escalateIfSensitive(sock, jid, text, userSession, ctx) {
  * avanza el flujo (producto/sabores/toppings/cantidad/dirección) o responde
  * una duda sin perder progreso. SIEMPRE envía una respuesta.
  */
+/**
+ * @returns {Promise<boolean>} true si el mensaje quedó realmente resuelto
+ *   (no hace falta que el caller muestre su propio mensaje de "inválido"/
+ *   "no entendí"), false si se llegó al respaldo genérico y NO se entendió
+ *   nada. Bug real (25 sep 2026): delegateToAI() en checkoutHandler.js
+ *   asumía que CUALQUIER llamada a esta función significaba "la IA se hizo
+ *   cargo" (siempre devolvía true), así que un dato de checkout inválido que
+ *   ni siquiera era una pregunta (ej. "no" como dirección) terminaba en el
+ *   respaldo genérico de acá SIN que errorCount subiera nunca en
+ *   handleEnterAddress/Name/Telefono/PaymentMethod - se perdía el conteo de
+ *   errores real en todo el checkout. Ver test_cart_checkout_shared_escalation.js.
+ */
 async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
 
@@ -2771,7 +2783,7 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     // inmediato, sin procesar como pedido ni guardar. Se evalúa ANTES del
     // clasificador híbrido para que el contenido nunca llegue a la IA ni al
     // estado del pedido.
-    if (await escalateIfSensitive(sock, jid, text, userSession, ctx)) return;
+    if (await escalateIfSensitive(sock, jid, text, userSession, ctx)) return true;
 
     // Caso real: un mensaje masivo/publicitario de un tercero (ej. promo de
     // un evento) le llegó al bot y este le respondió como si fuera un
@@ -2780,10 +2792,10 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     // negocio, no se responde nada - ni "no entendí", ni se escala.
     if (await heladeriaAi.isAutomatedBroadcast(text)) {
         logger.info(`[${jid}] -> Mensaje automático/publicitario detectado, no se responde: "${String(text).slice(0, 80)}..."`);
-        return;
+        return true;
     }
 
-    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
+    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return true;
 
     // Usuario con ítems en el pedido puede volver a verlo desde cualquier fase
     // (incluido el menú tras "seguir comprando") escribiendo "carrito"/"mi pedido".
@@ -2791,13 +2803,18 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     if (hasCartItems(userSession) && CART_VIEW_REGEX.test(cartIntent)) {
         logger.info(`[${jid}] -> Ver carrito/pedido ("${text}")`);
         await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-        return;
+        return true;
     }
 
     if (CHECKOUT_PHASES.includes(userSession.phase)) {
-        if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
+        if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return true;
+        // Solo cuenta como "resuelto" si el mensaje de verdad parecía una
+        // pregunta - si no, es un dato inválido de checkout y el caller
+        // (handleEnterAddress/Name/Telefono/PaymentMethod) debe seguir su
+        // propio conteo de errores normal, no el genérico de acá.
+        const wasQuestion = looksLikeQuestion(text);
         await checkoutFallbackPrompt(sock, jid, userSession, ctx);
-        return;
+        return wasQuestion;
     }
 
     if (shouldSendMenuImages(text)) {
@@ -2817,10 +2834,11 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     const handled = await classifyOrderInput(sock, jid, text, userSession, ctx);
     if (handled) {
         userSession.errorCount = 0;
-        return;
+        return true;
     }
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     await genericGuidedError(sock, jid, userSession, ctx);
+    return false;
 }
 
 module.exports = {
