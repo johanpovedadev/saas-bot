@@ -614,10 +614,19 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // mensaje futuro y no relacionado (ej. "1" para cantidad, varias fases
         // después) puede coincidir por pura casualidad con ese texto viejo y
         // disparar una escalada falsa.
+        // Bug real (24 sep 2026, ticket "Mundo Helados no debe romperse fuera
+        // de flujo"): al cliente ya haber agregado un producto y seguir
+        // navegando el menú principal (fase SELECCION_OPCION), escribir "1"
+        // dos veces seguidas para responder a DOS preguntas distintas del
+        // bot ("seguir comprando" y luego "ver menú de productos") disparaba
+        // esta escalada como si fuera un cliente frustrado repitiendo el
+        // mismo mensaje - cortaba el pedido en seco. SELECCION_OPCION es un
+        // menú numerado como SELECCION_PRODUCTO (ya exento arriba), donde
+        // repetir el mismo número para preguntas distintas es normal.
         const REPEAT_ALLOWED_PHASES = new Set([
             PHASE.HELADO_SABORES, PHASE.HELADO_TOPPINGS,
             PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
-            PHASE.SELECCION_PRODUCTO
+            PHASE.SELECCION_PRODUCTO, PHASE.SELECCION_OPCION
         ]);
         const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
