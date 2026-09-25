@@ -584,6 +584,21 @@ envConfig.get = function(path, defaultValue = undefined) {
 };
 
 /**
+ * Lee una variable de entorno como lista separada por comas (ej.
+ * KEYWORDS_ITEM_SECONDARY_VARIANTS=topping,toppings,adicion,adiciones).
+ * Devuelve null si la variable no está definida o queda vacía, para que el
+ * caller pueda aplicar su propio fallback con `|| valorPorDefecto`.
+ * @param {string} envVarName - Nombre exacto de la variable de entorno
+ * @returns {string[]|null}
+ */
+envConfig.getArray = function(envVarName) {
+    const raw = process.env[envVarName];
+    if (!raw) return null;
+    const arr = raw.split(',').map(s => s.trim()).filter(Boolean);
+    return arr.length > 0 ? arr : null;
+};
+
+/**
  * Valida que todas las variables críticas estén configuradas
  * @returns {Object} { valid: boolean, errors: string[] }
  */

@@ -60,12 +60,21 @@ function detectNoToppings(normalized) {
 
 function extractProductCandidate(normalized) {
     const stopwords = /\b(necesito|quiero|me|por|para|de|una|un|el|la|los|las|y|porfavor|por favor|favor|hola|buenos|dias|tengo)\b/g;
-    // Remove quantity tokens BUT preserve the rest
-    let cleaned = normalized.replace(/^(\d+)\s*/i, ' '); // Remove leading number
+    // Remove quantity tokens BUT preserve the rest. Bug real: el ancla ^
+    // solo quitaba el número si era la primerísima palabra - "Necesito 3
+    // cajas..." (con un verbo antes) dejaba el "3" pegado al nombre del
+    // producto ("3 helado vainilla" en vez de "helado vainilla"). Se quita
+    // la primera ocurrencia de un número en cualquier posición, no solo al
+    // inicio absoluto - estos mensajes nunca traen más de una cantidad.
+    let cleaned = normalized.replace(/\d+\s*/, ' '); // Remove first number anywhere
     cleaned = cleaned.replace(/\s+(caja|cajas|unidad|unidades|docena|docenas|kg|kilo|kilos|l|litro|litros)\b/gi, ' '); // Remove units
     
     // Remove any 'con ...' or 'sin ...' phrases (up to punctuation or end) so they don't become part of product name
     cleaned = cleaned.replace(/\b(con|sin)\b\s+([a-z0-9\s,]+?)(?:$|[.,;])/gi, ' ');
+    // Un "sin"/"con" SUELTO al final ("Vainilla, sin") - sin nada después -
+    // no lo capturaba la regla de arriba (exige al menos una palabra
+    // después). Igual es una marca de exclusión implícita, se quita también.
+    cleaned = cleaned.replace(/\b(con|sin)\b\s*$/i, ' ');
     // Remove remaining stopwords
     cleaned = cleaned.replace(stopwords, ' ');
     
