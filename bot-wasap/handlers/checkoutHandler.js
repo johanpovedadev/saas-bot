@@ -614,7 +614,11 @@ function captureSideChannelFields(text, userSession) {
             // Quita prefijos comunes ("para la cra 23", "es en la calle 80")
             // que el cliente agrega al mencionar la dirección de pasada, sin
             // que se lo hayan pedido explícitamente.
-            userSession.order.address = p.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || p;
+            const cleaned = p.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || p;
+            // Capitaliza la primera letra - el cliente casi siempre escribe
+            // en minúscula, y esta dirección puede terminar en un mensaje o
+            // notificación real para el negocio.
+            userSession.order.address = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
         }
     }
 }
