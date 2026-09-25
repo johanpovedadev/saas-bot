@@ -610,7 +610,20 @@ function captureSideChannelFields(text, userSession) {
         } else if (!userSession.order.paymentMethod && looksLikePayment(p)) {
             const low = p.toLowerCase();
             userSession.order.paymentMethod = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
-        } else if (!userSession.order.address && looksLikeAddress(p)) {
+        } else if (!userSession.order.address && looksLikeAddress(p) && /\d/.test(p)) {
+            // Bug real (Johan probando en vivo, 25/9): "Que hay con manzana"
+            // (pregunta sobre un producto con manzana) se guardó como
+            // dirección, porque looksLikeAddress() reconoce "manzana" como
+            // palabra de dirección colombiana (manzana = cuadra) - correcto
+            // en su contexto original (classifyDeliveryParts, solo corre
+            // cuando el bot YA pidió la dirección), pero acá este captador
+            // corre en CUALQUIER fase, donde "manzana"/"casa"/etc. son
+            // igual de probables como parte de una pregunta sobre el menú.
+            // Una dirección real casi siempre trae un número (Cra 23 #10-05)
+            // - se exige un dígito además de la palabra clave, solo en este
+            // captador universal (classifyDeliveryParts no se toca, ahí sí
+            // es seguro el match por palabra sola).
+            //
             // Quita prefijos comunes ("para la cra 23", "es en la calle 80")
             // que el cliente agrega al mencionar la dirección de pasada, sin
             // que se lo hayan pedido explícitamente.

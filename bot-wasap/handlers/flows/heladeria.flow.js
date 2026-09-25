@@ -2209,7 +2209,14 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         const seleccionados = isPerUnit ? flow.customization.currentSabores : flow.saboresSeleccionados;
         const faltan = flow.counts.sabores - seleccionados.length;
         if (added.length > 0) {
-            const nombresAgregados = added.map(t => t[dbFields.productName] || t).join(', ');
+            // Pedido real de Johan (25/9): que al anotar una adición se vea
+            // de una que tiene costo, no solo enterarse hasta el resumen
+            // final - mismo formato "(+$X)" que ya usa el resumen del carrito.
+            const nombresAgregados = added.map(t => {
+                const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                const nombre = t[dbFields.productName] || t;
+                return precio > 0 ? `${nombre} (+${money(precio)})` : nombre;
+            }).join(', ');
             await say(sock, jid,
                 `✅ Anotado: *${nombresAgregados}* como adición.\n\n` +
                 `Todavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`, ctx);
@@ -2232,7 +2239,53 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    toppings" explícitamente (en un pedido completo), avanzar con "sin"
     //    para no bloquear la cascada sabores → toppings → cantidad → dirección.
     const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
-    if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
+    // Bug real (Johan probando en vivo, 25/9): pedir quitar un topping YA
+    // agregado ("no sin gomitas trululu", "quítale las gomitas") no hacía
+    // nada - el texto se perdía como "observación" y el topping se quedaba
+    // en el pedido. Se detecta la intención de quitar ANTES de la lógica de
+    // agregar (de abajo). OJO: NO se puede usar result.toppings acá - el
+    // prompt de la IA solo llena ese campo con lo que el cliente quiere
+    // AGREGAR, así que "quítale las gomitas" siempre le llega vacío. Se
+    // compara directo contra lo que YA está en la lista seleccionada y el
+    // texto crudo del cliente, sin pasar por la IA.
+    const wantsToRemove = /\b(quita|qu[ií]tale|saca|s[áa]cale|elimina|borra)\b/i.test(String(text || '')) ||
+        /\bsin\b/i.test(String(text || ''));
+    if (userSession.heladoFlow && wantsToRemove &&
+        (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
+        const flow = userSession.heladoFlow;
+        const isPerUnit = userSession.phase === HELADO_PER_UNIT_TOPPINGS;
+        const targetList = isPerUnit ? flow.customization.currentToppings : flow.toppingsSeleccionados;
+        const normalizedText = stripAccents(String(text || '')).toLowerCase();
+        const textWords = new Set(normalizedText.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !TOPPING_STOPWORDS.has(w)));
+        const removed = [];
+        // De atrás hacia adelante para poder splice() sin desfasar índices.
+        // Coincide por nombre completo ("gomitas trululu" en el texto) O por
+        // alguna palabra significativa en común ("quítale las gomitas" no
+        // trae "trululu", pero sí "gomitas") - mismo criterio flexible que
+        // ya usa findBestTopping más arriba en este archivo.
+        for (let i = targetList.length - 1; i >= 0; i--) {
+            const nombre = stripAccents(String(targetList[i][dbFields.productName] || '')).toLowerCase();
+            const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+            const matches = nombre.length >= 3 && (normalizedText.includes(nombre) || nombreWords.some(w => textWords.has(w)));
+            if (matches) {
+                removed.unshift(targetList.splice(i, 1)[0]);
+            }
+        }
+        if (removed.length > 0) {
+            const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
+            const restantes = targetList.length
+                ? targetList.map(t => {
+                    const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                    return `• ${t[dbFields.productName] || t}${precio ? ` (+${money(precio)})` : ''}`;
+                }).join('\n')
+                : '_(ninguno)_';
+            await say(sock, jid,
+                `✅ Quitado: *${nombresQuitados}*.\n\nToppings actuales:\n${restantes}\n\n${isPerUnit ? '' : '¿Cuántas unidades deseas?'}`, ctx);
+            if (!isPerUnit) userSession.phase = HELADO_QUANTITY;
+            acted = true;
+        }
+    }
+    if (!acted && userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
         if (result.toppings && result.toppings.length > 0) {
             const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
             if (codes.length > 0) {
