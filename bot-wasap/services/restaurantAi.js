@@ -252,7 +252,14 @@ async function interpretAudioIntent(audioBase64, userSession, recentOrders, mime
     return null;
 }
 
-async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
+/**
+ * @param {string} [caption] - Texto que el cliente escribió JUNTO con la foto
+ *   (ej: "3 de esta xfavor"). Mismo bug real encontrado y corregido en
+ *   heladeriaAi.js: antes se descartaba por completo, solo se analizaba la
+ *   imagen - la cantidad/intención que el cliente escribió junto a la foto
+ *   se perdía en silencio.
+ */
+async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
     if (!hasValidKey()) {
         logger.warn('restaurantAi: Gemini key no disponible para imagen');
         return null;
@@ -261,7 +268,15 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: MODELS.audio });
 
-    const prompt = `Eres un asistente de un restaurante de mariscos. Describe brevemente esta imagen para que el bot pueda ayudar al cliente. Si es una foto de un plato, identifica el plato. Responde en una línea corta en español.`;
+    const products = (userSession && userSession.productsCache) || [];
+    const dbFields = envConfig.backend.fields;
+    const productNames = products.slice(0, 60).map(p => p[dbFields.productName]).filter(Boolean);
+    const menuList = productNames.length ? `\n\nMenú real (usa el nombre EXACTO si la foto corresponde a uno de estos platos):\n${productNames.join(', ')}` : '';
+    const captionPart = caption && caption.trim()
+        ? `\n\nEl cliente escribió esto JUNTO con la foto: "${caption.trim()}". Incorpora esa intención (ej: cantidad pedida, una aclaración) en tu respuesta de forma natural, como si el cliente lo hubiera escrito en un solo mensaje de pedido (ej: "Quiero 2 unidades del Combo Familiar").`
+        : '';
+
+    const prompt = `Eres un asistente de un restaurante de mariscos. Si es una foto de un plato del menú, identifícalo usando el nombre EXACTO del menú (no inventes ni te quedes en una descripción genérica). Responde en una línea corta en español, SIN terminar en una pregunta retórica (evita "¿se te antoja?", "¿te gustaría?" - eso confunde al sistema y lo hace pensar que es una pregunta en vez de un pedido).${menuList}${captionPart}`;
 
     try {
         const imagePart = {

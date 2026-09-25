@@ -143,7 +143,17 @@ async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
         // Johan probando desde su propio numero, que tambien es admin) - bug
         // real: se filtraba silenciosamente y el admin nunca veia el aviso.
         await _sendToJids(sock, admins, msg, ctx);
-        logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
+        // Auditoría 23/9: este log se imprimía igual aunque `admins` viniera
+        // vacío (tenant mal configurado, sin ningún JID de admin) - un pedido
+        // confirmado se veía en los logs como "notificado" sin que nadie lo
+        // recibiera de verdad, ocultando justo el tipo de problema de
+        // configuración (ej. JIDs de admin mezclados entre tenants) que ya se
+        // dio en esta sesión.
+        if (admins.length === 0) {
+            logger.warn(`Pedido de ${jid} confirmado pero NO se notificó a ningún admin (orders_admin_jids/business_admin_jids vacío para este tenant)`);
+        } else {
+            logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
+        }
     } catch (e) {
         logger.error(`Error en notifyAdminsNewOrder: ${e.message}`);
     }
@@ -169,14 +179,35 @@ async function notifyAdmin(sock, ctx, text) {
  * siguen esperando atencion humana. Ver services/dailySummaryScheduler.js
  * para cuando se dispara.
  */
-async function notifyDailySummary(sock, ctx, { respondidas, pendientes }) {
+/**
+ * Bug real (pedido de Johan, 24/9): el resumen decía "8 conversaciones
+ * necesitan tu atención" sin ninguna forma de saber si son NUEVAS de hoy o
+ * las MISMAS de días anteriores que nadie cerró todavía. Ahora separa las
+ * dos cosas y, si hay acumuladas, lista los números para que se puedan
+ * revisar/cerrar puntualmente (con "reactivar mia <número>" una vez
+ * resueltas - si no, seguirán apareciendo cada noche).
+ */
+async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendientesNuevas = 0, pendientesAcumuladas = 0, numerosAcumulados = [] }) {
     const businessName = envConfig.business?.name || 'tu negocio';
+    let pendientesLine;
+    if (pendientes === 0) {
+        pendientesLine = `✅ No quedó ninguna conversación pendiente.`;
+    } else if (pendientesAcumuladas === 0) {
+        pendientesLine = `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} de HOY necesita${pendientes === 1 ? '' : 'n'} tu atención.`;
+    } else {
+        const listado = numerosAcumulados.slice(0, 5).map(n => `   • ${n}`).join('\n');
+        const masTexto = numerosAcumulados.length > 5 ? `\n   _(+${numerosAcumulados.length - 5} más)_` : '';
+        pendientesLine = `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} pendiente${pendientes === 1 ? '' : 's'}:\n` +
+            `   ${pendientesNuevas} nueva${pendientesNuevas === 1 ? '' : 's'} de hoy\n` +
+            `   ${pendientesAcumuladas} de días anteriores, todavía sin cerrar:\n${listado}${masTexto}\n\n` +
+            `_Apenas resuelvas una, escribe "reactivar mia <número>" para que deje de salir acá._`;
+    }
     const msg = `¡Hola! Resumen de hoy en ${businessName}:\n\n` +
         `✅ Respondí en ${respondidas} conversacion${respondidas === 1 ? '' : 'es'}\n` +
-        `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} necesita${pendientes === 1 ? '' : 'n'} tu atención (escalada${pendientes === 1 ? '' : 's'} o sin resolver)\n\n` +
+        `${pendientesLine}\n\n` +
         `¿Necesitás algo más? Escribime.`;
     await notifyAdmin(sock, ctx, msg);
-    logger.info(`Resumen diario enviado a admins negocio: ${respondidas} respondidas, ${pendientes} pendientes`);
+    logger.info(`Resumen diario enviado a admins negocio: ${respondidas} respondidas, ${pendientes} pendientes (${pendientesNuevas} nuevas, ${pendientesAcumuladas} acumuladas)`);
 }
 
 // =====================================================

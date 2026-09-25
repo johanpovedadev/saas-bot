@@ -393,7 +393,7 @@ ${sabores}
 Toppings disponibles (código | nombre):
 ${toppings}
 
-Productos del menú (código | nombre | ingredientes/descripción):
+Productos del menú (código | nombre | precio | ingredientes/descripción):
 ${products}
 
 Productos mencionados recientemente al cliente (el cliente puede referirse a ellos con "esa", "esas", "una de esas", "esa que me dijiste", "lo que me dijiste", "la que me dices"):
@@ -424,10 +424,12 @@ Reglas:
 - "no_reconocido": es CRÍTICO no dejar pedidos a medias en silencio. Si el mensaje menciona MÁS de una cosa (ej: dos productos, o un producto y una bebida/sabor) y solo pudiste resolver una parte contra el catálogo, escribe la parte que NO resolviste en "no_reconocido" en vez de simplemente omitirla. El cliente debe enterarse de qué no se pudo agregar.
 - Si el cliente dice "sin X" (ej: "sin arequipe"), NO pongas X en toppings ni en sabores: es una observación.
 - cantidad solo si indica unidades ("una" → 1, "dos" → 2, "un litro" → null).
+- "sabores": si el cliente pide varias unidades del MISMO sabor con un número (ej: "3 de fresa", "2 mangos", "quiero 3 sabores de fresa"), REPITE ese nombre en el array tantas veces como indique el número (ej: "3 de fresa" -> ["Fresa","Fresa","Fresa"]). Un producto con "N sabores" significa HASTA N - pueden ser N iguales (repetido) o N distintos, nunca asumas que "N sabores" obliga a elegir N sabores DIFERENTES.
 - direccion: solo si el cliente escribe algo como "para la cra 23", "la dirección es...", "calle/carrera/diagonal/avenida/cll/cra".
 - Si el cliente se refiere a algo ya mencionado ("esa", "esas", "una de esas", "esa que me dijiste", "lo que me dijiste", "la que me dices", "esas"), resuelve "producto" a un nombre de la lista "Productos mencionados recientemente". Si hay varios candidatos, elige el más probable; si es imposible decidir, pon en "duda" una pregunta corta de confirmación (ej: "¿cuál de esas te provoca?").
 - Si el cliente expresa intención de COMPRAR ("quiero", "dame", "me das", "me llevo", "quiero una de esas", "esa que me dices", "pídeme", "me provoca") y hay candidatos en "Productos mencionados recientemente", resuelve "producto" al más probable y NO lo pongas en "duda". Solo usa "duda" si es genuinamente imposible elegir.
 - Si el cliente hace una pregunta (ej: "qué toppings tienen?", "cuánto cuesta?"), ponla en "duda" y deja los demás campos en null/[].
+- Si el cliente se refiere a un producto por su PRECIO en vez de su nombre (ej: "una de 18", "el de 16 mil", "la de $18.000"), busca en TODO el menú el producto cuyo precio coincida EXACTO y resuélvelo en "producto" con toda confianza - esto es el caso NORMAL y no requiere preguntar nada. Solo hay dos situaciones donde SÍ debes dudar en vez de resolver directo: (a) ese precio EXACTO coincide con dos o más productos DISTINTOS y sin relación en el menú completo (colisión real de precio, poco común) - en ese caso, si el cliente acaba de ver una lista de opciones ("Productos mencionados recientemente"), prioriza el que esté en esa lista; si ninguno de los recientes calza o la colisión persiste, pon una pregunta corta en "duda" (ej: "¿cuál de las que cuestan $18.000 te provoca?"); (b) ningún producto del menú cuesta exactamente eso. Fuera de esos dos casos (que un precio sea único en el menú es lo más común), resuelve el producto de una, sin pedir confirmación de más. Nunca confundas un precio con la cantidad de sabores de un producto.
 - No inventes productos, sabores, toppings ni precios.`;
 
     const textOut = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
@@ -456,6 +458,88 @@ Reglas:
     }
 }
 
+// Umbral de longitud para siquiera considerar que un mensaje podria ser un
+// broadcast/spam automatico - un cliente real casi nunca escribe mas de esto
+// de una sola vez, asi que por debajo de este largo ni se llama a la IA
+// (evita gastar una llamada en el 99% de los mensajes reales, cortos).
+const AUTOMATED_BROADCAST_LENGTH_THRESHOLD = 280;
+
+/**
+ * Caso real (log de produccion): a heladeria le llego un mensaje masivo de
+ * un evento tech ("Faltan 4 dias para la hackaton...") de un numero que
+ * nunca habia escrito antes - el bot respondio "No entendi bien" como si
+ * fuera un cliente real, lo cual no tiene sentido (le esta contestando a un
+ * broadcast/bot de marketing). Pedido de Johan: la IA debe reconocer estos
+ * mensajes automaticos/publicitarios y el bot debe quedarse callado, no
+ * intentar responderlos.
+ *
+ * Gate barato primero (longitud) para no gastar una llamada a Gemini en
+ * cada mensaje corto normal - solo mensajes largos pasan a que la IA
+ * confirme si de verdad es un broadcast no relacionado con el negocio.
+ *
+ * @param {string} text - Mensaje entrante, tal cual.
+ * @returns {Promise<boolean>} true si es un mensaje automatico/publicitario
+ *   que no deberia recibir respuesta.
+ */
+async function isAutomatedBroadcast(text) {
+    const trimmed = String(text || '').trim();
+    if (trimmed.length < AUTOMATED_BROADCAST_LENGTH_THRESHOLD) return false;
+    if (!hasValidKey()) return false;
+
+    const systemInstruction = `Eres un clasificador. Tu unica tarea es decidir si un mensaje de WhatsApp es (a) un mensaje AUTOMATICO/MASIVO/PUBLICITARIO de un tercero no relacionado con una heladeria (ej: promocion de un evento, cadena reenviada, spam, broadcast de otro negocio), o (b) un mensaje real de un cliente (aunque sea largo, ej. describiendo un pedido grande para un evento). NO converses, NO respondas nada mas.`;
+    const prompt = `Mensaje recibido:\n"""${trimmed.slice(0, 2000)}"""\n\nDevuelve EXCLUSIVAMENTE este JSON: { "esAutomatico": boolean }`;
+
+    const raw = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    if (!raw) return false;
+    try {
+        const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (parsed.esAutomatico) {
+            logger.info(`heladeriaAi isAutomatedBroadcast: mensaje detectado como automatico/publicitario (largo=${trimmed.length}), no se responde`);
+        }
+        return !!parsed.esAutomatico;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * Regla fija (pedido de Johan): en TODO paso del flujo guiado donde el
+ * cliente elige entre un numero corto de opciones fijas (ej. "1) Todas
+ * iguales / 2) Cada una diferente"), si la respuesta no calza con las
+ * reglas rapidas (numero pelado, palabra clave), antes de repetir la
+ * pregunta o mostrar "no entendi" hay que consultarle a la IA que opcion
+ * quiso decir - un mensaje como "Es 1 no dos" es claramente la opcion 1
+ * para una persona, pero no matchea ningun regex exacto.
+ *
+ * @param {string} text - Mensaje del cliente, tal cual.
+ * @param {Array<{id:string, label:string}>} options - Opciones validas.
+ * @param {string} [question] - La pregunta que se le hizo (para contexto).
+ * @returns {Promise<string|null>} el `id` de la opcion elegida, o null si
+ *   ni la IA pudo determinarlo con confianza.
+ */
+async function classifyChoice(text, options, question = '') {
+    if (!hasValidKey() || !Array.isArray(options) || options.length === 0) return null;
+    if (!text || !String(text).trim()) return null;
+
+    const optionsList = options.map((o, i) => `${i + 1}. id="${o.id}" - ${o.label}`).join('\n');
+    const systemInstruction = `Eres un clasificador. El cliente de una heladeria esta respondiendo una pregunta de opcion multiple. Tu unica tarea es decidir CUAL de las opciones definidas quiso elegir, incluso si lo dice de forma indirecta o con una correccion (ej: "es 1 no dos" significa que eligio la opcion 1). SE MUY CONSERVADOR: si el mensaje del cliente es en realidad OTRA cosa - el nombre de un producto nuevo, una pregunta sin relacion, cualquier tema distinto a responder esta pregunta puntual - devuelve null, NO fuerces que encaje en alguna opcion solo porque se parece un poco. Ante la duda, null. NO converses, NO inventes opciones nuevas.`;
+    const prompt = `${question ? `Pregunta hecha al cliente: "${question}"\n\n` : ''}Opciones validas:\n${optionsList}\n\nRespuesta del cliente: "${text}"\n\nDevuelve EXCLUSIVAMENTE este JSON (sin texto antes ni despues):\n{ "id": "<uno de los id de arriba, o null si el mensaje no es realmente una respuesta clara a esta pregunta>" }`;
+
+    const raw = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    if (!raw) return null;
+    try {
+        const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        const match = options.find(o => o.id === parsed.id);
+        logger.info(`heladeriaAi classifyChoice: texto="${text}" -> id=${match ? match.id : 'null'}`);
+        return match ? match.id : null;
+    } catch (e) {
+        logger.warn(`heladeriaAi classifyChoice: JSON invalido del modelo: ${e.message}`);
+        return null;
+    }
+}
+
 /**
  * Detecta si la respuesta de la IA es un "no sé / no tengo el dato" (el bot
  * no supo responder). En ese caso el flujo escala al admin para que continúe.
@@ -478,6 +562,15 @@ function isUnknownAnswer(text) {
  * 'Preguntas_Frecuentes'). Si coincide por texto (con o sin acentos), devuelve
  * la respuesta EXACTA de la tabla ANTES de dejar que Gemini invente. null si no.
  */
+// Largo minimo de una pregunta de FAQ para aceptarla como match por
+// CONTENCION (target.includes(q) / q.includes(target)) - una FAQ corta (ej:
+// "domicilio", "pago") como substring de una duda distinta pero mas larga
+// ("\u00bfcu\u00e1nto tarda el domicilio si vivo lejos?" vs una FAQ pensada para
+// "\u00bfhacen domicilios?") puede secuestrar dudas que no tienen relacion real
+// con esa pregunta. El match EXACTO (q === target) no tiene este riesgo y
+// no se limita por largo.
+const FAQ_SUBSTRING_MIN_LENGTH = 12;
+
 function matchFaq(doubt, faqs) {
     if (!Array.isArray(faqs) || faqs.length === 0 || !doubt) return null;
     const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -486,7 +579,8 @@ function matchFaq(doubt, faqs) {
     for (const f of faqs) {
         const q = norm(f && (f.Pregunta || f.pregunta));
         if (!q) continue;
-        if (q === target || target.includes(q) || q.includes(target)) {
+        const substringMatch = q.length >= FAQ_SUBSTRING_MIN_LENGTH && (target.includes(q) || q.includes(target));
+        if (q === target || substringMatch) {
             const ans = String((f && (f.Respuesta || f.respuesta)) || '').trim();
             if (ans) return ans;
         }
@@ -540,8 +634,17 @@ Responde SOLO con el texto de la respuesta, sin comillas ni prefijos.`;
 /**
  * Lectura de imagen para el flujo de heladería. Devuelve una descripción
  * corta en español o null si falla. Usa el mismo modelo multimodal económico.
+ *
+ * @param {string} imageBase64
+ * @param {Object} userSession
+ * @param {string} [mimeType]
+ * @param {string} [caption] - Texto que el cliente escribió JUNTO con la foto
+ *   (ej: "3 de esta xfavor"). Caso real: un cliente le mandó a Mundo Helados
+ *   una foto de la ensalada de frutas con el pie de foto "3 de esta xfavor" -
+ *   antes ese texto se descartaba por completo (solo se analizaba la
+ *   imagen), así que la cantidad/intención pedida nunca llegaba al flujo.
  */
-async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
+async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
     if (!hasValidKey()) {
         logger.warn('heladeriaAi: Gemini key no disponible para imagen');
         return null;
@@ -550,7 +653,15 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: MODELS.audio });
 
-    const prompt = `Eres ISA, dueña de una heladería en Riohacha (Mundo Helados). Un cliente te envió una imagen. Describe brevemente qué muestra para poder ayudarle. Si es una foto de un producto/plato de la heladería, identifícalo. Responde en una línea corta en español, cálido y con un emoji.`;
+    const products = (userSession && userSession.productsCache) || [];
+    const dbFields = envConfig.backend.fields;
+    const productNames = products.slice(0, 60).map(p => p[dbFields.productName]).filter(Boolean);
+    const menuList = productNames.length ? `\n\nMenú real (usa el nombre EXACTO si la foto corresponde a uno de estos productos):\n${productNames.join(', ')}` : '';
+    const captionPart = caption && caption.trim()
+        ? `\n\nEl cliente escribió esto JUNTO con la foto: "${caption.trim()}". Incorpora esa intención (ej: cantidad pedida, "todos", una aclaración) en tu respuesta de forma natural, como si el cliente lo hubiera escrito en un solo mensaje de pedido (ej: "Quiero 3 unidades de la Ensalada de Frutas con Helado 🍨").`
+        : '';
+
+    const prompt = `Eres ISA, dueña de una heladería en Riohacha (Mundo Helados). Un cliente te envió una imagen. Si es una foto de un producto/plato de la heladería, identifícalo usando el nombre EXACTO del menú (no inventes ni te quedes en una descripción genérica). Responde en una línea corta en español, cálido, con un emoji, SIN terminar en una pregunta retórica (evita "¿se te antoja?", "¿te gustaría?" - eso confunde al sistema y lo hace pensar que es una pregunta en vez de un pedido).${menuList}${captionPart}`;
 
     try {
         const imagePart = {
@@ -571,4 +682,43 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     }
 }
 
-module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage, isUnknownAnswer };
+/**
+ * Detecta si el mensaje del cliente contiene DATOS SENSIBLES (número de
+ * tarjeta, cédula/documento, claves/contraseñas, CVV). Regla de seguridad
+ * (pedido de Johan): si el cliente intenta compartir esto, el bot NO debe
+ * procesarlo como pedido ni guardarlo en ningún lado — se escala a un humano
+ * de inmediato (ver escalateIfSensitive en heladeria.flow.js).
+ *
+ * Diseñado para NO dar falsos positivos con lo normal de una heladería:
+ * - Teléfonos colombianos (10 dígitos) NO matchean (la tarjeta son 13-19).
+ * - Precios ("$17.000", "17000") NO matchean (5 dígitos).
+ * - "¿aceptan tarjeta?" sin dígitos NO matchea.
+ * - "cc" suelto sin dígitos NO matchea (solo "cc" + 6-10 dígitos).
+ *
+ * @param {string} text - Mensaje del cliente, tal cual.
+ * @returns {boolean} true si contiene datos sensibles.
+ */
+function detectSensitiveData(text) {
+    const t = String(text || '');
+    if (!t.trim()) return false;
+
+    // Número de tarjeta (PAN): 13-19 dígitos seguidos o con separadores
+    // ("1234567890123456", "1234 5678 9012 3456", "1234-5678-9012-3456").
+    if (/\b(?:\d[ -]?){13,19}\b/.test(t)) return true;
+    // Formato agrupado 4-4-4-4 (con separador) — cubre tarjetas que el regex
+    // de arriba no agarra por espacios raros.
+    if (/\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{2,4}\b/.test(t)) return true;
+    // "tarjeta/visa/mastercard/amex" + al menos 4 dígitos (ej: "el número de
+    // mi tarjeta es 1234 5678...").
+    if (/\b(?:tarjeta|visa|mastercard|amex|american express|cr[eé]dito)\b/i.test(t) && /\d{4,}/.test(t)) return true;
+    // Cédula/documento/identificación + 6-10 dígitos (ej: "mi cédula es
+    // 1045678901", "cc 1234567890").
+    if (/\b(?:c[eé]dula|documento|identificaci[oó]n|cc)\b[^.\n]{0,20}\d{6,10}/i.test(t)) return true;
+    // Claves/contraseñas/pin/CVV (con o sin dígitos: "mi clave es 1234",
+    // "la contraseña", "cvv 123", "código de seguridad").
+    if (/\b(?:clave|contrase[ñn]a|password|pin|cvv|c[oó]digo de (?:seguridad|verificaci[oó]n|din[aá]mico))\b/i.test(t)) return true;
+
+    return false;
+}
+
+module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage, isUnknownAnswer, classifyChoice, isAutomatedBroadcast, detectSensitiveData };

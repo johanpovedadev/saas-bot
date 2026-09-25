@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "create-client": "node scripts/create-client.js"
+    "create-client": "node scripts/create-client.js",
+    "postinstall": "node scripts/patch-wwebjs-media-fix.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -1,0 +1,732 @@
+<title>Requisitos Mundo Helados</title>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #faf9f6;
+    --bg-raised: #ffffff;
+    --bg-sunken: #f2f0ea;
+    --border: #e3e0d6;
+    --border-strong: #cfcabb;
+    --text: #211f1a;
+    --text-muted: #6f6a5c;
+    --text-faint: #9a9484;
+    --accent: #a8324a;
+    --accent-ink: #ffffff;
+    --accent-soft: #f6e4e8;
+    --accent-soft-border: #e4bcc6;
+    --teal: #2c6e6f;
+    --teal-soft: #e2eeee;
+    --ok: #2f7a4f;
+    --ok-soft: #e3f1e7;
+    --ok-border: #b9dcc4;
+    --warn: #a3691a;
+    --warn-soft: #faedd9;
+    --warn-border: #eecf9c;
+    --crit: #a8324a;
+    --crit-soft: #f6e4e8;
+    --crit-border: #e4bcc6;
+    --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --font-body: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #17151a;
+      --bg-raised: #201d24;
+      --bg-sunken: #131117;
+      --border: #332e3a;
+      --border-strong: #443d4d;
+      --text: #eeecec;
+      --text-muted: #a49eae;
+      --text-faint: #726c7c;
+      --accent: #e4879a;
+      --accent-ink: #201017;
+      --accent-soft: #33212a;
+      --accent-soft-border: #55303e;
+      --teal: #7fc2c1;
+      --teal-soft: #1c2e2e;
+      --ok: #7fc79a;
+      --ok-soft: #1b2d21;
+      --ok-border: #2d5138;
+      --warn: #e3b566;
+      --warn-soft: #302514;
+      --warn-border: #5c451f;
+      --crit: #e4879a;
+      --crit-soft: #33212a;
+      --crit-border: #55303e;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #17151a;
+    --bg-raised: #201d24;
+    --bg-sunken: #131117;
+    --border: #332e3a;
+    --border-strong: #443d4d;
+    --text: #eeecec;
+    --text-muted: #a49eae;
+    --text-faint: #726c7c;
+    --accent: #e4879a;
+    --accent-ink: #201017;
+    --accent-soft: #33212a;
+    --accent-soft-border: #55303e;
+    --teal: #7fc2c1;
+    --teal-soft: #1c2e2e;
+    --ok: #7fc79a;
+    --ok-soft: #1b2d21;
+    --ok-border: #2d5138;
+    --warn: #e3b566;
+    --warn-soft: #302514;
+    --warn-border: #5c451f;
+    --crit: #e4879a;
+    --crit-soft: #33212a;
+    --crit-border: #55303e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 28px 120px;
+  }
+
+  header.doc-head {
+    border-bottom: 3px solid var(--text);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+  .doc-kicker {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  h1.doc-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(2rem, 4.2vw, 2.9rem);
+    line-height: 1.08;
+    margin: 10px 0 6px;
+    text-wrap: balance;
+  }
+  .doc-sub {
+    color: var(--text-muted);
+    font-size: 1.05rem;
+    max-width: 62ch;
+  }
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-top: 22px;
+    font-size: 13.5px;
+    color: var(--text-muted);
+  }
+  .doc-meta div { display: flex; flex-direction: column; gap: 2px; }
+  .doc-meta span.k { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  .doc-meta span.v { color: var(--text); font-weight: 600; }
+
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin: 28px 0 0;
+  }
+  .summary-tile {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .summary-tile .num {
+    font-family: var(--font-display);
+    font-size: 1.9rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .summary-tile .lbl { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+  .summary-tile.ok .num { color: var(--ok); }
+  .summary-tile.warn .num { color: var(--warn); }
+
+  nav.toc {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 36px 0 48px;
+  }
+  nav.toc .toc-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+  nav.toc ol {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    columns: 2;
+    gap: 24px;
+  }
+  nav.toc li { break-inside: avoid; margin-bottom: 6px; }
+  nav.toc a { color: var(--text); text-decoration: none; font-size: 14.5px; }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc a .n { font-family: var(--font-mono); color: var(--text-faint); margin-right: 8px; }
+
+  section.block { margin: 56px 0; scroll-margin-top: 20px; }
+  h2.block-title {
+    font-family: var(--font-display);
+    font-size: 1.7rem;
+    font-weight: 600;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 0 0 6px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2.block-title .idx { font-family: var(--font-mono); font-size: 1rem; color: var(--accent); font-weight: 600; }
+  p.block-intro { color: var(--text-muted); max-width: 68ch; margin: 14px 0 26px; }
+
+  h3.group-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin: 34px 0 14px;
+  }
+
+  .req {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+  }
+  .req.status-done { border-left-color: var(--ok); }
+  .req.status-known { border-left-color: var(--warn); }
+  .req.status-partial { border-left-color: var(--teal); }
+
+  .req-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .req-id {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text-faint);
+    font-weight: 600;
+  }
+  .req-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin: 2px 0 0;
+  }
+  .pill {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    font-weight: 600;
+  }
+  .pill.done { background: var(--ok-soft); color: var(--ok); border-color: var(--ok-border); }
+  .pill.known { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-border); }
+  .pill.partial { background: var(--teal-soft); color: var(--teal); border-color: var(--border); }
+
+  .req-body { color: var(--text-muted); font-size: 14.5px; margin-top: 8px; }
+  .req-body p { margin: 6px 0; }
+  .req-evidence {
+    margin-top: 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .req-evidence code {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    color: var(--text-muted);
+  }
+
+  table.nfr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  table.nfr-table th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 8px 10px;
+    border-bottom: 2px solid var(--border-strong);
+  }
+  table.nfr-table td {
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.nfr-table tr:last-child td { border-bottom: none; }
+  .nfr-name { font-weight: 600; }
+  .nfr-target { font-family: var(--font-mono); font-size: 12.5px; color: var(--teal); white-space: nowrap; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .table-wrap table { border: none; }
+  .table-wrap th:first-child, .table-wrap td:first-child { padding-left: 16px; }
+  .table-wrap th:last-child, .table-wrap td:last-child { padding-right: 16px; }
+
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-soft-border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-size: 14.5px;
+    color: var(--text);
+  }
+  .callout strong { color: var(--accent); }
+
+  .limits-list { display: flex; flex-direction: column; gap: 10px; }
+  .limit-item {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 10px;
+    background: var(--warn-soft);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  .limit-item .ico { color: var(--warn); font-size: 15px; line-height: 1.4; }
+  .limit-item b { display: block; margin-bottom: 2px; }
+  .limit-item span.desc { color: var(--text-muted); }
+
+  .foot {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (max-width: 640px) {
+    .summary-row { grid-template-columns: repeat(2, 1fr); }
+    nav.toc ol { columns: 1; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="doc-head">
+    <div class="doc-kicker">Especificación de requerimientos · Bot conversacional</div>
+    <h1 class="doc-title">Mundo Helados — Bot de WhatsApp</h1>
+    <p class="doc-sub">Requerimientos funcionales y no funcionales consolidados a partir de fallas reales reportadas por clientes, validados con pruebas automatizadas y simulaciones de pedido de principio a fin.</p>
+    <div class="doc-meta">
+      <div><span class="k">Tenant base</span><span class="v">Heladería (Mundo Helados)</span></div>
+      <div><span class="k">Se replica en</span><span class="v">Pescadería · Bri Pilates · Leo Financiero</span></div>
+      <div><span class="k">Versión</span><span class="v">1.2 — 24 sep 2026</span></div>
+      <div><span class="k">Fuente</span><span class="v">Logs reales + pruebas automatizadas</span></div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-tile ok"><div class="num">26</div><div class="lbl">Requerimientos funcionales</div></div>
+      <div class="summary-tile ok"><div class="num">23</div><div class="lbl">Implementados y probados</div></div>
+      <div class="summary-tile warn"><div class="num">3</div><div class="lbl">Limitaciones conocidas</div></div>
+      <div class="summary-tile"><div class="num">115+</div><div class="lbl">Pruebas automatizadas</div></div>
+    </div>
+  </header>
+
+  <section class="block" id="principio" style="margin: 40px 0 0;">
+    <div class="callout" style="padding: 22px 26px;">
+      <strong>Principio rector — aplica a todo bot de carrito de compras que se construya de aquí en adelante</strong>, no solo a heladería (palabras del dueño del producto, 24 sep 2026):
+      <ul style="margin: 12px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+        <li>El objetivo siempre es <strong>completar el pedido de inicio a fin</strong> — el detalle exacto del flujo cambia según el negocio, pero la meta nunca.</li>
+        <li>Lo primordial a validar en cada entrega: que el proceso <strong>se complete</strong> y que sea <strong>fácil para el cliente</strong> — la gente no quiere leer instrucciones largas.</li>
+        <li>Si el cliente no entiende algo o se sale del guion en <strong>cualquier</strong> punto del flujo, se pasa a la IA para que continúe tomando el pedido — nunca un "no entendí" seco como primera respuesta.</li>
+        <li>Si falta un dato, se guarda lo que ya se dio y se pide solo lo que falta — nunca se reinicia ni se obliga a repetir.</li>
+        <li>El bot siempre debe llevar al cliente a <strong>cerrar el pedido</strong>: pago y domicilio incluidos, validando qué falta y pidiéndolo, sin detenerse a medio camino.</li>
+      </ul>
+      <p style="margin: 12px 0 0;">Documento vivo: cada vez que se encuentra y corrige un caso real (como los de esta versión), se anota aquí como requisito — no como nota aparte.</p>
+    </div>
+  </section>
+
+  <nav class="toc">
+    <div class="toc-label">Contenido</div>
+    <ol>
+      <li><a href="#principio"><span class="n">§</span>Principio rector</a></li>
+      <li><a href="#fr-flujo"><span class="n">FR·1</span>Comprensión del pedido</a></li>
+      <li><a href="#fr-producto"><span class="n">FR·2</span>Catálogo y personalización</a></li>
+      <li><a href="#fr-horario"><span class="n">FR·3</span>Horario y disponibilidad</a></li>
+      <li><a href="#fr-checkout"><span class="n">FR·4</span>Checkout y datos de entrega</a></li>
+      <li><a href="#fr-escalamiento"><span class="n">FR·5</span>Escalamiento a humano</a></li>
+      <li><a href="#fr-dueno"><span class="n">FR·6</span>Comunicación con el dueño</a></li>
+      <li><a href="#fr-spam"><span class="n">FR·7</span>Filtrado de mensajes automáticos</a></li>
+      <li><a href="#nfr"><span class="n">NFR</span>Requerimientos no funcionales</a></li>
+      <li><a href="#limites"><span class="n">§</span>Limitaciones conocidas</a></li>
+      <li><a href="#validacion"><span class="n">§</span>Cómo se valida</a></li>
+    </ol>
+  </nav>
+
+  <section class="block" id="fr-flujo">
+    <h2 class="block-title"><span class="idx">FR·1</span>Comprensión del pedido</h2>
+    <p class="block-intro">Regla central, pedida explícitamente tras revisar chats reales donde el bot repetía la misma pregunta hasta que el cliente se rendía: <strong>en cualquier paso del flujo, si una regla fija no reconoce la respuesta, se consulta a la IA antes de mostrar un error</strong> — nunca al revés.</p>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.1</div><div class="req-title">Respaldo de IA en cada fase de personalización</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Sabores, toppings, cantidad, y "todas iguales / cada una diferente" consultan a la IA (<code>classifyOrderInput</code> / <code>classifyChoice</code>) antes de repetir la pregunta. Caso real resuelto: "Es 1 no dos" ya no deja al cliente atascado.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_units_mode_ai_fallback.js</code> · <code>test_heladeria_matriz_ia_todas_las_fases.js</code> (15 combinaciones fase × dato)</div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.2</div><div class="req-title">Dato mencionado fuera de turno no se pierde</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Si el cliente menciona una adición ("con adición de queso") mientras el bot pregunta por sabores, se guarda de inmediato y se recuerda al cliente qué falta — sin obligarlo a repetirlo. Caso real: "Copa Car Toyota con adición de queso" — el queso llegó completo al pedido final ($15.500 con el recargo incluido).</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_topping_anticipado_en_sabores.js</code> · <code>test_heladeria_topping_anotado_no_se_pierde_en_confirmacion.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.3</div><div class="req-title">Confirmación de checkout tolerante a lenguaje natural</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Confirmar pedido, elegir método de pago, y confirmar el pedido final aceptan frases indirectas ("sisas de una", "no, mejor cancela todo") vía IA, sin forzar una opción cuando el cliente en realidad pregunta otra cosa o duda.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_checkout_ai_fallback_completo.js</code> + auditoría adversarial contra la IA real</div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.4</div><div class="req-title">Sinónimos de "pasar a pagar" tras agregar un producto</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>"Listo", "ya", "dale" en la fase posterior a agregar un producto avanzan a pagar — encontrado por la simulación de pedido completo, no reconocido antes.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_demo_pedido_completo_real.js</code> (simulación end-to-end contra la IA real)</div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.5</div><div class="req-title">Dirección adelantada durante la confirmación</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Si el cliente da su dirección (con o sin nombre/teléfono/pago juntos) en vez de responder 1/2/3, se toma como "confirmar" y se procesa el mensaje completo — no solo la dirección — para no descartar el resto de los datos ya entregados.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_confirm_order_adelanta_direccion.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.6</div><div class="req-title">Pedido por foto, con o sin pie de foto</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Un cliente puede pedir enviando solo una <strong>foto</strong> del producto (sin escribir el nombre), con o sin texto adjunto ("3 de esta xfavor"). Caso real: una clienta mandó la foto de la Ensalada de Frutas con Helado con ese pie de foto — el bot ahora identifica el producto exacto del menú, toma la cantidad del pie de foto, y arranca el pedido en un solo paso, igual que lo resolvió el negocio a mano.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_imagen_con_pie_de_foto_arma_pedido.js</code> + foto real de una clienta</div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.7</div><div class="req-title">Un producto identificado nunca se pierde por una "pregunta" de adorno</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Si el clasificador identifica bien un producto del catálogo pero el texto también suena como pregunta (frecuente en descripciones de fotos: "¿se te antoja una hoy?"), el producto se aplica igual — antes se priorizaba responder la "pregunta" y el producto identificado se descartaba en silencio, dejando el pedido vacío.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_imagen_con_pie_de_foto_arma_pedido.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.8</div><div class="req-title">"N sabores" significa hasta N — iguales o distintos</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Regla de negocio explícita: si un producto pide "3 sabores", el cliente puede elegir 3 iguales (ej. "3 de fresa" = 3 bolas de fresa), 3 distintos (ej. "lulo, mango, fresa"), o solo 1 si el producto exige un único sabor. Bug real corregido: "3 de fresa" se leía como "código de posición 3" + "fresa" — dos sabores distintos que nadie pidió — porque un número pegado a un sabor real se confundía con el código de selección (S&lt;n&gt;). Ahora un número seguido de un sabor real siempre se interpreta como cantidad de ese sabor.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_sabores_cantidad_mismo_sabor.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-1.9</div><div class="req-title">Pedir un producto por su precio, no solo por nombre</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Un cliente puede referirse a un producto por lo que cuesta ("una de 18 y una de 16", "el de 16 mil") en vez de su nombre — caso real de una clienta que pidió así. El clasificador de IA no tenía el precio de los productos en su contexto y no podía resolverlo, terminando en una respuesta sin relación. Ahora el precio va incluido en el menú que recibe la IA, y hay una regla explícita para resolver por precio exacto.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_pedido_por_precio.js</code> (contra la IA real)</div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-producto">
+    <h2 class="block-title"><span class="idx">FR·2</span>Catálogo y personalización</h2>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-2.1</div><div class="req-title">El carrito visible en cada respuesta</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Cada vez que se agrega un producto, se muestra el pedido completo hasta ese momento (no solo el ítem nuevo) junto con las opciones de seguir comprando, pagar o ver el menú — regla fija establecida para heladería y replicada en pescadería.</p></div>
+      <div class="req-evidence"><code>sendPostAddOptions()</code> · <code>test_heladeria_cart_shown_on_add.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-2.2</div><div class="req-title">Categoría "Fresas con Crema"</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Al preguntar de forma genérica por "fresas con crema", se listan los 5 productos de la categoría por nombre; al nombrar una variante específica, se resuelve directo sin mostrar la lista.</p></div>
+      <div class="req-evidence"><code>test_heladeria_categoria_fresas_con_crema.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-2.3</div><div class="req-title">Catálogo completo, sin productos ocultos</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Corregidos productos que no aparecían por falta de código o por colisión de códigos duplicados en el Sheet (Fresas XL, Arequipe, Vainilla chips). 74/74 productos del inventario visibles para el bot.</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-horario">
+    <h2 class="block-title"><span class="idx">FR·3</span>Horario y disponibilidad</h2>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-3.1</div><div class="req-title">Pedidos fuera de horario limitados por categoría</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Horario de atención: 14:00–22:00 todos los días. Fuera de ese rango, solo se puede <em>pedir</em> cajas de helado (todas las versiones) y litros — el resto de productos se pueden cotizar/preguntar libremente, pero el pedido en sí se toma a partir de las 2:00pm.</p></div>
+      <div class="req-evidence"><code>OUT_OF_HOURS_ALLOWED_CODES</code> · <code>test_heladeria_fuera_horario_solo_cajas.js</code></div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-checkout">
+    <h2 class="block-title"><span class="idx">FR·4</span>Checkout y datos de entrega</h2>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-4.1</div><div class="req-title">Datos completos en un solo mensaje</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>El cliente puede enviar dirección, nombre, teléfono y método de pago juntos, separados por comas, en cualquier orden — el bot los clasifica por contenido, no por posición.</p></div>
+      <div class="req-evidence"><code>test_checkout_lenguaje_natural.js</code> · <code>test_checkout_out_of_order.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-4.2</div><div class="req-title">Preguntas del cliente durante el checkout se responden</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Una pregunta genuina ("¿qué diferencia tienen las cajas de helado?") a mitad de la confirmación se responde de verdad, en vez de caer en "Opción no válida".</p></div>
+      <div class="req-evidence"><code>test_checkout_pregunta_generica.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-4.3</div><div class="req-title">Recogida en tienda (sin domicilio)</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body">
+        <p>Si el cliente avisa que va a recoger su pedido ("yo mando a recogerlo", "paso por él", "sin domicilio"), el bot ya no pide dirección — pasa directo a nombre/pago y el resumen final muestra "Recoge en el local" en vez de un domicilio pendiente. Caso real: una clienta pidió y avisó que mandaría a alguien a recogerlo; el negocio lo resolvió a mano, el bot no tenía cómo.</p>
+      </div>
+      <div class="req-evidence">Evidencia: <code>test_heladeria_recogida_en_tienda.js</code></div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-escalamiento">
+    <h2 class="block-title"><span class="idx">FR·5</span>Escalamiento a humano</h2>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-5.1</div><div class="req-title">Escalamiento tras frustración real</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>2 errores consecutivos genuinos, una petición explícita de hablar con una persona, o un mensaje idéntico repetido, derivan el chat a atención humana y notifican al dueño.</p></div>
+      <div class="req-evidence"><code>test_frustration_escalation.js</code> · <code>test_heladeria_checkout_escalation.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-5.2</div><div class="req-title">Activar/desactivar el bot por número, desde el chat</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>El dueño escribe "silenciar 573XXXXXXXXX" / "desilenciar 573XXXXXXXXX" para tomar control manual de un chat puntual, de forma permanente hasta reactivarlo — sin tocar código ni el panel.</p></div>
+      <div class="req-evidence"><code>test_mute_by_number.js</code></div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-dueno">
+    <h2 class="block-title"><span class="idx">FR·6</span>Comunicación con el dueño</h2>
+    <p class="block-intro">Inspirado en el patrón observado en Meta Business Agent: avisos automáticos sin pedirlos, y conocimiento del negocio que se completa de a poco, no en un formulario largo.</p>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-6.1</div><div class="req-title">Resumen diario automático</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Cada mañana (7:00am, configurable), el dueño recibe cuántas conversaciones se resolvieron y cuántas siguen esperando atención — por el mismo WhatsApp del negocio, sin número ni bot adicional.</p></div>
+      <div class="req-evidence"><code>test_daily_activity_and_summary.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-6.2</div><div class="req-title">Preguntas graduales de conocimiento</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Una pregunta por vez (no un formulario). Prioriza preguntas reales que un cliente hizo y el bot no supo responder; si no hay ninguna pendiente, avanza por una lista fija (contacto, descuentos, devoluciones, pagos, festivos). Si el dueño no contesta, pasa a la siguiente sin insistir.</p></div>
+      <div class="req-evidence"><code>test_onboarding_gradual_questions.js</code></div>
+    </div>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-6.3</div><div class="req-title">Editar el Sheet escribiéndole al bot</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>El dueño puede actualizar precios ("el cono sencillo ahora vale 5000") o guardar la respuesta a una pregunta pendiente, y el bot escribe directo en el Sheet — pidiendo aclaración en vez de adivinar cuando el producto es ambiguo.</p></div>
+      <div class="req-evidence"><code>test_admin_sheet_update_handler.js</code></div>
+    </div>
+  </section>
+
+  <section class="block" id="fr-spam">
+    <h2 class="block-title"><span class="idx">FR·7</span>Filtrado de mensajes automáticos</h2>
+
+    <div class="req status-done">
+      <div class="req-head">
+        <div><div class="req-id">FR-7.1</div><div class="req-title">No responder a broadcasts/publicidad de terceros</div></div>
+        <span class="pill done">implementado</span>
+      </div>
+      <div class="req-body"><p>Caso real: un mensaje masivo de un evento tech recibió "No entendí" del bot, como si fuera un cliente. Ahora, mensajes largos se validan con IA antes de responder — si es claramente publicitario/automático, el bot no contesta nada. Probado contra quejas reales largas (no se silencian) y cadenas típicas de WhatsApp (sí se detectan).</p></div>
+      <div class="req-evidence"><code>test_heladeria_automated_broadcast_ignored.js</code> + auditoría adversarial</div>
+    </div>
+  </section>
+
+  <section class="block" id="nfr">
+    <h2 class="block-title"><span class="idx">NFR</span>Requerimientos no funcionales</h2>
+    <p class="block-intro">Cómo se sostiene el sistema, no qué hace — confiabilidad, seguridad, capacidad de mantenerlo y de reusarlo en otros negocios.</p>
+
+    <div class="table-wrap">
+      <table class="nfr-table">
+        <thead><tr><th>Requerimiento</th><th>Meta</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="nfr-name">Resiliencia a cambios externos de WhatsApp<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">WhatsApp Web rompió el envío de imágenes el 17/9 a nivel de toda la librería usada — parche aplicado y automatizado para que sobreviva a reinstalaciones.</div></td>
+            <td class="nfr-target">Parche + <code style="font-size:11px">postinstall</code></td>
+            <td><span class="pill done">resuelto</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Reconexión de sesión de WhatsApp<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">Protocolo de diagnóstico + limpieza de sesión corrupta ante desconexión persistente.</div></td>
+            <td class="nfr-target">Reconexión ≤ 15s cuando la sesión está sana</td>
+            <td><span class="pill done">validado</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Tiempo de respuesta de notas de voz<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">Bajado de 60s×3 intentos (hasta 3+ min en el peor caso) a 25s×2.</div></td>
+            <td class="nfr-target">≤ 25s por intento</td>
+            <td><span class="pill done">resuelto</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Sin secretos expuestos<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px"><code style="font-size:11px">.env</code>, credenciales de Google y sesiones de WhatsApp excluidos del repositorio.</div></td>
+            <td class="nfr-target">0 secretos en git</td>
+            <td><span class="pill done">verificado</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Cobertura de pruebas antes de cada cambio<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">Toda corrección se acompaña de una prueba que reproduce el caso real.</div></td>
+            <td class="nfr-target">100+ pruebas, 0 regresiones</td>
+            <td><span class="pill done">mantenido</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Patrón reusable entre negocios<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">Heladería como plantilla base; lógica genérica vive en módulos compartidos, no en el flow de un solo negocio.</div></td>
+            <td class="nfr-target">Portar sin reescribir</td>
+            <td><span class="pill partial">parcial</span></td>
+          </tr>
+          <tr>
+            <td class="nfr-name">Detección de conversación automatizada vs. real<div style="color:var(--text-faint);font-weight:400;font-size:12.5px;margin-top:3px">Gate barato por longitud antes de gastar una llamada de IA en cada mensaje corto normal.</div></td>
+            <td class="nfr-target">Sin falsos positivos en quejas reales largas</td>
+            <td><span class="pill done">validado</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="limites">
+    <h2 class="block-title"><span class="idx">§</span>Limitaciones conocidas</h2>
+    <p class="block-intro">No son bugs nuevos — son decisiones o restricciones ya identificadas, dejadas explícitas para no repetir la investigación.</p>
+    <div class="limits-list">
+      <div class="limit-item">
+        <div class="ico">⚠</div>
+        <div><b>Protección anti-loop puede confundir dos respuestas iguales legítimas</b><span class="desc"> — si un cliente responde "1" dos veces seguidas a dos preguntas distintas, el sistema lo puede interpretar como un bot atascado repitiéndose y escalar a humano. Es una protección deliberada (evita un bug real de bots respondiéndose en bucle); cualquier cambio necesita validarse contra ese caso original antes de tocarla.</span></div>
+      </div>
+      <div class="limit-item">
+        <div class="ico">⚠</div>
+        <div><b>Pescadería: catálogo intermitente</b><span class="desc"> — el puerto de su backend (8002) es compartido con Docker Desktop/WSL en este equipo; a veces la petición le llega a Docker en vez de a Django. Solución propuesta (mover a otro puerto) pendiente de aprobación.</span></div>
+      </div>
+      <div class="limit-item">
+        <div class="ico">⚠</div>
+        <div><b>Bri Pilates apagada</b><span class="desc"> — conexión de WhatsApp inestable pese a los mismos diagnósticos que sí resolvieron heladería/pescadería; dejada apagada a pedido explícito hasta retomarla.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="validacion">
+    <h2 class="block-title"><span class="idx">§</span>Cómo se valida</h2>
+    <div class="callout">
+      <strong>Antes de mostrarle el bot a un cliente o prospecto:</strong> correr <code style="font-family:var(--font-mono)">node test_heladeria_demo_pedido_completo_real.js</code> — simula un pedido de principio a fin con lenguaje natural imperfecto, contra la IA real, y falla si aparece cualquier "no entendí" u "opción no válida" en el camino. Es la misma prueba que encontró los últimos 2 huecos reales antes de que los viera un cliente.
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>Mundo Helados · Especificación de requerimientos v1.0</span>
+    <span>Construido a partir de conversaciones reales, no de casos hipotéticos</span>
+  </div>
+
+</div>

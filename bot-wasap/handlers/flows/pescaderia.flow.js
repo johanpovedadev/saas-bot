@@ -327,8 +327,8 @@ async function transcribeAudio(audioBase64, userSession, mimeType) {
 /**
  * Lectura de imagen (usado por handler.js en el bloque de media).
  */
-async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg') {
-    const text = await restaurantAi.interpretImage(imageBase64, userSession, mimeType);
+async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
+    const text = await restaurantAi.interpretImage(imageBase64, userSession, mimeType, caption);
     if (!text) return null;
     logger.info(`pescaderia.flow transcribeImage: "${text.substring(0, 80)}"`);
     return text;

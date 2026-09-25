@@ -464,8 +464,20 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Palabras de cancelación (escape oculto, no son opción visible)
     if (cleanInput === 'cancelar' || cleanInput === 'vaciar' || cleanInput === 'borrar' || cleanInput === 'cancelar pedido') {
         logger.info(`[${jid}] -> Usuario eligió CANCELAR pedido.`);
+        // Bug real (auditoría 23/9): esto solo vaciaba los PRODUCTOS, no los
+        // datos de entrega (dirección/nombre/teléfono/pago). Como
+        // askNextMissingCheckoutField solo pregunta por lo que falta, el
+        // SIGUIENTE pedido del cliente reusaba en silencio la dirección/pago
+        // del pedido cancelado sin volver a confirmarlos - riesgoso si el
+        // nuevo pedido es para otra dirección.
         if (userSession.order) {
             userSession.order.items = [];
+            delete userSession.order.address;
+            delete userSession.order.name;
+            delete userSession.order.telefono;
+            delete userSession.order.paymentMethod;
+            delete userSession.order.deliveryCost;
+            delete userSession.order.pickup;
         }
         if (Array.isArray(userSession.carrito)) {
             userSession.carrito = [];
@@ -494,6 +506,34 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
 }
 
+// Auditoría 23/9: validateInput('address'/'string') solo mira el LARGO del
+// texto (≥8 / ≥3 caracteres) - una pregunta real del cliente ("¿por qué
+// necesitan mi dirección?") pasa esa validación sin problema y quedaba
+// guardada TAL CUAL como la dirección/nombre de entrega, en vez de
+// intentarse responder. Heurística barata (sin IA) para detectar que el
+// texto es probablemente una pregunta, no un dato real, y darle prioridad a
+// la IA (delegateToAI) ANTES de aceptarlo como dirección/nombre válidos.
+// Bug real (chat real de una clienta, mayo 2026): "Me avisas cuando esté
+// listo, yo mando a recogerlo" - el cliente avisa que va a RECOGER el pedido
+// en el local, sin domicilio. El flujo de checkout no tenía ninguna forma de
+// entender esto - la frase caía en "No entendí" porque no calzaba con
+// ninguna dirección real, dejando al cliente atascado pidiendo algo que el
+// negocio sí ofrece (recogida en tienda).
+const PICKUP_RE = /\b(recoj[oa]|recoger|recogerl[oa]|pasar[eé]?\s+por|paso\s+(a\s+)?(recoger|por)|voy\s+a\s+recoger|mando\s+a\s+recoger|sin\s+domicilio|no\s+necesito\s+domicilio|recoge(r)?\s+en\s+(la\s+)?(tienda|local)|para\s+recoger)\b/gi;
+function looksLikePickup(text) {
+    PICKUP_RE.lastIndex = 0;
+    return PICKUP_RE.test(String(text || ''));
+}
+
+function looksLikeQuestion(text) {
+    const t = String(text || '').trim();
+    // Al menos 2 letras de verdad - descarta relleno de pura puntuación
+    // ("???", "?!") que no es una pregunta real, solo frustración/typo.
+    if ((t.match(/[a-zA-ZÀ-ÿ]/g) || []).length < 2) return false;
+    if (t.includes('?') || t.includes('¿')) return true;
+    return /^(por qu[eé]|para qu[eé]|qu[eé] es|qu[eé] pasa|por que|para que|cu[aá]nto|cu[aá]ndo|c[oó]mo|d[oó]nde|es obligatorio|es necesario)\b/i.test(t);
+}
+
 // Una parte "parece TELÉFONO" si tiene ≥7 dígitos y casi no tiene letras
 // (ej: "3139848800", "+57 3139848800", "cel 3139848800"). Una dirección tipo
 // "Cra 123 #45-67" tiene varios dígitos pero también letras, así que NO
@@ -516,6 +556,51 @@ function looksLikePayment(p) {
 function looksLikeAddress(p) {
     if (/\b(cra|cll|calle|carrera|diagonal|diag|avenida|av|transv|trav|tv|kr|cr|manzana|mz|barrio|bloque|apto|casa|torre|vereda)\b/i.test(p)) return true;
     return /\d/.test(p);
+}
+
+/**
+ * Captura campos de entrega (dirección, teléfono, método de pago) desde
+ * CUALQUIER mensaje, en CUALQUIER fase — no solo cuando el bot está
+ * explícitamente pidiendo esos datos. Diseñado para negocios de carrito en
+ * general (no específico de heladería): un cliente puede mencionar su
+ * dirección o forma de pago mientras todavía está eligiendo producto, y ese
+ * dato no debe perderse solo porque el handler determinístico de esa fase
+ * (ej. selección de sabor/talla/variante) ya "resolvió" el mensaje por su
+ * cuenta y nunca llegó a mirar el resto.
+ *
+ * A propósito NO incluye el fallback "lo que sobra es el nombre" que sí
+ * tiene classifyDeliveryParts (abajo) — ese fallback solo es seguro cuando
+ * el bot YA pidió explícitamente los datos de entrega; acá el mensaje puede
+ * traer cualquier otra cosa (un sabor, una pregunta) que no es un nombre y
+ * no se debe adivinar como tal. Solo guarda lo que reconoce con confianza.
+ * No sobreescribe un campo que ya estaba guardado.
+ */
+function captureSideChannelFields(text, userSession) {
+    if (!text || typeof text !== 'string') return;
+    const parts = text.includes(',')
+        ? text.split(',').map(p => p.trim()).filter(Boolean)
+        : [text.trim()];
+    if (!userSession.order) userSession.order = {};
+    for (const p of parts) {
+        const digitsOnly = p.replace(/[^0-9]/g, '');
+        // Un teléfono real (con o sin indicativo de país) tiene entre 7 y 13
+        // dígitos. Un número de tarjeta (16 dígitos) o una clave larga NO debe
+        // guardarse como "teléfono" acá — este captador corre ANTES que la
+        // detección de datos sensibles de cada tenant (heladeriaAi.
+        // detectSensitiveData), así que tiene que ser conservador por su
+        // cuenta y nunca persistir algo que parezca una tarjeta.
+        if (!userSession.order.telefono && looksLikePhone(p) && digitsOnly.length <= 13) {
+            userSession.order.telefono = digitsOnly;
+        } else if (!userSession.order.paymentMethod && looksLikePayment(p)) {
+            const low = p.toLowerCase();
+            userSession.order.paymentMethod = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
+        } else if (!userSession.order.address && looksLikeAddress(p)) {
+            // Quita prefijos comunes ("para la cra 23", "es en la calle 80")
+            // que el cliente agrega al mencionar la dirección de pasada, sin
+            // que se lo hayan pedido explícitamente.
+            userSession.order.address = p.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || p;
+        }
+    }
 }
 
 /**
@@ -591,9 +676,11 @@ async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
     const summary = generateCartSummary(userSession);
     userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
-    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
-        ? money(userSession.order.deliveryCost)
-        : 'Por confirmar';
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+            ? money(userSession.order.deliveryCost)
+            : 'Por confirmar';
 
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
@@ -625,6 +712,30 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     if (!address || typeof address !== 'string') {
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección válida.', ctx);
+        return;
+    }
+
+    // Auditoría 23/9: validateInput('address') solo exige ≥8 caracteres, así
+    // que una pregunta real ("¿por qué necesitan mi dirección?") la pasaba
+    // igual y quedaba GUARDADA TAL CUAL como la dirección de entrega. Antes
+    // de tratar el texto como dato, si tiene pinta de pregunta se intenta
+    // resolver con la IA primero.
+    if (looksLikeQuestion(address) && await delegateToAI(sock, jid, address, userSession, ctx)) return;
+
+    // Recogida en tienda (sin domicilio) - ver looksLikePickup. Caso real:
+    // "Me avisas cuando esté listo, yo mando a recogerlo" - el resto de la
+    // frase es puro relleno conversacional, no un nombre ni ningún otro dato
+    // real, así que NO se intenta extraer más de ese mismo mensaje (evita
+    // terminar guardando ese relleno como si fuera el nombre del cliente,
+    // como pasó al probar esto). Si el cliente además dio otro dato real en
+    // el mismo mensaje, se lo vuelve a pedir en el siguiente paso - más
+    // simple y más seguro que adivinar qué parte de la frase es relleno.
+    if (looksLikePickup(address)) {
+        userSession.order.pickup = true;
+        userSession.order.address = 'Recoge en el local';
+        userSession.order.deliveryCost = 0;
+        userSession.errorCount = 0;
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
         return;
     }
 
@@ -670,6 +781,16 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     }
 
     if (!validateInput(raw, 'address')) {
+        // Modo híbrido (regla fija, auditoría 23/9): antes de rendirse con el
+        // mensaje generico, intentar la IA - un cliente puede estar
+        // preguntando algo ("¿por qué necesitan mi dirección?") en vez de
+        // responder con una dirección corta o invalida. NO se incrementa
+        // errorCount aquí: si la IA tampoco entiende, handleNotUnderstood ya
+        // lo incrementa exactamente una vez (checkoutFallbackPrompt) -
+        // incrementarlo también aquí ANTES de intentar la IA duplicaba el
+        // conteo en un solo mensaje (2 en vez de 1), alcanzando el umbral de
+        // escalada a humano con una sola respuesta poco clara.
+        if (await delegateToAI(sock, jid, address, userSession, ctx)) return;
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
         return;
@@ -681,12 +802,23 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
 
 async function handleEnterName(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterName. Nombre recibido: "${input}"`);
+    // Auditoría 23/9: validateInput('string', {minLength:3}) solo exige ≥3
+    // caracteres - una pregunta real ("¿el nombre es obligatorio?") la pasa
+    // igual y quedaba GUARDADA TAL CUAL como el nombre del cliente. Antes de
+    // tratarlo como dato, si tiene pinta de pregunta se intenta la IA primero.
+    if (looksLikeQuestion(input) && await delegateToAI(sock, jid, input, userSession, ctx)) return;
     const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i) || input;
     if (validateInput(cleanInput, 'string', { minLength: 3 })) {
         userSession.order.name = cleanInput.trim();
         userSession.errorCount = 0;
         await askNextMissingCheckoutField(sock, jid, userSession, ctx);
     } else {
+        // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
+        // tiene handleEnterPaymentMethod - antes de "nombre inválido", que la
+        // IA intente entender (ej. una pregunta a mitad del checkout). El
+        // incremento de errorCount se deja a handleNotUnderstood (una sola
+        // vez si la IA tampoco entiende) - ver nota en handleEnterAddress.
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
         userSession.errorCount++;
         await say(sock, jid, '❌ Por favor, escribe un nombre válido (mínimo 3 caracteres).', ctx);
     }
@@ -697,6 +829,12 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i) || input;
     const telefono = cleanInput.replace(/[^0-9]/g, '').trim();
     if (!validateInput(telefono, 'string', { minLength: 7 })) {
+        // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
+        // tiene handleEnterPaymentMethod - antes de "teléfono inválido", que
+        // la IA intente entender (ej. una pregunta o un dato mal formado). El
+        // incremento de errorCount se deja a handleNotUnderstood - ver nota
+        // en handleEnterAddress.
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, escribe un número de teléfono válido (mínimo 7 dígitos).', ctx);
         return;
@@ -714,9 +852,13 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     const wordMatch = /transferencia|efectivo/i.exec(cleanInput);
     const paymentMethod = wordMatch ? wordMatch[0].toLowerCase() : normalizePaymentMethod(cleanInput);
     if (!paymentMethod) {
-        userSession.errorCount++;
-        // Modo híbrido: intentar IA antes del mensaje genérico
+        // Modo híbrido: intentar IA antes del mensaje genérico. Bug real
+        // (auditoría 23/9): antes se incrementaba errorCount ACÁ y de nuevo
+        // dentro de handleNotUnderstood si la IA tampoco entendía (+2 en un
+        // solo mensaje poco claro), alcanzando el umbral de escalada a
+        // humano (2) con una única respuesta confusa en vez de dos.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        userSession.errorCount++;
         await say(sock, jid, '❌ Opción no válida. Por favor, escribe *Transferencia* o *Efectivo*.', ctx);
         return;
     }
@@ -743,9 +885,11 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     userSession.order.deliveryCost = 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
 
-    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
-        ? money(userSession.order.deliveryCost) 
-        : 'Por confirmar';
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+            ? money(userSession.order.deliveryCost)
+            : 'Por confirmar';
 
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
@@ -964,16 +1108,21 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             return;
         }
 
-        // Sube errorCount ANTES de intentar la IA: cuenta como intento fallido
-        // sin importar si la IA resuelve el mensaje o no (mismo patrón que
-        // handleEnterPaymentMethod) - así el chequeo global de frustración se
-        // entera aunque la IA "se haga cargo" del mensaje.
-        userSession.errorCount = (userSession.errorCount || 0) + 1;
-        // Modo híbrido: intentar IA antes del mensaje genérico
-        // Pasa el texto ORIGINAL (no el ya minusculizado finalAction) para que
-        // una corrección en lenguaje natural ("La dirección es CRA 23...")
+        // Modo híbrido: intentar IA antes del mensaje genérico. Pasa el texto
+        // ORIGINAL (no el ya minusculizado finalAction) para que una
+        // corrección en lenguaje natural ("La dirección es CRA 23...")
         // conserve las mayúsculas tal como las escribió el cliente.
+        // NOTA (auditoría 23/9): antes se subía errorCount ACÁ, antes de
+        // llamar a la IA, con la intención de que "contara como intento
+        // fallido aunque la IA se hiciera cargo" - pero si la IA SÍ resuelve
+        // el mensaje, los caminos de éxito de handleNotUnderstood ya resetean
+        // errorCount a 0 (así que ese incremento no lograba nada ahí), y si
+        // la IA TAMPOCO entiende, handleNotUnderstood lo vuelve a subir un
+        // punto más (checkoutFallbackPrompt) - el efecto real neto era +2 en
+        // un solo mensaje poco claro, alcanzando el umbral de escalada a
+        // humano (2) de una sola vez.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         const invalidHint = (cfg && cfg.numericConfirm)
             ? 'escribe *1* para confirmar o *2* para editar'
             : 'escribe *confirmar* o *editar*';
@@ -1128,5 +1277,8 @@ module.exports = {
     startEditCart,
     validateInput,
     sendOrderNotification,
-    handleCheckoutPhase
+    handleCheckoutPhase,
+    askNextMissingCheckoutField,
+    looksLikePickup,
+    captureSideChannelFields
 };

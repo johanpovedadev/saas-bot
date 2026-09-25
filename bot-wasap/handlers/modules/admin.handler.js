@@ -23,8 +23,14 @@ const waitingHumanStore = require('../../services/waitingHumanStore');
 function getAdminJids(ctx = {}) {
     const admins = [];
     
-    // 1. Desde config file (business config) - prioridad para multi-tenant
+    // 1. Desde config file (business config) - prioridad para multi-tenant.
+    // REGLA "admins aparte": se incluyen TODOS los roles de admin — negocio
+    // (cambios/informes), sistema (alertas técnicas) y pedidos (escalamiento
+    // humano). Todos quedan SIEMPRE aparte del flujo de cliente.
     if (envConfig.admin?.jids?.length) admins.push(...envConfig.admin.jids);
+    if (envConfig.admin?.business_admin_jids?.length) admins.push(...envConfig.admin.business_admin_jids);
+    if (envConfig.admin?.system_admin_jids?.length) admins.push(...envConfig.admin.system_admin_jids);
+    if (envConfig.admin?.orders_admin_jids?.length) admins.push(...envConfig.admin.orders_admin_jids);
     
     // 2. Desde .env (compatibilidad hacia atrás)
     if (process.env.ADMIN_JID) admins.push(process.env.ADMIN_JID);
@@ -44,7 +50,14 @@ function getAdminJids(ctx = {}) {
  */
 function isAdmin(jid, ctx = {}) {
     const adminJids = getAdminJids(ctx);
-    return adminJids.includes(jid);
+    if (adminJids.includes(jid)) return true;
+    // Comparación robusta por dígitos: cubre @lid (privacidad de WhatsApp),
+    // @s.whatsapp.net y cualquier otro formato de JID. Sin esto, un mensaje
+    // del admin que llega como "xxx@lid" NO se reconocía como admin y el bot
+    // lo procesaba como cliente (causa de los "flujos revueltos").
+    const digits = String(jid || '').split('@')[0].replace(/\D/g, '');
+    if (!digits) return false;
+    return adminJids.some(a => String(a || '').split('@')[0].replace(/\D/g, '') === digits);
 }
 
 /**
