@@ -518,8 +518,20 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // algo del Sheet. Si no aplica ninguno de los dos casos, sigue de
         // largo (el dueno puede seguir usando el bot como cliente de prueba).
         if (adminHandler.isAdmin(jid, ctx)) {
+            // REGLA "admins aparte": los administradores NUNCA se procesan como
+            // cliente. Solo reciben comandos de control (handleAdminCommand) y la
+            // edición del Sheet (handleAdminSheetUpdate). Esto evita que un bot
+            // responda con flujo de cliente a su propio admin — causa raíz de los
+            // "flujos revueltos" cuando el número del admin está conectado a otro
+            // bot (ej: pilates_clientas en el número personal de Johan).
             const handled = await handleAdminSheetUpdate(sock, jid, text, ctx);
             if (handled) return;
+            const adminSession = initializeUserSession(jid, ctx);
+            if (await adminHandler.handleAdminCommand(sock, jid, text, adminSession, ctx)) {
+                return;
+            }
+            logger.info(`[${jid}] Admin detectado — mensaje NO procesado como cliente (regla: admins siempre aparte)`);
+            return;
         } else {
             // Cuenta para el resumen diario ("respondi en X conversaciones") -
             // solo conversaciones de clientes, no los mensajes del propio dueno.
@@ -531,6 +543,40 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // Datos del transporte (Telegram) para el flow de finanzas (registro de usuarios)
         if (messageData.username) userSession.telegramUsername = messageData.username;
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
+
+        // Captura de campos de entrega (dirección/teléfono/pago) EN CUALQUIER
+        // fase, para cualquier negocio de carrito — no solo cuando el bot los
+        // pidió explícitamente. Evita que se pierdan en silencio cuando llegan
+        // junto con otra cosa que un handler determinístico de fase ya
+        // resuelve por su cuenta (ver ticket "Mundo Helados no debe romperse
+        // fuera de flujo", 24-25 sep 2026). Se salta en las fases que YA piden
+        // estos datos explícitamente (esas usan classifyDeliveryParts, más
+        // completo, con su propio fallback de nombre) y en WAITING_HUMAN
+        // (nada se procesa ni se guarda mientras espera un humano).
+        const CHECKOUT_DEDICATED_PHASES = new Set([
+            PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO
+        ]);
+        if (!CHECKOUT_DEDICATED_PHASES.has(userSession.phase) && userSession.phase !== PHASE.WAITING_HUMAN) {
+            // Nunca guardar nada de un mensaje con datos sensibles (tarjeta,
+            // cédula, clave) — se verifica ANTES de capturar, usando la
+            // capacidad opcional del tenant (hoy solo heladería la tiene; un
+            // tenant sin esta capacidad simplemente no la bloquea, igual que
+            // antes de este cambio).
+            const sensitiveFlow = flowRegistry.getTenantFlowWithCapability('escalateIfSensitive');
+            const alreadyEscalated = sensitiveFlow && await sensitiveFlow.escalateIfSensitive(sock, jid, text, userSession, ctx);
+            if (alreadyEscalated) return;
+            // Corrección de un campo de entrega YA capturado (cambiar/quitar:
+            // "cambia mi dirección a Cra 45 #12-30", "quita la dirección",
+            // "mejor pago con transferencia"). Se evalúa ANTES del captador
+            // pasivo para que el prefijo de intención no se guarde como parte
+            // del valor. Si el mensaje era una corrección, se consume (el
+            // flujo no debe reinterpretar la instrucción como un pedido) y el
+            // pedido sigue su curso normal — nunca se reinicia ni pierde lo
+            // ya armado.
+            const correction = await checkoutHandler.handleFieldCorrection(sock, jid, text, userSession, ctx);
+            if (correction && correction.changed) return;
+            checkoutHandler.captureSideChannelFields(text, userSession);
+        }
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
         const currentFlow = getCurrentFlow();
@@ -619,8 +665,28 @@ async function processIncomingMessage(sock, messageData, ctx) {
             PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
             PHASE.SELECCION_PRODUCTO
         ]);
+        // Bug real (24-26 sep 2026, ticket "Mundo Helados no debe romperse
+        // fuera de flujo"): el cliente puede responder el mismo número corto
+        // dos veces seguidas para DOS preguntas distintas - primero se vio
+        // en el menú principal ("1" para "seguir comprando", luego "1" para
+        // "ver menú"), después en la transición cantidad -> personalización
+        // ("2" para "quiero 2 unidades", luego "2" para "cada una
+        // diferente"). Cualquier transición entre dos preguntas numeradas
+        // seguidas puede repetir el mismo dígito por coincidencia legítima -
+        // no tiene sentido exentar fase por fase cada vez que aparece un
+        // caso nuevo. Probé exentar solo SELECCION_OPCION primero pero eso
+        // no alcanzaba (rompió con HELADO_QUANTITY -> HELADO_UNITS_MODE);
+        // antes de eso probé exentar la fase COMPLETA y eso rompió
+        // test_waiting_human_panel.js: un cliente que manda el MISMO mensaje
+        // de TEXTO LIBRE dos veces (ej. "nadie me ayuda") SÍ es una señal
+        // real de que está atascado y debe escalar, sin importar la fase.
+        // La diferencia real nunca fue la fase, es el CONTENIDO: un número
+        // corto de menú (1-2 dígitos) repetido nunca es loop, en NINGUNA
+        // fase; un mensaje de texto libre repetido sí lo es, en cualquiera.
+        const isBareMenuDigit = /^\d{1,2}$/.test(String(text || '').trim());
         const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
+            !isBareMenuDigit &&
             isMessageLoop) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {
@@ -1162,6 +1228,11 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
             logger.debug(`[${messageData.from}] Media de grupo/estado/propio ignorado`);
             return;
         }
+        // REGLA "bots aparte": ignorar media de números registrados como otros bots
+        if (messageHandler.isRegisteredBotNumber(messageData.from)) {
+            logger.debug(`[${messageData.from}] Media de número registrado de otro bot ignorado (regla: bots aparte)`);
+            return;
+        }
         logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
         const userSession = initializeUserSession(messageData.from, ctx);
         if (messageData.username) userSession.telegramUsername = messageData.username;
@@ -1216,7 +1287,16 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
                     return;
                 }
                 logger.info(`[${messageData.from}] media: transcribiendo (mime=${media.mimetype})...`);
-                const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg');
+                // Bug real (auditoría 23/9, foto real de una clienta): una
+                // imagen con pie de foto (ej: "3 de esta xfavor") traía ese
+                // texto en messageData.text (extractMessageData ya lo lee de
+                // msg.body/caption), pero acá NUNCA se pasaba - solo se
+                // analizaban los bytes de la imagen, así que la cantidad/
+                // intención que el cliente escribió junto a la foto se
+                // perdía en silencio. Ahora se pasa como 4to argumento
+                // (transcribeAudio lo ignora sin problema, solo lo usa
+                // transcribeImage).
+                const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg', messageData.text || '');
                 logger.info(`[${messageData.from}] media: transcripción terminó: ${transcribed ? JSON.stringify(transcribed.substring(0, 60)) : 'null'}`);
                 if (!transcribed) {
                     await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');

@@ -16,6 +16,7 @@ const { logger } = require('../../utils/logger');
 const envConfig = require('../../config/env.loader');
 const bookingStore = require('../../services/bookingStore');
 const businessHours = require('../../utils/businessHours');
+const calendarService = require('../../services/calendarService');
 
 const FLOW_TYPE = 'APPOINTMENT_BOOKING';
 
@@ -204,6 +205,28 @@ async function handleConfirm(sock, jid, text, userSession, ctx) {
     }
 
     await say(sock, jid, `✅ ¡Listo! Tu cita quedó agendada para ${formatSlotLabel(result.appointment.startsAt)}. Te esperamos 😊`, ctx);
+
+    // Intento de sincronizar con Google Calendar (mismo patrón que
+    // pilates.flow.js); si no hay credenciales todavía, la cita ya quedó
+    // guardada localmente arriba, sin perderse — nunca bloquea la respuesta.
+    if (calendarService.isConfigured()) {
+        try {
+            const [dateISO, startTime] = result.appointment.startsAt.split('T');
+            const endDate = new Date(new Date(result.appointment.startsAt).getTime() + result.appointment.durationMinutes * 60000);
+            const endTime = endDate.toTimeString().slice(0, 5);
+            const calResult = await calendarService.bookAppointment({
+                dateISO,
+                startTime: startTime.slice(0, 5),
+                endTime,
+                summary: `Cita — ${cita.customerName || 'Cliente'}`,
+                description: `Agendada por WhatsApp.\nTeléfono: ${String(jid).split('@')[0]}`
+            });
+            if (calResult.synced) bookingStore.attachCalendarEvent(process.env.BUSINESS_KEY, result.appointment.id, calResult.eventId);
+        } catch (e) {
+            logger.error(`[${jid}] Error sincronizando cita con Calendar: ${e.message}`);
+        }
+    }
+
     userSession.cita = {};
     userSession.phase = PHASE.CITA_MENU;
 }
@@ -242,6 +265,13 @@ async function handleMyAppointments(sock, jid, text, userSession, ctx) {
     }
     const appointment = cita.myAppointments[idx - 1];
     bookingStore.cancelAppointment(process.env.BUSINESS_KEY, appointment.id);
+    if (appointment.calendarEventId) {
+        try {
+            await calendarService.deleteEvent(appointment.calendarEventId);
+        } catch (e) {
+            logger.error(`[${jid}] Error borrando cita cancelada de Calendar: ${e.message}`);
+        }
+    }
     await say(sock, jid, `✅ Listo, cancelé tu cita del ${formatSlotLabel(appointment.startsAt)}.`, ctx);
     await sendMainMenu(sock, jid, ctx, userSession);
 }

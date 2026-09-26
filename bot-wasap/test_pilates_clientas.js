@@ -9,6 +9,15 @@
  * contra la DB real usando jids marcados como TEST (mismo patron que
  * _regress_pescaderia.js) y limpia todo lo que crea al final.
  * Uso: node test_pilates_clientas.js
+ *
+ * Nota (25 sep 2026): falla de forma intermitente contra la DB real
+ * (booked_count no cuadra con lo esperado) - confirmado que YA fallaba
+ * antes de esta sesión (mismo resultado en el commit anterior a hoy,
+ * aislado en un worktree aparte), así que no es una regresión de nada
+ * tocado hoy. Pilates es un tenant real con datos reales - no es para
+ * correr en cada commit sin investigar más a fondo el estado de la DB
+ * primero (fuera de alcance de la sesión de hoy, enfocada en Mundo
+ * Helados).
  */
 const assert = require('assert');
 const path = require('path');

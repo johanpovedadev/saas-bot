@@ -96,33 +96,50 @@ async function runHeartbeat() {
         `Internet=${STATE.internet.status} WhatsApp=${STATE.whatsapp.status} Django=${STATE.django.status} Sheets=${STATE.sheets.status}`);
 }
 
-async function checkInternet() {
-    return new Promise((resolve) => {
+function pingConnectivityCheck() {
+    return new Promise((resolve, reject) => {
         const req = https.get('https://clients3.google.com/generate_204', { timeout: 10000 }, (res) => {
-            const wasDown = STATE.internet.status === 'DOWN';
-            STATE.internet = { status: 'OK', lastCheck: new Date().toISOString(), lastError: null };
-            if (wasDown) {
-                logger.info('[HealthCheck] Internet recuperado');
-                notificationService.notifySystemAlert(_sock, _ctx, '🌐', 'INTERNET RECUPERADO',
-                    `Estado: OK\nHora: ${new Date().toLocaleString('es-CO')}`
-                ).catch(() => {});
-            }
             res.resume();
             resolve(true);
         });
-        req.on('error', (e) => {
-            const wasOk = STATE.internet.status === 'OK' || STATE.internet.status === 'UNKNOWN';
-            STATE.internet = { status: 'DOWN', lastCheck: new Date().toISOString(), lastError: e.message };
-            if (wasOk) {
-                logger.error(`[HealthCheck] Internet DOWN: ${e.message}`);
-                notificationService.notifySystemAlert(_sock, _ctx, '🚫', 'INTERNET CAIDO',
-                    `Estado: DOWN\nError: ${e.message}\nHora: ${new Date().toLocaleString('es-CO')}`
-                ).catch(() => {});
-            }
-            resolve(false);
-        });
+        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('error', reject);
         req.end();
     });
+}
+
+// ISSUE #32-bis (24 sep 2026): un solo intento fallido de DNS/timeout ya
+// disparaba la alerta "INTERNET CAIDO" - eso generaba falsos positivos con
+// blips normales de red (pasó 6 veces en fechas separadas, no una caída
+// real prolongada). Ahora reintenta una vez antes de declarar DOWN.
+async function checkInternet() {
+    try {
+        await pingConnectivityCheck();
+    } catch (firstError) {
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+            await pingConnectivityCheck();
+        } catch (secondError) {
+            const wasOk = STATE.internet.status === 'OK' || STATE.internet.status === 'UNKNOWN';
+            STATE.internet = { status: 'DOWN', lastCheck: new Date().toISOString(), lastError: secondError.message };
+            if (wasOk) {
+                logger.error(`[HealthCheck] Internet DOWN (tras reintento): ${secondError.message}`);
+                notificationService.notifySystemAlert(_sock, _ctx, '🚫', 'INTERNET CAIDO',
+                    `Estado: DOWN\nError: ${secondError.message}\nHora: ${new Date().toLocaleString('es-CO')}`
+                ).catch(() => {});
+            }
+            return false;
+        }
+    }
+    const wasDown = STATE.internet.status === 'DOWN';
+    STATE.internet = { status: 'OK', lastCheck: new Date().toISOString(), lastError: null };
+    if (wasDown) {
+        logger.info('[HealthCheck] Internet recuperado');
+        notificationService.notifySystemAlert(_sock, _ctx, '🌐', 'INTERNET RECUPERADO',
+            `Estado: OK\nHora: ${new Date().toLocaleString('es-CO')}`
+        ).catch(() => {});
+    }
+    return true;
 }
 
 async function checkPageHealth() {
@@ -173,9 +190,10 @@ async function checkDjango() {
                     const parsed = JSON.parse(body);
                     if (parsed.google_sheets && parsed.google_sheets.status === 'error') {
                         const wasSheetsOk = STATE.sheets.status === 'OK' || STATE.sheets.status === 'UNKNOWN';
-                        STATE.sheets = { status: 'ERROR', lastCheck: new Date().toISOString(), lastError: parsed.google_sheets.error || 'Error desconocido' };
+                        const sheetsErrorMsg = parsed.google_sheets.error || 'Error desconocido';
+                        STATE.sheets = { status: 'ERROR', lastCheck: new Date().toISOString(), lastError: sheetsErrorMsg };
                         if (wasSheetsOk) {
-                            notificationService.notifySheetsError(_sock, _ctx, parsed.google_sheets.error).catch(() => {});
+                            notificationService.notifySheetsError(_sock, _ctx, sheetsErrorMsg).catch(() => {});
                         }
                     } else if (parsed.google_sheets && parsed.google_sheets.status === 'ok') {
                         STATE.sheets = { status: 'OK', lastCheck: new Date().toISOString(), lastError: null };

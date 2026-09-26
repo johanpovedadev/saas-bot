@@ -128,6 +128,16 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
  * Enruta el resultado de intención (IA o fallback) a la acción correspondiente.
  * Extraído de handleNotUnderstood para poder ser reusado por processAudio.
  */
+/**
+ * @returns {Promise<boolean>} true si el intent quedó resuelto de verdad
+ *   (incluye escalar a humano - eso también es una resolución, no una
+ *   confusión), false solo para "not_understood". checkoutHandler.
+ *   delegateToAI() usa este valor para decidir si el caller (handleEnterAddress,
+ *   etc.) debe subir su propio errorCount - antes esta función no devolvía
+ *   nada y delegateToAI asumía "resuelto" siempre (mismo bug ya corregido en
+ *   heladeria.flow.js#handleNotUnderstood, ver commit "Make CI honestly
+ *   test...").
+ */
 async function routeIntent(sock, jid, result, text, userSession, ctx) {
     const intent = result?.intent || 'not_understood';
     logger.info(`[${jid}] -> Flow híbrido: intent=${intent}`);
@@ -144,48 +154,48 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
                     if (result.no_reconocido) {
                         await say(sock, jid, `😅 Ojo: no encontré *"${result.no_reconocido}"* en el menú, así que no lo agregué. Escribe *menú* si quieres revisar el nombre exacto.`, ctx);
                     }
-                    return;
+                    return true;
                 }
             }
             await say(sock, jid, result.response || '😅 No encontré ese plato en el menú. Escribe *menú* para ver nuestras opciones 🐟', ctx);
-            return;
+            return false;
         }
         case 'repeat_order': {
             const recentOrders = restaurantStore.getRecentOrders(jid, 3);
             const last = recentOrders[0];
             if (!last || !Array.isArray(last.items) || last.items.length === 0) {
                 await say(sock, jid, '😊 Aún no tengo pedidos anteriores tuyos. ¿Qué deseas ordenar hoy?', ctx);
-                return;
+                return true;
             }
             const resolved = resolveProducts(last.items.map(i => ({ codigo: i.codigo, nombre: i.nombre, cantidad: i.cantidad })), ctx);
             if (resolved.length > 0) {
                 const added = await addResolvedProducts(sock, jid, resolved, userSession, ctx);
-                if (added) return;
+                if (added) return true;
             }
             await say(sock, jid, result.response || '😊 No pude repetir tu último pedido. Escribe *menú* para ver nuestras opciones.', ctx);
-            return;
+            return false;
         }
         case 'custom_order':
             userSession.phase = PHASE.ENCARGO;
             userSession.errorCount = 0;
             await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
-            return;
+            return true;
         case 'query_menu':
             await menuHandler.handleVerMenuOption(sock, jid, userSession, ctx);
-            return;
+            return true;
         case 'location':
             await menuHandler.handleDireccionOption(sock, jid, userSession, ctx);
-            return;
+            return true;
         case 'hours': {
             const hours = envConfig.business.hours?.weekday
                 ? `Lunes a Viernes: ${envConfig.business.hours.weekday.open} - ${envConfig.business.hours.weekday.close}\nSábado y Domingo: ${envConfig.business.hours.weekend?.open} - ${envConfig.business.hours.weekend?.close}`
                 : (process.env.BUSINESS_HOURS || '');
             await say(sock, jid, `🕐 *Nuestros horarios:*\n\n${hours}\n\n¿Deseas hacer un pedido? Escribe *menú* 😊`, ctx);
-            return;
+            return true;
         }
         case 'help':
             await menuHandler.sendMainMenu(sock, jid, ctx);
-            return;
+            return true;
         case 'human': {
             userSession.phase = PHASE.WAITING_HUMAN;
             const notificationService = require('../../services/notificationService');
@@ -194,7 +204,7 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
                     `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
             } catch (e) { /* ignore */ }
             await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🐟', ctx);
-            return;
+            return true;
         }
         case 'off_topic': {
             // Mensaje sin nada que ver con la pescadería -> se corta de una,
@@ -206,19 +216,25 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
                     `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
             } catch (e) { /* ignore */ }
             await say(sock, jid, '🐟 Te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden.', ctx);
-            return;
+            return true;
         }
         case 'chat':
+            // NO cuenta como "resuelto" para efectos de delegateToAI: es la
+            // respuesta de charla genérica, no una pregunta real contestada.
+            // Un dato de checkout inválido que la IA clasifica como "chat"
+            // (ej. "no" como dirección) debe seguir subiendo errorCount en
+            // el caller, igual que si no se hubiera entendido nada - ver
+            // test_cart_checkout_shared_escalation.js.
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
-            return;
+            return false;
         case 'checkout':
             await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-            return;
+            return true;
         default:
         case 'not_understood': {
             userSession.errorCount = (userSession.errorCount || 0) + 1;
             await say(sock, jid, result.response || '😅 No entendí bien lo que necesitas. Escribe *menú* para ver nuestras opciones.', ctx);
-            return;
+            return false;
         }
     }
 }
@@ -226,13 +242,14 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
 /**
  * Router de IA: interpreta el mensaje libre y enruta según la intención.
  * Se invoca SOLO cuando el flujo determinista no entendió.
+ * @returns {Promise<boolean>} ver routeIntent().
  */
 async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
     const recentOrders = restaurantStore.getRecentOrders(jid, 3);
 
     const result = await restaurantAi.interpret(text, userSession, recentOrders);
-    await routeIntent(sock, jid, result, text, userSession, ctx);
+    return routeIntent(sock, jid, result, text, userSession, ctx);
 }
 
 /**
@@ -327,8 +344,8 @@ async function transcribeAudio(audioBase64, userSession, mimeType) {
 /**
  * Lectura de imagen (usado por handler.js en el bloque de media).
  */
-async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg') {
-    const text = await restaurantAi.interpretImage(imageBase64, userSession, mimeType);
+async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
+    const text = await restaurantAi.interpretImage(imageBase64, userSession, mimeType, caption);
     if (!text) return null;
     logger.info(`pescaderia.flow transcribeImage: "${text.substring(0, 80)}"`);
     return text;

@@ -23,12 +23,42 @@ function todayKey(now) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * Bug real (pedido de Johan, 24/9): el resumen solo decía "8 conversaciones
+ * necesitan tu atención" - sin forma de saber si esas 8 son NUEVAS de hoy o
+ * las MISMAS de ayer que nadie marcó como resueltas (waitingHumanStore solo
+ * se limpia con el comando "reactivar mia <número>" - si el dueño le
+ * respondió al cliente directo por WhatsApp sin usar ese comando, el chat
+ * sigue apareciendo como pendiente indefinidamente). Se separan usando el
+ * "since" que ya guarda cada entrada (no hace falta dato nuevo): nuevas hoy
+ * vs las que ya llevan un día o más - y se listan los números de las viejas,
+ * porque esas SÍ necesitan que alguien las revise o las cierre.
+ */
+function separarPendientesPorAntiguedad(pendientesList) {
+    const inicioHoy = new Date();
+    inicioHoy.setHours(0, 0, 0, 0);
+    const nuevas = [];
+    const acumuladas = [];
+    for (const p of pendientesList) {
+        (p.since >= inicioHoy.getTime() ? nuevas : acumuladas).push(p);
+    }
+    return { nuevas, acumuladas };
+}
+
 async function runDailySummary(sock, ctx) {
     const businessKey = process.env.BUSINESS_KEY;
-    const pendientes = waitingHumanStore.listWaiting(businessKey).length;
+    const pendientesList = waitingHumanStore.listWaiting(businessKey);
+    const pendientes = pendientesList.length;
+    const { nuevas, acumuladas } = separarPendientesPorAntiguedad(pendientesList);
     const total = dailyActivityStore.getActivityCountToday(businessKey);
     const respondidas = Math.max(0, total - pendientes);
-    await notificationService.notifyDailySummary(sock, ctx, { respondidas, pendientes });
+    await notificationService.notifyDailySummary(sock, ctx, {
+        respondidas,
+        pendientes,
+        pendientesNuevas: nuevas.length,
+        pendientesAcumuladas: acumuladas.length,
+        numerosAcumulados: acumuladas.map(p => p.jid.split('@')[0])
+    });
 }
 
 function startDailySummaryJob(sock, ctx) {

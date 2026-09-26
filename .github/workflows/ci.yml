@@ -26,16 +26,18 @@ jobs:
           if [ -f package-lock.json ] ; then npm ci ; else npm install ; fi
 
       - name: Run root tests
-        run: npm test || true
+        run: npm test
 
       - name: Install bot-wasap deps and run tests
         run: |
           cd bot-wasap
           if [ -f package-lock.json ] ; then npm ci ; else npm install ; fi
-          npm test || true
+          npm test
 
       - name: Run gitleaks
         uses: zricethezav/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: detect --source . --exit-code 1
 
