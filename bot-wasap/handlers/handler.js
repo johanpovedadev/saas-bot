@@ -665,23 +665,28 @@ async function processIncomingMessage(sock, messageData, ctx) {
             PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
             PHASE.SELECCION_PRODUCTO
         ]);
-        // Bug real (24-25 sep 2026, ticket "Mundo Helados no debe romperse
-        // fuera de flujo"): en el menú principal (SELECCION_OPCION), el
-        // cliente puede responder "1" dos veces seguidas para DOS preguntas
-        // distintas (ej. "seguir comprando" y luego "ver menú de productos")
-        // - coincidencia de texto legítima, igual que ya se documentó arriba
-        // para SELECCION_PRODUCTO. Probé exentar la fase COMPLETA primero
-        // pero eso rompió test_waiting_human_panel.js: un cliente que manda
-        // el MISMO mensaje de texto libre dos veces en esa fase (ej. "nadie
-        // me ayuda") SÍ es una señal real de que está atascado y debe
-        // escalar igual que en cualquier otra fase. La diferencia real no es
-        // la fase, es el CONTENIDO: un número corto de menú (1-2 dígitos)
-        // repetido nunca es loop; un mensaje de texto libre repetido sí lo
-        // es, sin importar en qué fase.
+        // Bug real (24-26 sep 2026, ticket "Mundo Helados no debe romperse
+        // fuera de flujo"): el cliente puede responder el mismo número corto
+        // dos veces seguidas para DOS preguntas distintas - primero se vio
+        // en el menú principal ("1" para "seguir comprando", luego "1" para
+        // "ver menú"), después en la transición cantidad -> personalización
+        // ("2" para "quiero 2 unidades", luego "2" para "cada una
+        // diferente"). Cualquier transición entre dos preguntas numeradas
+        // seguidas puede repetir el mismo dígito por coincidencia legítima -
+        // no tiene sentido exentar fase por fase cada vez que aparece un
+        // caso nuevo. Probé exentar solo SELECCION_OPCION primero pero eso
+        // no alcanzaba (rompió con HELADO_QUANTITY -> HELADO_UNITS_MODE);
+        // antes de eso probé exentar la fase COMPLETA y eso rompió
+        // test_waiting_human_panel.js: un cliente que manda el MISMO mensaje
+        // de TEXTO LIBRE dos veces (ej. "nadie me ayuda") SÍ es una señal
+        // real de que está atascado y debe escalar, sin importar la fase.
+        // La diferencia real nunca fue la fase, es el CONTENIDO: un número
+        // corto de menú (1-2 dígitos) repetido nunca es loop, en NINGUNA
+        // fase; un mensaje de texto libre repetido sí lo es, en cualquiera.
         const isBareMenuDigit = /^\d{1,2}$/.test(String(text || '').trim());
         const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
-            !(userSession.phase === PHASE.SELECCION_OPCION && isBareMenuDigit) &&
+            !isBareMenuDigit &&
             isMessageLoop) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {
