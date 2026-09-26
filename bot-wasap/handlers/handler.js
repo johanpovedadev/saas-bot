@@ -565,6 +565,16 @@ async function processIncomingMessage(sock, messageData, ctx) {
             const sensitiveFlow = flowRegistry.getTenantFlowWithCapability('escalateIfSensitive');
             const alreadyEscalated = sensitiveFlow && await sensitiveFlow.escalateIfSensitive(sock, jid, text, userSession, ctx);
             if (alreadyEscalated) return;
+            // Corrección de un campo de entrega YA capturado (cambiar/quitar:
+            // "cambia mi dirección a Cra 45 #12-30", "quita la dirección",
+            // "mejor pago con transferencia"). Se evalúa ANTES del captador
+            // pasivo para que el prefijo de intención no se guarde como parte
+            // del valor. Si el mensaje era una corrección, se consume (el
+            // flujo no debe reinterpretar la instrucción como un pedido) y el
+            // pedido sigue su curso normal — nunca se reinicia ni pierde lo
+            // ya armado.
+            const correction = await checkoutHandler.handleFieldCorrection(sock, jid, text, userSession, ctx);
+            if (correction && correction.changed) return;
             checkoutHandler.captureSideChannelFields(text, userSession);
         }
         

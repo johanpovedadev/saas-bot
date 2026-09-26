@@ -636,6 +636,188 @@ function captureSideChannelFields(text, userSession) {
     }
 }
 
+// ====================================================================
+// 3) CORRECCIÓN de un campo de entrega YA capturado (cambiar/quitar) —
+//    generalización a la capa COMPARTIDA del patrón que heladería ya tenía
+//    para toppings ("quítale las gomitas"): señal de intención clara +
+//    comparar contra lo YA guardado, nunca reinterpretar un mensaje ambiguo.
+//    Aplica a los campos universales de cualquier negocio de carrito:
+//    dirección, nombre, teléfono y método de pago (mismo espíritu que
+//    captureSideChannelFields, pero para corregir lo ya capturado).
+// ====================================================================
+
+// Palabras que indican intención de QUITAR un campo. A propósito NO incluye
+// "sin": "pago sin tarjeta" significa pagar de otra forma, no quitar el
+// método de pago (y "sin gomitas" es el patrón de toppings de heladería, que
+// vive en el flow del tenant, no acá).
+const FIELD_REMOVE_INTENT = /\b(quita|quitar|qu[ií]tale|saca|s[áa]cale|elimina|borra|olvida|olv[ií]dalo|no era|no es esa|no es la|no era esa)\b/i;
+// Palabras que indican intención de CAMBIAR un campo.
+const FIELD_CHANGE_INTENT = /\b(cambia|cambiar|cambio|corrige|corregir|actualiza|actualizar|edita|editar|mejor|pon|ponme|deja|d[eé]jalo|anota|apunta|rectifica)\b/i;
+// Nombres de los campos universales (label del campo en el mensaje del cliente).
+const FIELD_ADDRESS_RE = /\b(direcci[oó]n(?:\s+de\s+entrega)?|domicilio)\b/i;
+const FIELD_NAME_RE = /\b(nombre)\b/i;
+const FIELD_PHONE_RE = /\b(tel[eé]fono|celular|cel|n[uú]mero|whatsapp)\b/i;
+const FIELD_PAYMENT_RE = /\b(pago|pagar|paga|m[eé]todo de pago|forma de pago)\b/i;
+const PAYMENT_WORD_RE = /\b(efectivo|transferencia|nequi|daviplata|tarjeta)\b/i;
+
+function normalizePaymentWord(word) {
+    const low = String(word || '').toLowerCase();
+    if (low.includes('transfer')) return 'transferencia';
+    if (low.includes('efect')) return 'efectivo';
+    return low; // nequi, daviplata, tarjeta
+}
+
+/**
+ * Guard conservador de la capa compartida: un intento de "cambiar" nunca debe
+ * procesarse si el mensaje trae datos sensibles (tarjeta/cédula/clave).
+ * handler.js ya lo bloquea antes de llegar acá vía escalateIfSensitive del
+ * tenant, pero esta función también se llama directo (tests, otros puntos),
+ * así que se re-verifica con una versión mínima propia — sin importar la IA
+ * de ningún tenant (la capa compartida no puede depender de una específica).
+ */
+function looksLikeSensitiveData(text) {
+    const t = String(text || '');
+    if (/\b(?:\d[ -]?){13,19}\b/.test(t)) return true; // PAN de tarjeta
+    if (/\b(?:clave|contrase[ñn]a|password|cvv)\b/i.test(t) && /\d{3,}/.test(t)) return true;
+    if (/\b(?:c[eé]dula|documento|identificaci[oó]n|cc)\b[^.\n]{0,20}\d{6,10}/i.test(t)) return true;
+    return false;
+}
+
+/**
+ * Pela el prefijo de intención + label del campo y devuelve el NUEVO valor
+ * crudo ("cambia mi dirección a Cra 45 #12-30" -> "Cra 45 #12-30"). Si el
+ * label no está al inicio (tras quitar la intención), devuelve null — no es
+ * un patrón de corrección limpio y no se debe adivinar ("cambia la hora de
+ * entrega a las 6" no es una dirección).
+ */
+function stripCorrectionPrefix(text, fieldLabelRe) {
+    let t = String(text || '').trim();
+    // Quitar la(s) palabra(s) de intención al inicio (hasta 2 veces para
+    // frases tipo "no era esa dirección, es Cra 45 #12-30").
+    const intentRe = new RegExp(`^(?:${FIELD_REMOVE_INTENT.source}|${FIELD_CHANGE_INTENT.source})\\s+`, 'i');
+    t = t.replace(intentRe, '');
+    t = t.replace(intentRe, '');
+    const labelMatch = t.match(new RegExp(`^(?:mi|la|el|tu|su|ese|esa|los|las)?\\s*(?:${fieldLabelRe.source})`, 'i'));
+    if (!labelMatch) return null;
+    t = t.slice(labelMatch[0].length);
+    // Conectores y relleno ("a", "para", "es", "con", comas, guiones...).
+    // OJO: tras el slice el texto puede empezar con espacio (" a Cra 45"),
+    // así que el regex tolera espacios ANTES del conector.
+    t = t.replace(/^\s*(?:a|para|por|es|en|con|de|al|que|ser[aá]|quede|ser[ií]a)?\s*/i, '');
+    t = t.replace(/^[,.\-:\s]+/, '').replace(/^(?:es|queda|ser[aá]|quede|ser[ií]a)\s+(?:la|el|mi|tu|su)?\s*/i, '').trim();
+    return t || null;
+}
+
+/**
+ * Detecta y aplica la intención del cliente de CAMBIAR o QUITAR un campo de
+ * entrega YA guardado en userSession.order (dirección, nombre, teléfono,
+ * método de pago). Corre en CUALQUIER fase (vía handler.js, después del check
+ * de datos sensibles y con el mismo guard de fases dedicadas de checkout y
+ * WAITING_HUMAN que captureSideChannelFields).
+ *
+ * Reglas (mismo criterio que el fix de "manzana" en captureSideChannelFields):
+ * - Requiere señal de intención clara (quita/cambia/corrige/mejor/no era...)
+ *   + el nombre del campo. Ante la duda, NO toca nada (retorna changed: false
+ *   y el mensaje sigue el procesamiento normal).
+ * - "Cambiar a X": reconoce el NUEVO valor con la misma lógica ya probada de
+ *   looksLikeAddress/looksLikePhone/looksLikePayment.
+ * - "Quitar": deja el campo en null para que askNextMissingCheckoutField() lo
+ *   vuelva a pedir naturalmente (ya existe, no se reinventa).
+ * - NUNCA procesa un mensaje con datos sensibles (tarjeta/cédula/clave).
+ * - No toca el carrito ni los productos — solo el campo indicado; el pedido
+ *   nunca se reinicia ni pierde lo demás ya armado.
+ *
+ * @returns {Promise<{changed: boolean, field: string|null, value: any}>}
+ *   changed: true → el mensaje era una corrección y ya se respondió (el
+ *   caller debe retornar sin procesarlo como pedido).
+ */
+async function handleFieldCorrection(sock, jid, text, userSession, ctx) {
+    const t = String(text || '').trim();
+    if (!t) return { changed: false, field: null, value: null };
+
+    if (looksLikeSensitiveData(t)) return { changed: false, field: null, value: null };
+
+    const hasRemoveIntent = FIELD_REMOVE_INTENT.test(t);
+    const hasChangeIntent = FIELD_CHANGE_INTENT.test(t);
+    if (!hasRemoveIntent && !hasChangeIntent) return { changed: false, field: null, value: null };
+
+    // ¿A qué campo se refiere? (prioridad: dirección > teléfono > pago > nombre).
+    let field = null;
+    let labelRe = null;
+    if (FIELD_ADDRESS_RE.test(t)) { field = 'address'; labelRe = FIELD_ADDRESS_RE; }
+    else if (FIELD_PHONE_RE.test(t)) { field = 'telefono'; labelRe = FIELD_PHONE_RE; }
+    else if (FIELD_PAYMENT_RE.test(t)) { field = 'paymentMethod'; labelRe = FIELD_PAYMENT_RE; }
+    else if (FIELD_NAME_RE.test(t)) { field = 'name'; labelRe = FIELD_NAME_RE; }
+    else if (hasChangeIntent && PAYMENT_WORD_RE.test(t)) { field = 'paymentMethod'; labelRe = null; } // "mejor con transferencia" (sin la palabra "pago")
+
+    if (!field) return { changed: false, field: null, value: null };
+
+    // Extraer el NUEVO valor (si lo hay). Para pago sin label explícito se
+    // toma la palabra de pago directo del texto.
+    let newValue = labelRe ? stripCorrectionPrefix(t, labelRe) : null;
+    if (field === 'paymentMethod' && newValue === null) {
+        const m = PAYMENT_WORD_RE.exec(t);
+        if (m) newValue = m[0];
+    }
+
+    // Validar el valor según el campo (misma lógica ya probada de
+    // looksLikeAddress/looksLikePhone/looksLikePayment).
+    let value = null;
+    if (newValue !== null) {
+        if (field === 'address') {
+            const cleaned = newValue.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || newValue;
+            if (looksLikeAddress(cleaned) && /\d/.test(cleaned)) value = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+        } else if (field === 'telefono') {
+            const digits = newValue.replace(/[^0-9]/g, '');
+            if (digits.length >= 7 && digits.length <= 13) value = digits;
+        } else if (field === 'paymentMethod') {
+            const m = PAYMENT_WORD_RE.exec(newValue);
+            if (m) value = normalizePaymentWord(m[0]);
+        } else if (field === 'name') {
+            const candidate = newValue.replace(/^[,.\-:\s]+/, '').trim();
+            if (candidate.length >= 3 && !looksLikePhone(candidate) &&
+                !(looksLikeAddress(candidate) && /\d/.test(candidate)) &&
+                !PAYMENT_WORD_RE.test(candidate) && !looksLikeQuestion(candidate)) {
+                value = candidate;
+            }
+        }
+    }
+
+    const action = value !== null ? 'change' : (hasRemoveIntent ? 'remove' : null);
+    if (!action) return { changed: false, field: null, value: null };
+
+    if (!userSession.order) userSession.order = {};
+    const fieldLabel = { address: 'dirección', name: 'nombre', telefono: 'teléfono', paymentMethod: 'método de pago' }[field];
+
+    if (action === 'change') {
+        userSession.order[field] = value;
+        await say(sock, jid, `✅ Listo, tu *${fieldLabel}* quedó: *${value}*.`, ctx);
+    } else {
+        // Quitar: dejar el campo vacío para que askNextMissingCheckoutField lo
+        // vuelva a pedir naturalmente. Si el campo no estaba guardado, no hay
+        // nada que corregir — no consumir el mensaje.
+        const current = userSession.order[field];
+        if (current === undefined || current === null || current === '') {
+            return { changed: false, field: null, value: null };
+        }
+        userSession.order[field] = null;
+        await say(sock, jid, `🗑️ Listo, quité tu *${fieldLabel}*.`, ctx);
+    }
+
+    // Seguir el proceso normal: en fases de checkout, pedir el siguiente campo
+    // que falte (o mostrar el resumen si ya están todos) — nunca reiniciar el
+    // pedido ni perder lo demás ya armado. En fases de pedido (mitad de
+    // flujo), solo se confirma el cambio y el cliente continúa donde iba.
+    const CHECKOUT_CONTINUE_PHASES = new Set([
+        PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO, PHASE.FINALIZE_ORDER
+    ]);
+    if (CHECKOUT_CONTINUE_PHASES.has(userSession.phase)) {
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+    }
+
+    return { changed: true, field, value: action === 'change' ? value : null };
+}
+
 /**
  * Clasifica por CONTENIDO (no por posición) las partes de un mensaje de
  * entrega ("Dirección, Nombre, Teléfono, Pago" o variantes fuera de orden),
@@ -1313,5 +1495,6 @@ module.exports = {
     handleCheckoutPhase,
     askNextMissingCheckoutField,
     looksLikePickup,
-    captureSideChannelFields
+    captureSideChannelFields,
+    handleFieldCorrection
 };
