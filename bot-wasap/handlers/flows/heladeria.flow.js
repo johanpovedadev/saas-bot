@@ -2240,83 +2240,11 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    toppings" explícitamente (en un pedido completo), avanzar con "sin"
     //    para no bloquear la cascada sabores → toppings → cantidad → dirección.
     const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
-    // Bug real (Johan probando en vivo, 25/9): pedir quitar un topping YA
-    // agregado ("no sin gomitas trululu", "quítale las gomitas") no hacía
-    // nada - el texto se perdía como "observación" y el topping se quedaba
-    // en el pedido. Se detecta la intención de quitar ANTES de la lógica de
-    // agregar (de abajo). OJO: NO se puede usar result.toppings acá - el
-    // prompt de la IA solo llena ese campo con lo que el cliente quiere
-    // AGREGAR, así que "quítale las gomitas" siempre le llega vacío. Se
-    // compara directo contra lo que YA está en la lista seleccionada y el
-    // texto crudo del cliente, sin pasar por la IA.
-    // Bug real (26/9): "quítale"/"quita" con pronombres pegados
-    // ("quítamela", "quítaselo", "sácamela") NO calzaban con \b...\b porque
-    // el patrón exigía la palabra completa exacta. Se compara la RAÍZ como
-    // prefijo (sin \b al final) sobre el texto sin acentos, así cubre
-    // cualquier conjugación con pronombre pegado.
-    const textNoAccents = stripAccents(String(text || '')).toLowerCase();
-    const wantsToRemove = /\b(quita|saca|elimina|borra)/i.test(textNoAccents) || /\bsin\b/i.test(textNoAccents);
-    // Bug real (26/9): lo de arriba no cubría HELADO_SABORES/HELADO_PER_UNIT_SABORES
-    // - un topping se puede haber anotado ANTES de terminar de elegir
-    // sabores (ej. detectado por ingrediente al pedir "algo con gomitas"),
-    // y el cliente puede querer quitarlo sin haber llegado siquiera a la
-    // pantalla de toppings todavía ("no pedí esa adición, quítamela").
-    if (userSession.heladoFlow && wantsToRemove &&
-        (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS ||
-         userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES)) {
-        const flow = userSession.heladoFlow;
-        const isPerUnit = userSession.phase === HELADO_PER_UNIT_TOPPINGS || userSession.phase === HELADO_PER_UNIT_SABORES;
-        const targetList = isPerUnit ? flow.customization.currentToppings : flow.toppingsSeleccionados;
-        const normalizedText = textNoAccents;
-        const textWords = normalizedText.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !TOPPING_STOPWORDS.has(w));
-        const removed = [];
-        // De atrás hacia adelante para poder splice() sin desfasar índices.
-        // Coincide por nombre completo ("gomitas trululu" en el texto), por
-        // palabra exacta en común, O por similitud difusa (ej. "gomas" -> no
-        // matchea "gomitas" ni como substring ni como palabra exacta, pero sí
-        // por similitud - bug real encontrado en vivo: Johan escribió "gomas"
-        // en vez de "gomitas") - mismo umbral (0.6) que ya usa
-        // updateProductPrice en checkoutHandler.js para resolver por nombre.
-        for (let i = targetList.length - 1; i >= 0; i--) {
-            const nombre = stripAccents(String(targetList[i][dbFields.productName] || '')).toLowerCase();
-            if (nombre.length < 3) continue;
-            const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
-            const exactMatch = normalizedText.includes(nombre) || nombreWords.some(w => textWords.includes(w));
-            const fuzzyMatch = !exactMatch && textWords.some(w => nombreWords.some(nw => similarityScore(w, nw) >= 0.6));
-            if (exactMatch || fuzzyMatch) {
-                removed.unshift(targetList.splice(i, 1)[0]);
-            }
-        }
-        if (removed.length > 0) {
-            const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
-            const restantes = targetList.length
-                ? targetList.map(t => {
-                    const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
-                    return `• ${t[dbFields.productName] || t}${precio ? ` (+${money(precio)})` : ''}`;
-                }).join('\n')
-                : '_(ninguno)_';
-            // Bug real (26/9): si el cliente quita un topping ANTES de
-            // terminar de elegir sabores, no se debe forzar a la fase de
-            // cantidad (se saltaría los sabores que aún faltan) - solo
-            // avanza a cantidad si YA estaba en toppings/cantidad; en
-            // sabores, se queda ahí y recuerda cuántos faltan.
-            const stillChoosingSabores = userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES;
-            let nextStepText = '';
-            if (isPerUnit || stillChoosingSabores) {
-                if (stillChoosingSabores) {
-                    const seleccionados = isPerUnit ? flow.customization.currentSabores : flow.saboresSeleccionados;
-                    const faltan = flow.counts.sabores - (seleccionados ? seleccionados.length : 0);
-                    if (faltan > 0) nextStepText = `\n\nTodavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`;
-                }
-            } else {
-                nextStepText = '\n\n¿Cuántas unidades deseas?';
-            }
-            await say(sock, jid, `✅ Quitado: *${nombresQuitados}*.\n\nToppings actuales:\n${restantes}${nextStepText}`, ctx);
-            if (!isPerUnit && !stillChoosingSabores) userSession.phase = HELADO_QUANTITY;
-            acted = true;
-        }
-    }
-    if (!acted && userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
+    // NOTA: la detección de "quitar una adición ya puesta" YA NO vive acá -
+    // se movió a tryRemoveOrderAddition() (más abajo en este archivo),
+    // llamada desde handler.js ANTES de cualquier despacho por fase. Ver el
+    // comentario en esa función para la historia completa de por qué.
+    if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
         if (result.toppings && result.toppings.length > 0) {
             const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
             if (codes.length > 0) {
@@ -2425,6 +2353,96 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     }
 
     return acted;
+}
+
+/**
+ * Detecta y ejecuta "quitar una adición/topping ya agregado al pedido en
+ * curso" (ej. "quítale las gomitas", "no pedí esa adición, sácamela",
+ * "elimina el queso"), SIN IMPORTAR EN QUÉ FASE esté el cliente dentro del
+ * flujo guiado de personalización (sabores, toppings, cantidad, por
+ * unidad...).
+ *
+ * Historia real (25-26 sep 2026, Johan probando en vivo): esto empezó
+ * viviendo DENTRO de classifyOrderInput(), condicionado a una lista
+ * explícita de fases (HELADO_TOPPINGS, HELADO_QUANTITY...). Cada vez que
+ * Johan encontraba el mismo bug en una fase nueva (primero HELADO_QUANTITY,
+ * después HELADO_SABORES) había que agregar esa fase a la lista a mano -
+ * un parche por fase, sin fin a la vista. La causa real nunca fue la fase:
+ * es que classifyOrderInput() solo se llama como RESPALDO desde dentro de
+ * cada handler determinístico (handleSabores, handleToppings...), cada uno
+ * con su propio criterio de cuándo rendirse y probar el respaldo - así que
+ * cualquier fase nueva necesitaba su propio cableado.
+ *
+ * La solución fue sacar esto de adentro del despacho por fase por completo:
+ * ahora es una capability que handler.js llama SIEMPRE, para TODO mensaje
+ * del cliente, ANTES de decidir a qué handler de fase despachar - mismo
+ * patrón que ya usa captureSideChannelFields en checkoutHandler.js. Así
+ * cubre cualquier fase, incluidas las que no existen todavía.
+ *
+ * @returns {Promise<boolean>} true si se quitó algo (el caller no debe
+ *   seguir procesando este mensaje con el flujo normal).
+ */
+async function tryRemoveOrderAddition(sock, jid, text, userSession, ctx) {
+    if (!userSession.heladoFlow) return false; // nada que quitar sin un pedido en construcción
+
+    // "quítamela"/"sácamela" (verbo + pronombre pegado) no calzan con un
+    // \b...\b de palabra completa - se compara la raíz como prefijo sobre
+    // el texto sin acentos, cubre cualquier conjugación.
+    const textNoAccents = stripAccents(String(text || '')).toLowerCase();
+    const wantsToRemove = /\b(quita|saca|elimina|borra)/i.test(textNoAccents) || /\bsin\b/i.test(textNoAccents);
+    if (!wantsToRemove) return false;
+
+    const flow = userSession.heladoFlow;
+    const isPerUnit = userSession.phase === HELADO_PER_UNIT_TOPPINGS || userSession.phase === HELADO_PER_UNIT_SABORES;
+    const targetList = isPerUnit ? (flow.customization && flow.customization.currentToppings) : flow.toppingsSeleccionados;
+    if (!targetList || targetList.length === 0) return false; // no hay toppings puestos, nada que hacer
+
+    const dbFields = getDbFields();
+    const textWords = textNoAccents.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !TOPPING_STOPWORDS.has(w));
+    const removed = [];
+    // De atrás hacia adelante para poder splice() sin desfasar índices.
+    // Coincide por nombre completo, por palabra exacta en común, O por
+    // similitud difusa (ej. "gomas" no matchea "gomitas" ni como substring
+    // ni como palabra exacta por la "i" de en medio, pero sí por similitud -
+    // bug real encontrado en vivo) - mismo umbral (0.6) que ya usa
+    // updateProductPrice en checkoutHandler.js para resolver por nombre.
+    for (let i = targetList.length - 1; i >= 0; i--) {
+        const nombre = stripAccents(String(targetList[i][dbFields.productName] || '')).toLowerCase();
+        if (nombre.length < 3) continue;
+        const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+        const exactMatch = textNoAccents.includes(nombre) || nombreWords.some(w => textWords.includes(w));
+        const fuzzyMatch = !exactMatch && textWords.some(w => nombreWords.some(nw => similarityScore(w, nw) >= 0.6));
+        if (exactMatch || fuzzyMatch) {
+            removed.unshift(targetList.splice(i, 1)[0]);
+        }
+    }
+    if (removed.length === 0) return false;
+
+    const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
+    const restantes = targetList.length
+        ? targetList.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` (+${money(precio)})` : ''}`;
+        }).join('\n')
+        : '_(ninguno)_';
+    // Si el cliente quita un topping ANTES de terminar de elegir sabores,
+    // no se debe forzar a la fase de cantidad (se saltaría los sabores que
+    // aún faltan) - solo avanza a cantidad si YA estaba en toppings/
+    // cantidad; en sabores, se queda ahí y recuerda cuántos faltan.
+    const stillChoosingSabores = userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES;
+    let nextStepText = '';
+    if (isPerUnit || stillChoosingSabores) {
+        if (stillChoosingSabores) {
+            const seleccionados = isPerUnit ? flow.customization.currentSabores : flow.saboresSeleccionados;
+            const faltan = flow.counts.sabores - (seleccionados ? seleccionados.length : 0);
+            if (faltan > 0) nextStepText = `\n\nTodavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`;
+        }
+    } else {
+        nextStepText = '\n\n¿Cuántas unidades deseas?';
+    }
+    await say(sock, jid, `✅ Quitado: *${nombresQuitados}*.\n\nToppings actuales:\n${restantes}${nextStepText}`, ctx);
+    if (!isPerUnit && !stillChoosingSabores) userSession.phase = HELADO_QUANTITY;
+    return true;
 }
 
 /**
@@ -2949,6 +2967,7 @@ module.exports = {
     showWelcome,
     handleNotUnderstood,
     escalateIfSensitive,
+    tryRemoveOrderAddition,
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => HELADERIA_PHASES.includes(phase),
     getPhases: () => HELADERIA_PHASES,

@@ -575,6 +575,15 @@ async function processIncomingMessage(sock, messageData, ctx) {
             // ya armado.
             const correction = await checkoutHandler.handleFieldCorrection(sock, jid, text, userSession, ctx);
             if (correction && correction.changed) return;
+            // Quitar una adición/topping YA agregado al pedido en curso
+            // ("quítale las gomitas", "sácame el queso"), sin importar la
+            // fase — capability opcional del tenant (hoy solo heladería;
+            // ver tryRemoveOrderAddition en heladeria.flow.js para la
+            // historia de por qué esto NO puede vivir condicionado a una
+            // lista de fases).
+            const removalFlow = flowRegistry.getTenantFlowWithCapability('tryRemoveOrderAddition');
+            const removed = removalFlow && await removalFlow.tryRemoveOrderAddition(sock, jid, text, userSession, ctx);
+            if (removed) return;
             checkoutHandler.captureSideChannelFields(text, userSession);
         }
         
