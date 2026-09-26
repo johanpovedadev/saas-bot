@@ -2914,7 +2914,7 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
         // pregunta - si no, es un dato inválido de checkout y el caller
         // (handleEnterAddress/Name/Telefono/PaymentMethod) debe seguir su
         // propio conteo de errores normal, no el genérico de acá.
-        const wasQuestion = looksLikeQuestion(text);
+        const wasQuestion = checkoutHandler.looksLikeQuestion(text);
         await checkoutFallbackPrompt(sock, jid, userSession, ctx);
         return wasQuestion;
     }

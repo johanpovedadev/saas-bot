@@ -76,6 +76,29 @@ async function delegateToAI(sock, jid, text, userSession, ctx) {
 }
 
 /**
+ * true si el tenant actual tiene su propio fallback de checkout con IA (ej.
+ * heladeria.flow.js#checkoutFallbackPrompt). Bug real (26 sep 2026): varios
+ * llamadores (handleEnterAddress, handleEnterName, handleEnterTelefono,
+ * handleEnterPaymentMethod, handleConfirmOrderChoice, el "1/2" de
+ * FINALIZE_ORDER) asumían que si delegateToAI devolvía `false` es porque el
+ * flow del tenant NO había hecho nada, así que hacían su PROPIO +1 de
+ * errorCount + mensaje genérico "por si acaso". Pero cuando el tenant SÍ
+ * tiene handleNotUnderstood, su checkoutFallbackPrompt YA responde y YA sube
+ * errorCount en TODAS las fases de checkout (CHECK_DIR/CHECK_NAME/
+ * CHECK_TELEFONO/CHECK_PAGO/CONFIRM_ORDER/FINALIZE_ORDER) sin importar si el
+ * texto era una pregunta de verdad (`wasQuestion`) - así que `false` acá NO
+ * significa "no hizo nada", significa "no era una pregunta, pero igual ya
+ * respondió". El resultado real era +2 en un solo mensaje poco claro,
+ * escalando a un humano desde el PRIMER fallo en vez del segundo. Cuando el
+ * tenant tiene este fallback, el llamador debe retornar SIEMPRE después de
+ * delegateToAI, sin repetir su propio mensaje ni su propio incremento.
+ */
+function hasTenantCheckoutFallback() {
+    const flowRegistry = require('./flowRegistry');
+    return !!flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
+}
+
+/**
  * Nombre de un topping para mostrar, con su precio adicional si tiene (ej:
  * "brownie ($ 4.000)") - acepta objeto {nombre/NombreProducto, precio/...} o
  * un string plano (compatibilidad con datos antiguos sin precio guardado).
@@ -505,10 +528,11 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
     if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
-    // Cuenta como "no entendí" para el chequeo global de frustración (handlers/
-    // handler.js paso 10) - si el flow del tenant tiene su propio fallback de
-    // checkout (ej. heladeria.flow.js) que ya suma errorCount, esto es
-    // redundante pero inofensivo (mismo contador, mismo efecto).
+    // Este mensaje genérico + su propio incremento solo deben usarse cuando
+    // el tenant NO tiene su propio fallback de checkout (ver
+    // hasTenantCheckoutFallback) - si lo tiene, ya respondió y ya contó el
+    // error dentro de delegateToAI.
+    if (hasTenantCheckoutFallback()) return;
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
 }
@@ -646,19 +670,45 @@ function captureSideChannelFields(text, userSession) {
 //    captureSideChannelFields, pero para corregir lo ya capturado).
 // ====================================================================
 
+// Sufijos de pronombre enclítico que un verbo en imperativo puede llevar
+// pegados ("quítala", "cámbiamela", "bórraselo"...). Un regex con el verbo
+// base + \b nunca los reconoce porque la forma conjugada es un string
+// distinto (y además cambia el acento: "cambia" -> "cámbiala"). Por eso todo
+// esto se compara contra texto SIN TILDES (ver stripAccents + norm en
+// handleFieldCorrection/stripCorrectionPrefix) usando el RADICAL del verbo
+// como prefijo en vez de enumerar cada combinación de pronombre a mano.
+const PRONOUN_SUFFIX = '(?:melo|mela|selo|sela|telo|tela|noslo|nosla|lo|la|los|las|le|les|me|te|se|nos)?';
+
 // Palabras que indican intención de QUITAR un campo. A propósito NO incluye
 // "sin": "pago sin tarjeta" significa pagar de otra forma, no quitar el
 // método de pago (y "sin gomitas" es el patrón de toppings de heladería, que
 // vive en el flow del tenant, no acá).
-const FIELD_REMOVE_INTENT = /\b(quita|quitar|qu[ií]tale|saca|s[áa]cale|elimina|borra|olvida|olv[ií]dalo|no era|no es esa|no es la|no era esa)\b/i;
+const FIELD_REMOVE_INTENT = new RegExp(
+    '\\b(?:quita' + PRONOUN_SUFFIX + '|quitar|saca' + PRONOUN_SUFFIX + '|sacar|' +
+    'elimina' + PRONOUN_SUFFIX + '|eliminar|borra' + PRONOUN_SUFFIX + '|borrar|' +
+    'olvida' + PRONOUN_SUFFIX + '|olvidar)\\b|\\bno (?:era|es)(?:\\s+(?:esa|la))?\\b',
+    'i'
+);
 // Palabras que indican intención de CAMBIAR un campo.
-const FIELD_CHANGE_INTENT = /\b(cambia|cambiar|cambio|corrige|corregir|actualiza|actualizar|edita|editar|mejor|pon|ponme|deja|d[eé]jalo|anota|apunta|rectifica)\b/i;
+const FIELD_CHANGE_INTENT = new RegExp(
+    '\\b(?:cambia' + PRONOUN_SUFFIX + '|cambiar|cambio|corrige' + PRONOUN_SUFFIX + '|corregir|' +
+    'actualiza' + PRONOUN_SUFFIX + '|actualizar|edita' + PRONOUN_SUFFIX + '|editar|' +
+    'anota' + PRONOUN_SUFFIX + '|anotar|apunta' + PRONOUN_SUFFIX + '|apuntar|' +
+    'rectifica' + PRONOUN_SUFFIX + '|rectificar|mejor|pon|ponme|deja|dejalo)\\b',
+    'i'
+);
 // Nombres de los campos universales (label del campo en el mensaje del cliente).
 const FIELD_ADDRESS_RE = /\b(direcci[oó]n(?:\s+de\s+entrega)?|domicilio)\b/i;
 const FIELD_NAME_RE = /\b(nombre)\b/i;
 const FIELD_PHONE_RE = /\b(tel[eé]fono|celular|cel|n[uú]mero|whatsapp)\b/i;
 const FIELD_PAYMENT_RE = /\b(pago|pagar|paga|m[eé]todo de pago|forma de pago)\b/i;
 const PAYMENT_WORD_RE = /\b(efectivo|transferencia|nequi|daviplata|tarjeta)\b/i;
+
+// Sin tildes + minúsculas. Mismo patrón local que ya usan heladeria.flow.js y
+// env.loader.js — no hay un util compartido en utils/*.js para esto.
+function stripAccents(text) {
+    return String(text || '').normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '');
+}
 
 function normalizePaymentWord(word) {
     const low = String(word || '').toLowerCase();
@@ -689,23 +739,45 @@ function looksLikeSensitiveData(text) {
  * label no está al inicio (tras quitar la intención), devuelve null — no es
  * un patrón de corrección limpio y no se debe adivinar ("cambia la hora de
  * entrega a las 6" no es una dirección).
+ *
+ * Recibe el texto ORIGINAL y su versión normalizada (sin tildes, minúsculas —
+ * ver stripAccents). Todo el reconocimiento de intención/label corre sobre la
+ * versión normalizada (así "cámbiala" calza igual que "cambia"), pero cada
+ * recorte se aplica EN PARALELO al texto original por longitud de caracteres
+ * — normalizar nunca cambia el largo del string — para que el valor nuevo
+ * devuelto conserve tildes/mayúsculas reales ("Cra 45 #12-30", "José").
  */
-function stripCorrectionPrefix(text, fieldLabelRe) {
-    let t = String(text || '').trim();
+function stripCorrectionPrefix(originalText, normalizedText, fieldLabelRe) {
+    let orig = String(originalText || '').trim();
+    let norm = String(normalizedText || '').trim();
+
     // Quitar la(s) palabra(s) de intención al inicio (hasta 2 veces para
     // frases tipo "no era esa dirección, es Cra 45 #12-30").
     const intentRe = new RegExp(`^(?:${FIELD_REMOVE_INTENT.source}|${FIELD_CHANGE_INTENT.source})\\s+`, 'i');
-    t = t.replace(intentRe, '');
-    t = t.replace(intentRe, '');
-    const labelMatch = t.match(new RegExp(`^(?:mi|la|el|tu|su|ese|esa|los|las)?\\s*(?:${fieldLabelRe.source})`, 'i'));
+    for (let i = 0; i < 2; i++) {
+        const m = norm.match(intentRe);
+        if (!m) break;
+        orig = orig.slice(m[0].length);
+        norm = norm.slice(m[0].length);
+    }
+
+    const labelMatch = norm.match(new RegExp(`^(?:mi|la|el|tu|su|ese|esa|los|las)?\\s*(?:${fieldLabelRe.source})`, 'i'));
     if (!labelMatch) return null;
-    t = t.slice(labelMatch[0].length);
+    orig = orig.slice(labelMatch[0].length);
+    norm = norm.slice(labelMatch[0].length);
+
     // Conectores y relleno ("a", "para", "es", "con", comas, guiones...).
     // OJO: tras el slice el texto puede empezar con espacio (" a Cra 45"),
     // así que el regex tolera espacios ANTES del conector.
-    t = t.replace(/^\s*(?:a|para|por|es|en|con|de|al|que|ser[aá]|quede|ser[ií]a)?\s*/i, '');
-    t = t.replace(/^[,.\-:\s]+/, '').replace(/^(?:es|queda|ser[aá]|quede|ser[ií]a)\s+(?:la|el|mi|tu|su)?\s*/i, '').trim();
-    return t || null;
+    let m = norm.match(/^\s*(?:a|para|por|es|en|con|de|al|que|ser[aá]|quede|ser[ií]a)?\s*/i);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+    m = norm.match(/^[,.\-:\s]+/);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+    m = norm.match(/^(?:es|queda|ser[aá]|quede|ser[ií]a)\s+(?:la|el|mi|tu|su)?\s*/i);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+
+    orig = orig.trim();
+    return orig || null;
 }
 
 /**
@@ -737,26 +809,31 @@ async function handleFieldCorrection(sock, jid, text, userSession, ctx) {
 
     if (looksLikeSensitiveData(t)) return { changed: false, field: null, value: null };
 
-    const hasRemoveIntent = FIELD_REMOVE_INTENT.test(t);
-    const hasChangeIntent = FIELD_CHANGE_INTENT.test(t);
+    // Sin tildes + minúsculas: un verbo conjugado con pronombre pegado
+    // ("cámbiala", "quítamela") cambia de acento respecto al verbo base
+    // ("cambia", "quita") y un regex con tilde fija nunca lo reconoce.
+    const norm = stripAccents(t).toLowerCase();
+
+    const hasRemoveIntent = FIELD_REMOVE_INTENT.test(norm);
+    const hasChangeIntent = FIELD_CHANGE_INTENT.test(norm);
     if (!hasRemoveIntent && !hasChangeIntent) return { changed: false, field: null, value: null };
 
     // ¿A qué campo se refiere? (prioridad: dirección > teléfono > pago > nombre).
     let field = null;
     let labelRe = null;
-    if (FIELD_ADDRESS_RE.test(t)) { field = 'address'; labelRe = FIELD_ADDRESS_RE; }
-    else if (FIELD_PHONE_RE.test(t)) { field = 'telefono'; labelRe = FIELD_PHONE_RE; }
-    else if (FIELD_PAYMENT_RE.test(t)) { field = 'paymentMethod'; labelRe = FIELD_PAYMENT_RE; }
-    else if (FIELD_NAME_RE.test(t)) { field = 'name'; labelRe = FIELD_NAME_RE; }
-    else if (hasChangeIntent && PAYMENT_WORD_RE.test(t)) { field = 'paymentMethod'; labelRe = null; } // "mejor con transferencia" (sin la palabra "pago")
+    if (FIELD_ADDRESS_RE.test(norm)) { field = 'address'; labelRe = FIELD_ADDRESS_RE; }
+    else if (FIELD_PHONE_RE.test(norm)) { field = 'telefono'; labelRe = FIELD_PHONE_RE; }
+    else if (FIELD_PAYMENT_RE.test(norm)) { field = 'paymentMethod'; labelRe = FIELD_PAYMENT_RE; }
+    else if (FIELD_NAME_RE.test(norm)) { field = 'name'; labelRe = FIELD_NAME_RE; }
+    else if (hasChangeIntent && PAYMENT_WORD_RE.test(norm)) { field = 'paymentMethod'; labelRe = null; } // "mejor con transferencia" (sin la palabra "pago")
 
     if (!field) return { changed: false, field: null, value: null };
 
     // Extraer el NUEVO valor (si lo hay). Para pago sin label explícito se
     // toma la palabra de pago directo del texto.
-    let newValue = labelRe ? stripCorrectionPrefix(t, labelRe) : null;
+    let newValue = labelRe ? stripCorrectionPrefix(t, norm, labelRe) : null;
     if (field === 'paymentMethod' && newValue === null) {
-        const m = PAYMENT_WORD_RE.exec(t);
+        const m = PAYMENT_WORD_RE.exec(norm);
         if (m) newValue = m[0];
     }
 
@@ -999,13 +1076,9 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
         // Modo híbrido (regla fija, auditoría 23/9): antes de rendirse con el
         // mensaje generico, intentar la IA - un cliente puede estar
         // preguntando algo ("¿por qué necesitan mi dirección?") en vez de
-        // responder con una dirección corta o invalida. NO se incrementa
-        // errorCount aquí: si la IA tampoco entiende, handleNotUnderstood ya
-        // lo incrementa exactamente una vez (checkoutFallbackPrompt) -
-        // incrementarlo también aquí ANTES de intentar la IA duplicaba el
-        // conteo en un solo mensaje (2 en vez de 1), alcanzando el umbral de
-        // escalada a humano con una sola respuesta poco clara.
+        // responder con una dirección corta o invalida.
         if (await delegateToAI(sock, jid, address, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
         return;
@@ -1030,10 +1103,9 @@ async function handleEnterName(sock, jid, input, userSession, ctx) {
     } else {
         // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
         // tiene handleEnterPaymentMethod - antes de "nombre inválido", que la
-        // IA intente entender (ej. una pregunta a mitad del checkout). El
-        // incremento de errorCount se deja a handleNotUnderstood (una sola
-        // vez si la IA tampoco entiende) - ver nota en handleEnterAddress.
+        // IA intente entender (ej. una pregunta a mitad del checkout).
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount++;
         await say(sock, jid, '❌ Por favor, escribe un nombre válido (mínimo 3 caracteres).', ctx);
     }
@@ -1046,10 +1118,9 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     if (!validateInput(telefono, 'string', { minLength: 7 })) {
         // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
         // tiene handleEnterPaymentMethod - antes de "teléfono inválido", que
-        // la IA intente entender (ej. una pregunta o un dato mal formado). El
-        // incremento de errorCount se deja a handleNotUnderstood - ver nota
-        // en handleEnterAddress.
+        // la IA intente entender (ej. una pregunta o un dato mal formado).
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, escribe un número de teléfono válido (mínimo 7 dígitos).', ctx);
         return;
@@ -1067,12 +1138,9 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     const wordMatch = /transferencia|efectivo/i.exec(cleanInput);
     const paymentMethod = wordMatch ? wordMatch[0].toLowerCase() : normalizePaymentMethod(cleanInput);
     if (!paymentMethod) {
-        // Modo híbrido: intentar IA antes del mensaje genérico. Bug real
-        // (auditoría 23/9): antes se incrementaba errorCount ACÁ y de nuevo
-        // dentro de handleNotUnderstood si la IA tampoco entendía (+2 en un
-        // solo mensaje poco claro), alcanzando el umbral de escalada a
-        // humano (2) con una única respuesta confusa en vez de dos.
+        // Modo híbrido: intentar IA antes del mensaje genérico.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount++;
         await say(sock, jid, '❌ Opción no válida. Por favor, escribe *Transferencia* o *Efectivo*.', ctx);
         return;
@@ -1327,16 +1395,8 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         // ORIGINAL (no el ya minusculizado finalAction) para que una
         // corrección en lenguaje natural ("La dirección es CRA 23...")
         // conserve las mayúsculas tal como las escribió el cliente.
-        // NOTA (auditoría 23/9): antes se subía errorCount ACÁ, antes de
-        // llamar a la IA, con la intención de que "contara como intento
-        // fallido aunque la IA se hiciera cargo" - pero si la IA SÍ resuelve
-        // el mensaje, los caminos de éxito de handleNotUnderstood ya resetean
-        // errorCount a 0 (así que ese incremento no lograba nada ahí), y si
-        // la IA TAMPOCO entiende, handleNotUnderstood lo vuelve a subir un
-        // punto más (checkoutFallbackPrompt) - el efecto real neto era +2 en
-        // un solo mensaje poco claro, alcanzando el umbral de escalada a
-        // humano (2) de una sola vez.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         const invalidHint = (cfg && cfg.numericConfirm)
             ? 'escribe *1* para confirmar o *2* para editar'
@@ -1495,6 +1555,7 @@ module.exports = {
     handleCheckoutPhase,
     askNextMissingCheckoutField,
     looksLikePickup,
+    looksLikeQuestion,
     captureSideChannelFields,
     handleFieldCorrection
 };

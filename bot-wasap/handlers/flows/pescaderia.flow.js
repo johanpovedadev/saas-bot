@@ -49,6 +49,14 @@ const RESTAURANT_PHASES = [
     PHASE.WAITING_HUMAN
 ];
 
+// Fases de checkout (captura de datos de entrega/confirmación) - usadas solo
+// para decidir si un intent "chat" (charla genérica, no resuelve nada) debe
+// contar como error hacia la escalada por frustración. Ver routeIntent().
+const CHECKOUT_DATA_PHASES = new Set([
+    PHASE.CONFIRM_ORDER, PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO,
+    PHASE.CHECK_PAGO, PHASE.CHECK_REF, PHASE.FINALIZE_ORDER, PHASE.EDIT_OPTIONS, PHASE.EDIT_CART_SELECTION
+]);
+
 function stripAccents(s) {
     return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -221,10 +229,21 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
         case 'chat':
             // NO cuenta como "resuelto" para efectos de delegateToAI: es la
             // respuesta de charla genérica, no una pregunta real contestada.
-            // Un dato de checkout inválido que la IA clasifica como "chat"
-            // (ej. "no" como dirección) debe seguir subiendo errorCount en
-            // el caller, igual que si no se hubiera entendido nada - ver
-            // test_cart_checkout_shared_escalation.js.
+            // Fuera de checkout esto es charla normal y NO debe contar como
+            // error (un cliente que solo saluda/agradece no debe escalar a un
+            // humano). DENTRO de una fase de checkout, en cambio, sí cuenta -
+            // mismo criterio que "not_understood" acá mismo y que
+            // heladeria.flow.js#checkoutFallbackPrompt: un dato de checkout
+            // inválido que la IA clasifica como "chat" (ej. "no" como
+            // dirección) es, en la práctica, lo mismo que no haberlo
+            // entendido - ver test_cart_checkout_shared_escalation.js.
+            // checkoutHandler.js (delegateToAI/hasTenantCheckoutFallback) ya
+            // NO vuelve a subir su propio contador cuando el tenant tiene
+            // handleNotUnderstood, así que si esta rama no cuenta el error
+            // acá, nunca se cuenta en ningún lado.
+            if (CHECKOUT_DATA_PHASES.has(userSession.phase)) {
+                userSession.errorCount = (userSession.errorCount || 0) + 1;
+            }
             await say(sock, jid, result.response || '😊 ¿En qué más puedo ayudarte?', ctx);
             return false;
         case 'checkout':
