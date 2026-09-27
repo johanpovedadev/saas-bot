@@ -1409,31 +1409,74 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
  * quedaba atrapado sin remedio.
  *
  * Match DETERMINÍSTICO contra el catálogo real (sin IA, así que no hay
- * riesgo de reclasificar mal otra vez) - si el texto trae un nombre de
- * producto real del menú, se procesa como pedido normal (inicia el flujo
- * guiado si el producto necesita sabores/toppings, o lo agrega directo si
- * no) y NUNCA se le vuelve a mostrar el formato de encargo para ese mensaje.
+ * riesgo de reclasificar mal otra vez) - si el texto trae uno o más
+ * nombres de producto reales del menú, se procesa como pedido normal
+ * (inicia el flujo guiado del primero que lo necesite, o agrega directo
+ * los que no) y NUNCA se le vuelve a mostrar el formato de encargo para
+ * ese mensaje. Soporta varios productos en un mismo mensaje (separados por
+ * coma, "y" o "+"), igual que el camino normal de pedidos - un cliente
+ * atrapado en encargo puede seguir pidiendo varias cosas a la vez, no solo
+ * una.
+ *
+ * Auditoría (26 sep 2026): si interpretar el inicio de un segmento como
+ * "<cantidad> <producto>" no resuelve nada real, también se prueba el
+ * segmento completo tal cual - un nombre de producto que empezara con un
+ * número (ej. un futuro "3 Leches") no debe perderse solo por asumir que
+ * ese número es una cantidad.
  *
  * @returns {Promise<boolean>} true si se resolvió como pedido normal.
  */
 async function tryHandleAsMenuOrder(sock, jid, text, userSession, ctx) {
     const t = String(text || '').trim();
     if (!t) return false;
-    const m = t.match(/^(\d{1,3})\s*(?:x|de)?\s*(.+)$/i);
-    const cantidad = m ? parseInt(m[1], 10) : 1;
-    const nombre = (m ? m[2] : t).trim();
-    if (nombre.length < 3) return false;
 
-    const resolved = resolveProducts([{ nombre, cantidad }], ctx);
+    const segments = t.split(/\s*(?:,|\by\b|\+)\s*/i).map(s => s.trim()).filter(Boolean);
+    const withQtyPrefix = [];
+    for (const seg of segments) {
+        const m = seg.match(/^(\d{1,3})\s*(?:x|de)?\s*(.+)$/i);
+        const cantidad = m ? parseInt(m[1], 10) : 1;
+        const nombre = (m ? m[2] : seg).trim();
+        if (nombre.length >= 3) withQtyPrefix.push({ nombre, cantidad });
+    }
+    // resolveProducts busca contra TODO productsCache, que también incluye
+    // sabores y toppings (componentes, no productos que se pidan solos) -
+    // sin filtrarlos, un texto que solo MENCIONE una palabra que coincide
+    // con un sabor/topping (ej. "chocolate", "queso", "fresa" en una frase
+    // cualquiera) se resolvía como si el cliente hubiera pedido ese sabor
+    // suelto como si fuera un producto. Se descartan esas categorías - acá
+    // solo interesa si el mensaje nombra un producto real del menú.
+    const dropSaborOTopping = (list) => list.filter(r => {
+        const cat = String(r.product.Categoria || '');
+        return cat !== CATEGORIA_SABORES && cat !== CATEGORIA_TOPPINGS;
+    });
+
+    let resolved = withQtyPrefix.length > 0 ? dropSaborOTopping(resolveProducts(withQtyPrefix, ctx)) : [];
+    if (resolved.length === 0) {
+        const asIs = segments.filter(s => s.length >= 3).map(nombre => ({ nombre, cantidad: 1 }));
+        resolved = asIs.length > 0 ? dropSaborOTopping(resolveProducts(asIs, ctx)) : [];
+    }
     if (resolved.length === 0) return false;
 
-    const r = resolved[0];
-    const counts = getCounts(r.product);
-    if (counts.sabores > 0 || counts.toppings > 0) {
-        userSession.pendingVoiceGuided = null;
-        await handleProductOptions(sock, jid, r.product, userSession, ctx);
-    } else {
-        await addResolvedProducts(sock, jid, [r], userSession, ctx);
+    const guided = [];
+    const plain = [];
+    for (const r of resolved) {
+        const c = getCounts(r.product);
+        (c.sabores > 0 || c.toppings > 0) ? guided.push(r) : plain.push(r);
+    }
+    if (plain.length > 0) {
+        if (guided.length > 0) {
+            const lineas = plain.map(r => `• ${r.cantidad}x ${getProductName(r.product)} - *${money(r.precio * r.cantidad)}*`).join('\n');
+            await say(sock, jid, `🍦 Ya agregué a tu pedido:\n\n${lineas}\n\nAhora personalizamos los productos que lo requieren...`, ctx);
+            for (const r of plain) addPlainToCarrito(userSession, r);
+        } else {
+            await addResolvedProducts(sock, jid, plain, userSession, ctx);
+            return true;
+        }
+    }
+    if (guided.length > 0) {
+        userSession.pendingVoiceGuided = guided;
+        const first = userSession.pendingVoiceGuided.shift();
+        await handleProductOptions(sock, jid, first.product, userSession, ctx);
     }
     return true;
 }
