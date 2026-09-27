@@ -950,6 +950,39 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
  *  - "2" (cada una diferente) → se recorre unidad por unidad (sabores →
  *    toppings) y se crea un ítem de carrito por unidad.
  */
+/**
+ * Modo "cada una diferente": arranca la personalización por unidad.
+ *
+ * Bug real (26 sep 2026): antes esto reseteaba todo a cero y le volvía a
+ * pedir al cliente los sabores/toppings de la unidad 1 desde el inicio -
+ * pero el cliente YA los había elegido, ANTES de que se le preguntara la
+ * cantidad (ej: eligió Arequipe x3 + queso para "Volcán de Gomitas", y
+ * DESPUÉS dijo que quería 2 unidades). Esa elección ya hecha es, en la
+ * práctica, la personalización de la unidad 1 - pedirla otra vez es
+ * redundante y confunde ("ya había pedido la del primero, solo debía pedir
+ * las del segundo"). Se usa lo ya elegido como unidad 1 y se salta directo
+ * a pedir la unidad 2 (o a finalizar de una si qty era 2 y ya se completó).
+ */
+async function startEachCustomization(sock, jid, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    customization.mode = 'each';
+    customization.units = [{
+        sabores: [...flow.saboresSeleccionados],
+        toppings: [...flow.toppingsSeleccionados],
+        observaciones: flow.observaciones || ''
+    }];
+    customization.currentUnit = 1;
+    customization.currentSabores = [];
+    customization.currentToppings = [];
+    customization.currentObs = '';
+    if (customization.currentUnit < customization.qty) {
+        await askPerUnitSabores(sock, jid, userSession, ctx);
+    } else {
+        await finalizeEachCustomization(sock, jid, userSession, ctx);
+    }
+}
+
 async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
     const flow = userSession.heladoFlow;
     const customization = flow.customization;
@@ -959,13 +992,7 @@ async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
     if (/^(2|diferente|diferentes|cada una|cada unidad|cada uno|distintos|distintas|variados|variadas)$/.test(normalized)) {
-        customization.mode = 'each';
-        customization.units = [];
-        customization.currentUnit = 0;
-        customization.currentSabores = [];
-        customization.currentToppings = [];
-        customization.currentObs = '';
-        await askPerUnitSabores(sock, jid, userSession, ctx);
+        await startEachCustomization(sock, jid, userSession, ctx);
         return;
     }
 
@@ -984,13 +1011,7 @@ async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
     if (choice === 'each') {
-        customization.mode = 'each';
-        customization.units = [];
-        customization.currentUnit = 0;
-        customization.currentSabores = [];
-        customization.currentToppings = [];
-        customization.currentObs = '';
-        await askPerUnitSabores(sock, jid, userSession, ctx);
+        await startEachCustomization(sock, jid, userSession, ctx);
         return;
     }
 
