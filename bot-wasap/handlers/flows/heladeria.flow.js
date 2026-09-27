@@ -1394,6 +1394,51 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
 }
 
 /**
+ * Intenta resolver el texto como un pedido normal del menú (ej: "2 copa
+ * gusanito") ANTES de tratarlo como un encargo real por texto libre.
+ *
+ * Bug real (26 sep 2026): "2 de esas y una limonada" (refiriéndose a
+ * productos ya mencionados en la conversación) se clasificó como
+ * custom_order porque la IA no pudo resolver "esas" contra nada concreto -
+ * pasó a fase ENCARGO. Desde ahí, CUALQUIER mensaje siguiente - incluso uno
+ * tan claro como "2 copa gusanito" - iba directo a
+ * reservationsHandler.handleEncargo, que solo sabe parsear el formato
+ * "Nombre, dirección, tipo, pago, teléfono". Al no calzar, repetía las
+ * instrucciones de encargo PARA SIEMPRE, sin ninguna salida, hasta escalar
+ * por "mensaje repetido" - un cliente con un pedido normal y explícito
+ * quedaba atrapado sin remedio.
+ *
+ * Match DETERMINÍSTICO contra el catálogo real (sin IA, así que no hay
+ * riesgo de reclasificar mal otra vez) - si el texto trae un nombre de
+ * producto real del menú, se procesa como pedido normal (inicia el flujo
+ * guiado si el producto necesita sabores/toppings, o lo agrega directo si
+ * no) y NUNCA se le vuelve a mostrar el formato de encargo para ese mensaje.
+ *
+ * @returns {Promise<boolean>} true si se resolvió como pedido normal.
+ */
+async function tryHandleAsMenuOrder(sock, jid, text, userSession, ctx) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const m = t.match(/^(\d{1,3})\s*(?:x|de)?\s*(.+)$/i);
+    const cantidad = m ? parseInt(m[1], 10) : 1;
+    const nombre = (m ? m[2] : t).trim();
+    if (nombre.length < 3) return false;
+
+    const resolved = resolveProducts([{ nombre, cantidad }], ctx);
+    if (resolved.length === 0) return false;
+
+    const r = resolved[0];
+    const counts = getCounts(r.product);
+    if (counts.sabores > 0 || counts.toppings > 0) {
+        userSession.pendingVoiceGuided = null;
+        await handleProductOptions(sock, jid, r.product, userSession, ctx);
+    } else {
+        await addResolvedProducts(sock, jid, [r], userSession, ctx);
+    }
+    return true;
+}
+
+/**
  * Enruta el resultado de intención de IA (audio) a la acción correspondiente.
  * Si el producto requiere sabores/toppings, inicia el flujo guiado en lugar
  * de agregarlo directo al carrito.
@@ -2989,6 +3034,7 @@ module.exports = {
     handleNotUnderstood,
     escalateIfSensitive,
     tryRemoveOrderAddition,
+    tryHandleAsMenuOrder,
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => HELADERIA_PHASES.includes(phase),
     getPhases: () => HELADERIA_PHASES,
