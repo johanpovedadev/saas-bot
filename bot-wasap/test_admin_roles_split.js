@@ -28,6 +28,18 @@
  * Pescadería: Johan es el único admin (confirmado 24/9) -> los 3 roles
  * apuntan a su mismo número A PROPÓSITO, no es un bug ahí.
  *
+ * FALLO ACTUAL ESPERADO (26 sep 2026): config/businesses/heladeria.json
+ * tiene system_admin_jids=[] a propósito - Johan pidió desbloquear
+ * temporalmente su propio número como admin de sistema para poder probar
+ * Mundo Helados él mismo como si fuera un cliente real ("Si continua déjalo
+ * así hasta que te pida cambio"). Mientras eso siga así, ESTE test debe
+ * seguir fallando - es la señal correcta de que el split de roles no está
+ * en su estado final, no una regresión nueva. Cuando Johan confirme que
+ * terminó de probar, restaurar los 3 archivos temporales (ver
+ * "_temp_unblock_nota" en config/businesses/heladeria.json,
+ * .env.heladeria y data/bot_owners.json) hace que este test vuelva a pasar
+ * solo, sin tocar el test.
+ *
  * Uso: node test_admin_roles_split.js
  */
 const path = require('path');

@@ -26,8 +26,16 @@ const businessHours = require('./utils/businessHours');
 // en Bogotá, y ambos deben coincidir en la misma fecha o el test de "día sin
 // servicio" queda comparando fechas distintas sin darse cuenta.
 const TODAY_BOGOTA = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
+// Fecha fija (miércoles, confirmado) para los checks de horario semanal: el
+// override que este test guarda solo cubre "weekday", así que esos checks
+// deben correr sobre un día de semana sin importar qué día sea "hoy" al
+// ejecutar la prueba. Bug real (26 sep 2026): corriendo un sábado/domingo,
+// isWithinBusinessHours usaba el rango "weekend" (que nunca se tocó, sigue
+// en el estático 14-22) en vez del override, y el check fallaba por el día
+// de la semana, no por ningún problema real del mecanismo de override.
+const A_WEEKDAY_BOGOTA = '2026-09-30';
 
-function bogotaMoment(hour, minute, isoDate = TODAY_BOGOTA) {
+function bogotaMoment(hour, minute, isoDate = A_WEEKDAY_BOGOTA) {
     const [y, m, d] = isoDate.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d, hour + 5, minute, 0, 0));
 }
@@ -58,16 +66,24 @@ function check(cond, msg) {
         check(stored.weekday.open === '08:00' && !stored.weekend,
             'setHours solo guarda lo que se le pasó — weekend queda sin override propio');
 
+        // Los checks de "día sin servicio" que siguen usan HOY (necesitan
+        // coincidir con la fecha real que marca setClosedDate/isClosedOnDate)
+        // - así que acá también se guarda el override de weekend (mismo
+        // horario) para que esos checks de hora no dependan de si "hoy" cae
+        // en fin de semana o no. El check anterior ya confirmó que setHours
+        // guarda weekday y weekend por separado, así que esto no lo repite.
+        hoursStore.setHours('heladeria', { weekend: { open: '08:00', close: '20:00' } });
+
         // Día puntual sin servicio.
-        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0)) === true,
+        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0, TODAY_BOGOTA)) === true,
             'antes de marcar el día como cerrado, mediodía cuenta como abierto (dentro del override 8-20)');
         hoursStore.setClosedDate('heladeria', TODAY_BOGOTA, true);
-        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0)) === false,
+        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0, TODAY_BOGOTA)) === false,
             'con el día de hoy marcado "sin servicio", cierra sin importar la hora');
         check(hoursStore.isClosedOnDate('heladeria', TODAY_BOGOTA) === true, 'isClosedOnDate refleja el día marcado');
 
         hoursStore.setClosedDate('heladeria', TODAY_BOGOTA, false);
-        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0)) === true,
+        check(businessHours.isWithinBusinessHours(bogotaMoment(12, 0, TODAY_BOGOTA)) === true,
             'al desmarcar el día, vuelve a abrir en el horario configurado');
         check(hoursStore.isClosedOnDate('heladeria', TODAY_BOGOTA) === false, 'isClosedOnDate refleja el día desmarcado');
 

@@ -10,14 +10,35 @@
  * _regress_pescaderia.js) y limpia todo lo que crea al final.
  * Uso: node test_pilates_clientas.js
  *
- * Nota (25 sep 2026): falla de forma intermitente contra la DB real
- * (booked_count no cuadra con lo esperado) - confirmado que YA fallaba
- * antes de esta sesión (mismo resultado en el commit anterior a hoy,
- * aislado en un worktree aparte), así que no es una regresión de nada
- * tocado hoy. Pilates es un tenant real con datos reales - no es para
- * correr en cada commit sin investigar más a fondo el estado de la DB
- * primero (fuera de alcance de la sesión de hoy, enfocada en Mundo
- * Helados).
+ * Nota (26 sep 2026) - causa real confirmada de por qué falla al correrlo
+ * un sábado/domingo (y potencialmente cualquier día, por la 2da causa):
+ *
+ * 1) Bri solo agenda lunes/miércoles/viernes (DAY_ORDER en
+ *    pilates_clientas.flow.js). getDaysAvailableThisWeek() filtra esos 3
+ *    días contra el día real de HOY - un sábado, ningún día de la semana
+ *    "queda", así que el propio bot bloquea A PROPÓSITO el auto-agendamiento
+ *    por chat ("el sábado te escribo para la próxima semana" - la campaña de
+ *    sábados es la que arma la agenda siguiente, no el menú). La prueba 1)
+ *    hardcodea 'viernes'/'miercoles'/'lunes' sin usar
+ *    getDaysAvailableThisWeek() para elegir un día real disponible (como sí
+ *    hace la prueba 2, más abajo), así que choca con esa regla real
+ *    cualquier fin de semana.
+ * 2) Al no reconocerse el día, el flow cae al respaldo de IA
+ *    (pilatesAi.classifyFreeText) - y pilates_clientas es el ÚNICO tenant
+ *    de los 3 (heladería/pescadería/pilates) que NUNCA tuvo su propia
+ *    GEMINI_API_KEY dedicada (ver .env.heladeria/.env.pescaderia vs.
+ *    .env.pilates_clientas), así que cae a la del .env compartido, que está
+ *    vencida (confirmado con una llamada directa a la API: "API key not
+ *    valid"). No afecta nada en vivo ahora mismo porque bot-pilates/
+ *    bot-pilates-clientas están detenidos en PM2, pero conviene que Johan
+ *    consiga una key propia antes de reactivarlos.
+ *
+ * Arreglarlo bien requiere reescribir la selección de días de la prueba 1)
+ * para que use getDaysAvailableThisWeek() en vez de días fijos (y aceptar
+ * que en fin de semana varias secciones simplemente no se pueden probar,
+ * por diseño del negocio) - cambio más grande a un test real de producción,
+ * fuera de foco de la sesión de hoy (Mundo Helados). Mientras tanto:
+ * no es para correr en cada commit.
  */
 const assert = require('assert');
 const path = require('path');
