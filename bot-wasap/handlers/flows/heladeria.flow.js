@@ -2211,7 +2211,14 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
 
     const contextInfo = buildClassifierContext(userSession, ctx);
     const result = await heladeriaAi.interpretOrderText(text, contextInfo);
-    if (!result) return false;
+    // Si la recogida YA se detectó y confirmó arriba (mensaje que habla SOLO
+    // de recogida/pago, sin nada más que la IA pueda clasificar como pedido),
+    // la falta de respuesta de la IA no puede deshacer ese "handled": el
+    // caller (ej. handlePostAdd) trataría este mensaje como no entendido y
+    // mandaría "❌ No entendí..." justo después del "👍 Anotado..." que ya se
+    // envió, contradiciéndolo. pickupJustDetected ya cuenta como "el mensaje
+    // sí se manejó".
+    if (!result) return pickupJustDetected;
 
     // Bug real (auditoría 23/9, foto real de una clienta): cuando el cliente
     // manda una FOTO de un producto sin nombrarlo, la descripción que genera

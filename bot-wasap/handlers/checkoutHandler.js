@@ -550,7 +550,24 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
 // entender esto - la frase caía en "No entendí" porque no calzaba con
 // ninguna dirección real, dejando al cliente atascado pidiendo algo que el
 // negocio sí ofrece (recogida en tienda).
-const PICKUP_RE = /\b(recoj[oa]|recoger|recogerl[oa]|pasar[eé]?\s+por|paso\s+(a\s+)?(recoger|por)|voy\s+a\s+recoger|mando\s+a\s+recoger|sin\s+domicilio|no\s+necesito\s+domicilio|recoge(r)?\s+en\s+(la\s+)?(tienda|local)|para\s+recoger)\b/gi;
+//
+// Bug real de producción (Johan probando en vivo, 28/9): "Envío a qué me lo
+// recojan y lo pago en efectivo" NUNCA se detectaba como recogida - el
+// cliente terminaba en el checkout normal, con la dirección pidiéndose de
+// todas formas pese a haber avisado que la recogía él mismo. Causa raíz: el
+// stem original (`recoj[oa]`) solo cubría la 1ra persona singular ("yo
+// recojo/recoja") y por eso fallaba con CUALQUIER otra conjugación del verbo
+// "recoger" - "me lo recojan", "lo recoge mi esposo", "lo recogen ellos",
+// "nosotros lo recogemos" - en la práctica más comunes que la 1ra persona,
+// porque el cliente casi nunca dice "yo recojo": habla de quién más pasa por
+// el pedido, o en modo impersonal/subjuntivo. Se reemplaza por las DOS raíces
+// reales del verbo en español ("recog-": recoge/recogen/recogemos/recoger/
+// recogió..., y "recoj-": recojo/recoja/recojan/recojas..., producto de la
+// alternancia ortográfica g→j antes de o/a) con \w* para cubrir cualquier
+// conjugación sin enumerar cada una a mano - ningún otro término común en
+// este dominio empieza con esas raíces, así que no hay riesgo real de falso
+// positivo.
+const PICKUP_RE = /\b(recog\w*|recoj\w*|pasar[eé]?\s+por|paso\s+(a\s+)?(recoger|por)|voy\s+a\s+recoger|mando\s+a\s+recoger|sin\s+domicilio|no\s+necesito\s+domicilio|para\s+recoger)\b/gi;
 function looksLikePickup(text) {
     PICKUP_RE.lastIndex = 0;
     return PICKUP_RE.test(String(text || ''));
@@ -994,6 +1011,31 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     logger.info(`[${jid}] -> Entrando a handleEnterAddress. Dirección: "${address}", Inicio: ${isInitialCall}`);
 
     if (isInitialCall) {
+        // Bug real de producción (Johan probando en vivo, 28/9): al confirmar
+        // el pedido ("1" en CONFIRM_ORDER) SIEMPRE se llega acá con
+        // isInitialCall=true, y esta rama SIEMPRE mostraba el prompt "escribe
+        // tu dirección de entrega" - incluso cuando el cliente YA había
+        // avisado que recogía en el local (detectado antes, a mitad del
+        // flujo guiado, ver classifyOrderInput en heladeria.flow.js). El
+        // pedido quedaba con order.pickup=true y order.address="Recoge en el
+        // local", pero se le pedía la dirección de todas formas,
+        // contradiciendo lo que el cliente ya había dicho.
+        //
+        // A propósito esto SOLO se salta para recogida (order.pickup), NO
+        // para cualquier order.address ya conocido: si el cliente corrigió
+        // su dirección de ENTREGA real a mitad del pedido (ver
+        // test_heladeria_correccion_campo_mid_order.js -
+        // handleFieldCorrection), el flujo de checkout SIGUE mostrando este
+        // primer prompt de todas formas - es información real que vale la
+        // pena reconfirmar explícitamente en el paso de checkout, a
+        // diferencia de "Recoge en el local", que no es un dato que el
+        // cliente deba revisar. askNextMissingCheckoutField ya sabe saltarse
+        // los campos que ya están y seguir con el siguiente que falte - se
+        // usa acá solo para el caso de recogida.
+        if (userSession.order && userSession.order.pickup) {
+            await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+            return;
+        }
         userSession.phase = PHASE.CHECK_DIR;
         await say(sock, jid, '🏠 ¡Perfecto! Para continuar, por favor escribe tu *dirección de entrega*.' +
             '\n\nSi prefieres, puedes enviar todos los datos en UN SOLO MENSAJE, separados por comas (en cualquier orden funciona, pero recomendamos): *Dirección, Nombre, Teléfono, Método de pago*.' +
