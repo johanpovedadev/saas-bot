@@ -690,6 +690,124 @@ function findBestTopping(target, list, dbFields) {
     return list.find(p => target.includes(norm(p))) || null;
 }
 
+// Umbral MÁS ALTO que el 0.6 que ya se usa en tryRemoveOrderAddition/
+// updateProductPrice, a propósito: acá una coincidencia equivocada
+// INTERRUMPE el flujo con una pregunta (costoso), no solo deja de quitar
+// algo en silencio (barato). Auditoría (27 sep 2026): con 0.6, "fruta" vs
+// "fresa" da exactamente 0.6 - dispararía una sugerencia para el caso que
+// Johan pidió explícitamente que siguiera siendo nota ("no quiero una
+// fruta"). Probado contra typos reales (birbujet/burbujet=0.875, queso/
+// quezo=0.8, brownie/browny=0.714, sparkies/esparkis=0.75): 0.7 los deja
+// pasar a todos y excluye limpiamente el falso positivo de "fruta".
+const TOPPING_FUZZY_THRESHOLD = 0.7;
+
+/**
+ * Candidatos por similitud (no exacta, no substring - eso ya lo intenta
+ * findBestTopping antes de llegar acá) para un token que no calzó con
+ * ningún topping real. Hasta 3, ordenados de más a menos parecido.
+ */
+function findFuzzyToppingCandidates(target, list, dbFields) {
+    const t = stripAccents(String(target || '').toLowerCase());
+    if (t.length < 3) return [];
+    return list
+        .map(p => ({ product: p, score: similarityScore(t, stripAccents(String(p[dbFields.productName] || '').toLowerCase())) }))
+        .filter(c => c.score >= TOPPING_FUZZY_THRESHOLD)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map(c => c.product);
+}
+
+function buildToppingGuessQuestion(guess, dbFields) {
+    const names = guess.candidates
+        .map((c, i) => `*${i + 1})* ${c[dbFields.productName] || c}`)
+        .join(guess.candidates.length > 1 ? '\no ' : '');
+    return `🤔 No encontré *"${guess.raw}"* en el menú, ¿tal vez quisiste decir esto?\n\n${names}\n\n` +
+        `Responde el número o el nombre, o *"no"* si no es ninguno.`;
+}
+
+/**
+ * Cierre común del paso de toppings (producto normal o unidad de una
+ * personalización "cada una diferente") - factorizado para que tanto el
+ * camino feliz como la resolución de una sugerencia pendiente (ver
+ * resolveToppingGuess) terminen exactamente igual.
+ */
+async function finishToppingsStep(sock, jid, userSession, ctx, isPerUnit) {
+    if (isPerUnit) {
+        await pushPerUnit(sock, jid, userSession, ctx);
+        return;
+    }
+    const flow = userSession.heladoFlow;
+    const dbFields = getDbFields();
+    userSession.phase = HELADO_QUANTITY;
+    const obs = flow.observaciones ? `\nObservaciones: ${flow.observaciones}` : '';
+    const lines = flow.toppingsSeleccionados.length
+        ? flow.toppingsSeleccionados.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
+        }).join('\n')
+        : 'sin toppings';
+    await say(sock, jid, `✅ Toppings:\n${lines}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
+}
+
+/**
+ * Resuelve la sugerencia de topping pendiente (ver findFuzzyToppingCandidates):
+ * el cliente responde confirmando uno de los candidatos (por número o
+ * nombre) o descartándolos ("no"/"ninguno") - en ese caso, y SOLO en ese
+ * caso, el texto original queda como nota, igual que antes de este arreglo.
+ *
+ * Bug real (27 sep 2026, reporte de Johan en vivo probando con una clienta
+ * real): escribió "Birbujet" (typo de "Burbujet", topping real T4) y quedó
+ * anotado como nota sin más, en vez de intentar reconocerlo. Notas debe
+ * seguir siendo para lo que de verdad no es un topping (ej. "no quiero
+ * fruta", "no quiero queso" en una ensalada) - no para un nombre real mal
+ * escrito que el catálogo sí puede resolver con confianza.
+ */
+async function resolveToppingGuess(sock, jid, text, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const guess = flow.pendingToppingGuess;
+    flow.pendingToppingGuess = null;
+    const dbFields = getDbFields();
+    const input = stripAccents(text.toLowerCase().trim());
+
+    if (/^(no|ninguno?|ninguna?|nada)$/i.test(input)) {
+        // La nota queda en el ámbito correcto: si era de una unidad
+        // puntual ("cada una diferente"), en las observaciones de ESA
+        // unidad (customization.currentObs) - no en las del flow completo,
+        // que aplicarían a todo el pedido.
+        if (guess.isPerUnit) {
+            flow.customization.currentObs = [flow.customization.currentObs, guess.raw].filter(Boolean).join(', ');
+        } else {
+            flow.observaciones = flow.observaciones ? `${flow.observaciones}, ${guess.raw}` : guess.raw;
+        }
+        await say(sock, jid, `👍 Anotado como nota: *${guess.raw}*.`, ctx);
+        await finishToppingsStep(sock, jid, userSession, ctx, guess.isPerUnit);
+        return;
+    }
+
+    const numMatch = input.match(/^(\d+)$/);
+    let chosen = numMatch ? (guess.candidates[parseInt(numMatch[1], 10) - 1] || null) : null;
+    if (!chosen) {
+        chosen = guess.candidates.find(c => {
+            const name = stripAccents(String(c[dbFields.productName] || '').toLowerCase());
+            return name === input || (input.length >= 3 && (input.includes(name) || name.includes(input)));
+        });
+    }
+    if (!chosen) {
+        // Ni confirmó un candidato ni descartó con claridad - reintenta.
+        flow.pendingToppingGuess = guess;
+        await say(sock, jid, buildToppingGuessQuestion(guess, dbFields), ctx);
+        return;
+    }
+
+    const list = guess.isPerUnit ? flow.customization.currentToppings : flow.toppingsSeleccionados;
+    if (!list.find(x => (x.CodigoProducto || x) === (chosen.CodigoProducto || chosen))) {
+        list.push(chosen);
+    }
+    const precio = parseFloat(String(chosen[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    await say(sock, jid, `✅ Anotado: *${chosen[dbFields.productName] || chosen}*${precio ? ` (+${money(precio)})` : ''}.`, ctx);
+    await finishToppingsStep(sock, jid, userSession, ctx, guess.isPerUnit);
+}
+
 /**
  * Paso 2: toppings opcionales. El cliente responde por NOMBRE (sin códigos):
  *  - "no/sin/nada" → avanza.
@@ -700,6 +818,7 @@ function findBestTopping(target, list, dbFields) {
  */
 async function handleToppings(sock, jid, text, userSession, ctx) {
     const flow = userSession.heladoFlow;
+    if (flow.pendingToppingGuess) { await resolveToppingGuess(sock, jid, text, userSession, ctx); return; }
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
     const input = stripAccents(text.toLowerCase().trim());
@@ -784,6 +903,17 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
                     added.push(top);
                 }
             } else if (!/^\d+$/.test(tok)) {
+                // Bug real (27 sep 2026): antes de archivarlo como nota,
+                // intentar reconocerlo como un nombre real mal escrito (ej.
+                // "Birbujet" -> "Burbujet") - solo si de verdad no hay
+                // ningún candidato parecido se guarda como nota (ese caso
+                // sigue igual, ej: "no quiero fruta").
+                const candidates = findFuzzyToppingCandidates(tok, toppingsList, dbFields);
+                if (candidates.length > 0) {
+                    flow.pendingToppingGuess = { raw: tok, candidates, isPerUnit: false };
+                    await say(sock, jid, buildToppingGuessQuestion(flow.pendingToppingGuess, dbFields), ctx);
+                    return;
+                }
                 observaciones.push(tok);
             }
         }
@@ -796,29 +926,17 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    userSession.phase = HELADO_QUANTITY;
     if (observaciones.length) {
         flow.observaciones = flow.observaciones
             ? `${flow.observaciones}, ${observaciones.join(', ')}`
             : observaciones.join(', ');
     }
-    const obs = flow.observaciones ? `\nObservaciones: ${flow.observaciones}` : '';
-    // Bug real: este mensaje mostraba solo los toppings agregados en ESTE
-    // mensaje puntual ("added") - si un topping ya se había anotado antes
-    // (ej: mencionado mientras se pedían los sabores, ver punto "3b" de
-    // classifyOrderInput) y este mensaje no agregó ninguno nuevo, decía
-    // "sin toppings" aunque el topping SÍ seguía guardado en el carrito
-    // final. Un cliente real vio esto y pensó que se había perdido. Ahora
-    // siempre muestra la lista COMPLETA acumulada (flow.toppingsSeleccionados),
-    // no solo lo nuevo de este mensaje.
-    const lines = flow.toppingsSeleccionados.length
-        ? flow.toppingsSeleccionados.map(t => {
-            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
-            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
-        }).join('\n')
-        : 'sin toppings';
-    await say(sock, jid,
-        `✅ Toppings:\n${lines}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
+    // Cierre factorizado (finishToppingsStep) para que también lo use
+    // resolveToppingGuess al terminar de resolver una sugerencia pendiente -
+    // muestra siempre la lista COMPLETA acumulada, no solo lo nuevo de este
+    // mensaje (bug real ya corregido antes: un topping anotado en un mensaje
+    // previo no debía "desaparecer" del resumen).
+    await finishToppingsStep(sock, jid, userSession, ctx, false);
 }
 
 /**
@@ -1129,6 +1247,7 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
  */
 async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
     const flow = userSession.heladoFlow;
+    if (flow.pendingToppingGuess) { await resolveToppingGuess(sock, jid, text, userSession, ctx); return; }
     const customization = flow.customization;
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
@@ -1199,6 +1318,14 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
                     added.push(top);
                 }
             } else if (!/^\d+$/.test(tok)) {
+                // Mismo arreglo que handleToppings: intentar reconocer un
+                // nombre real mal escrito antes de archivarlo como nota.
+                const candidates = findFuzzyToppingCandidates(tok, toppingsList, dbFields);
+                if (candidates.length > 0) {
+                    flow.pendingToppingGuess = { raw: tok, candidates, isPerUnit: true };
+                    await say(sock, jid, buildToppingGuessQuestion(flow.pendingToppingGuess, dbFields), ctx);
+                    return;
+                }
                 observaciones.push(tok);
             }
         }
