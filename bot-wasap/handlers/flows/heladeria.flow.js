@@ -2659,6 +2659,18 @@ async function tryRemoveOrderAddition(sock, jid, text, userSession, ctx) {
             removed.unshift(targetList.splice(i, 1)[0]);
         }
     }
+    // Bug real (29/9, Johan probando en vivo): dijo "Sin adición" para quitar
+    // la única adición recién anotada, sin nombrarla - el match de arriba
+    // exige que el texto mencione el NOMBRE del topping (o algo similar por
+    // difusa), así que una referencia genérica a "la adición" no encontraba
+    // nada y el turno caía al parser de sabores, mostrando "No reconocí
+    // 'adicion'" como si no se hubiera entendido nada. Con exactamente UNA
+    // adición puesta, "adición" sin nombre propio es inequívoco - se quita
+    // esa. Con 2+ no se adivina cuál, se deja como estaba (el cliente puede
+    // nombrarla).
+    if (removed.length === 0 && targetList.length === 1 && /\badici[oó]n(es)?\b/i.test(textNoAccents)) {
+        removed.push(targetList.pop());
+    }
     if (removed.length === 0) return false;
 
     const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
