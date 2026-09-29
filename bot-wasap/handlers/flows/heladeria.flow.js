@@ -34,7 +34,7 @@ const reservationsHandler = require('../modules/reservations.handler');
 const heladeriaAi = require('../../services/heladeriaAi');
 const editableConfig = require('../../services/editableConfig');
 const { money } = require('../../utils/util');
-const { similarityScore } = require('../../utils/fuzzySearch');
+const { similarityScore, resolveTextReferenceToCartItems } = require('../../utils/fuzzySearch');
 
 const FLOW_TYPE = 'ICE_CREAM';
 
@@ -2641,37 +2641,18 @@ async function tryRemoveOrderAddition(sock, jid, text, userSession, ctx) {
     if (!targetList || targetList.length === 0) return false; // no hay toppings puestos, nada que hacer
 
     const dbFields = getDbFields();
-    const textWords = textNoAccents.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !TOPPING_STOPWORDS.has(w));
-    const removed = [];
-    // De atrás hacia adelante para poder splice() sin desfasar índices.
-    // Coincide por nombre completo, por palabra exacta en común, O por
-    // similitud difusa (ej. "gomas" no matchea "gomitas" ni como substring
-    // ni como palabra exacta por la "i" de en medio, pero sí por similitud -
-    // bug real encontrado en vivo) - mismo umbral (0.6) que ya usa
-    // updateProductPrice en checkoutHandler.js para resolver por nombre.
-    for (let i = targetList.length - 1; i >= 0; i--) {
-        const nombre = stripAccents(String(targetList[i][dbFields.productName] || '')).toLowerCase();
-        if (nombre.length < 3) continue;
-        const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
-        const exactMatch = textNoAccents.includes(nombre) || nombreWords.some(w => textWords.includes(w));
-        const fuzzyMatch = !exactMatch && textWords.some(w => nombreWords.some(nw => similarityScore(w, nw) >= 0.6));
-        if (exactMatch || fuzzyMatch) {
-            removed.unshift(targetList.splice(i, 1)[0]);
-        }
-    }
-    // Bug real (29/9, Johan probando en vivo): dijo "Sin adición" para quitar
-    // la única adición recién anotada, sin nombrarla - el match de arriba
-    // exige que el texto mencione el NOMBRE del topping (o algo similar por
-    // difusa), así que una referencia genérica a "la adición" no encontraba
-    // nada y el turno caía al parser de sabores, mostrando "No reconocí
-    // 'adicion'" como si no se hubiera entendido nada. Con exactamente UNA
-    // adición puesta, "adición" sin nombre propio es inequívoco - se quita
-    // esa. Con 2+ no se adivina cuál, se deja como estaba (el cliente puede
-    // nombrarla).
-    if (removed.length === 0 && targetList.length === 1 && /\badici[oó]n(es)?\b/i.test(textNoAccents)) {
-        removed.push(targetList.pop());
-    }
+    // El matching (nombre exacto, difuso, o referencia genérica del tipo
+    // "sin adición" cuando hay un solo ítem puesto) vive en
+    // resolveTextReferenceToCartItems (utils/fuzzySearch.js) - genérico,
+    // reusable por cualquier negocio con carrito, no solo heladería. Ver el
+    // docblock de esa función para la historia completa (incluido el bug
+    // real del 29/9 que la motivó: "Sin adición" sin nombrar el topping).
+    const removed = resolveTextReferenceToCartItems(targetList, text, dbFields.productName, /\badici[oó]n(es)?\b/i);
     if (removed.length === 0) return false;
+    for (const item of removed) {
+        const idx = targetList.indexOf(item);
+        if (idx !== -1) targetList.splice(idx, 1);
+    }
 
     const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
     const restantes = targetList.length
