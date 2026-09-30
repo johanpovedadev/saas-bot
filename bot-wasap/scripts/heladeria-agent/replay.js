@@ -56,6 +56,22 @@ axios.post = async (url) => ({ status: 200, statusText: `OK (replay, POST bloque
 // Contabilidad de IA por turno: todas las llamadas a Gemini (reglas o agente)
 // pasan por GenerativeModel.prototype.generateContent.
 const als = new AsyncLocalStorage();
+
+// Reloj fijado a la hora ORIGINAL de cada mensaje del corpus: "¿el local
+// está abierto?" depende de la hora, y sin esto dos corridas del mismo corpus
+// (o una corrida de noche vs de día) le mostraban a los flujos un horario
+// distinto -> decisiones distintas que no tenían nada que ver con el agente.
+// Solo se fija `new Date()` sin argumentos (lectura del reloj); Date.now()
+// sigue real para medir latencias. REPLAY_REAL_CLOCK=1 lo desactiva.
+const RealDate = Date;
+if (process.env.REPLAY_REAL_CLOCK !== '1') {
+    global.Date = class ReplayDate extends RealDate {
+        constructor(...args) {
+            const store = args.length === 0 ? als.getStore() : null;
+            if (store && store.now) super(store.now); else super(...args);
+        }
+    };
+}
 const { GenerativeModel } = require('@google/generative-ai');
 const origGenerate = GenerativeModel.prototype.generateContent;
 GenerativeModel.prototype.generateContent = async function (...args) {
@@ -125,7 +141,7 @@ async function replaySession(s, idx, mode) {
             },
             getChatById: async () => null
         };
-        const store = { calls: 0, ms: 0, promptTokens: 0, outTokens: 0, errors: 0, models: {} };
+        const store = { calls: 0, ms: 0, promptTokens: 0, outTokens: 0, errors: 0, models: {}, now: turn.time || null };
         const before = (traces.get(jid) || []).length;
         const t0 = Date.now();
         let exception = null;

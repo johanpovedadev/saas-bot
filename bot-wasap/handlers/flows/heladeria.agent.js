@@ -250,10 +250,15 @@ function describeCartItem(it) {
 function describeState(userSession) {
     const lines = [];
     const phase = userSession.phase;
+    // Sin hora ni minuto: el input de la IA tiene que ser función SOLO del
+    // pedido, el historial y el mensaje. Antes iba "HORA LOCAL: martes, 15:14"
+    // - el mismo mensaje del mismo cliente llegaba a la IA con un texto
+    // distinto cada minuto (causa medida de la inconsistencia entre
+    // corridas; ver test_cart_agent_determinismo.js). Solo se conserva si el
+    // local está abierto o cerrado, que sí cambia lo que se puede ofrecer.
     try {
-        const hora = new Intl.DateTimeFormat('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', weekday: 'long', hour12: false }).format(new Date());
-        lines.push(`HORA LOCAL: ${hora} — el local está ${businessHours.isWithinBusinessHours() ? 'ABIERTO' : 'CERRADO (se toman pedidos igual; se preparan al abrir)'}`);
-    } catch (_) { /* sin hora no se rompe el turno */ }
+        lines.push(`HORARIO: el local está ${businessHours.isWithinBusinessHours() ? 'ABIERTO' : 'CERRADO (se toman pedidos igual; se preparan al abrir)'}`);
+    } catch (_) { /* sin horario no se rompe el turno */ }
     lines.push(`FASE: ${phase} — ${PHASE_MEANING[phase] || '(sin descripción)'}`);
     const flow = userSession.heladoFlow;
     if (flow && flow.product) {
