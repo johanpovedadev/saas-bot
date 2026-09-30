@@ -3247,7 +3247,52 @@ module.exports = {
         numericConfirm: true
     }),
     isWithinBusinessHours: businessHours.isWithinBusinessHours,
-    // Solo para tests: acceso directo a funciones internas sin pasar por
-    // todo el flujo guiado de sabores/toppings.
-    _internal: { afterAddToCarrito, isOutOfHoursOrderable }
+    // Acceso directo a funciones internas, sin pasar por todo el flujo guiado
+    // de sabores/toppings. Lo usan los tests y el agente IA paralelo
+    // (heladeria.agent.js, apagado por defecto): el agente decide QUÉ llamar,
+    // pero el trabajo real (precios, armado del ítem, carrito, mensajes) lo
+    // siguen haciendo estas mismas funciones - por eso se exponen en vez de
+    // reimplementarlas. Solo se agregan referencias; ningún comportamiento
+    // de este flow cambia.
+    _internal: {
+        afterAddToCarrito,
+        isOutOfHoursOrderable,
+        resolveProducts,
+        addPlainToCarrito,
+        addResolvedProducts,
+        sendPostAddOptions,
+        formatCarritoSummary,
+        handlePostAdd,
+        handleSabores,
+        handleToppings,
+        handleQuantity,
+        handleUnitsMode,
+        handlePerUnitSabores,
+        handlePerUnitToppings,
+        finishToppingsStep,
+        reshowCurrentStep,
+        buildOptionLists,
+        buildClassifierContext,
+        extractMentionedProducts,
+        findProductsByIngredient,
+        formatToppingsGrouped,
+        getCounts,
+        getProductName,
+        sendMenuImages,
+        notifyDomicilioQuery,
+        cancelOrderAndClearDelivery,
+        resetGuidedState,
+        ensureCarrito,
+        hasCartItems,
+        CATEGORIA_SABORES,
+        CATEGORIA_TOPPINGS,
+        CATEGORIA_FRESAS_CREMA,
+        FRESAS_CREMA_GENERIC_RE,
+        FRESAS_CREMA_ESPECIFICO_RE,
+        getFresasConCremaCategoria,
+        PHASES: {
+            HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY, HELADO_POST_ADD,
+            HELADO_UNITS_MODE, HELADO_PER_UNIT_SABORES, HELADO_PER_UNIT_TOPPINGS
+        }
+    }
 };

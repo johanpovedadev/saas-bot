@@ -544,6 +544,21 @@ async function processIncomingMessage(sock, messageData, ctx) {
         if (messageData.username) userSession.telegramUsername = messageData.username;
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
 
+        // Agente IA de Mundo Helados (handlers/flows/heladeria.agent.js):
+        // APAGADO por defecto. Solo corre con HELADERIA_AI_AGENT=1 en un
+        // proceso con BUSINESS_KEY=heladeria - con el flag apagado este
+        // bloque no hace ni el require, el flujo es exactamente el de
+        // siempre. Si el agente devuelve false (fase que no cubre, protocolo
+        // numérico, o la IA no respondió) no tocó nada y el mensaje sigue por
+        // las reglas de abajo como siempre.
+        if (process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria') {
+            const heladeriaAgent = require('./flows/heladeria.agent');
+            if (await heladeriaAgent.processMessage(sock, jid, text, userSession, ctx)) {
+                await checkGlobalFrustration(sock, jid, text, userSession, ctx);
+                return;
+            }
+        }
+
         // Captura de campos de entrega (dirección/teléfono/pago) EN CUALQUIER
         // fase, para cualquier negocio de carrito — no solo cuando el bot los
         // pidió explícitamente. Evita que se pierdan en silencio cuando llegan
