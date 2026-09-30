@@ -2591,7 +2591,24 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    coincidía y el cliente terminaba pensando que pidió las dos cosas.
     //    Solo avisa si YA se hizo algo más (si no, el mensaje de "no entendí"
     //    del flujo ya cubre el caso de "no encontré nada").
-    if (result.no_reconocido && acted) {
+    //
+    // Bug real (jid 573138777115@c.us, "Que lo mando a recoger"): cuando lo
+    // único que trae el mensaje es el aviso de recogida (pickupJustDetected),
+    // la IA de todos modos intenta emparejar ESA MISMA frase como si fuera un
+    // producto/topping y, al no encontrar nada (no hay ningún producto en
+    // "que lo mando a recoger"), devuelve no_reconocido con el texto
+    // completo. El resultado era un combo contradictorio: "👍 Anotado, recoges
+    // en el local" seguido de "😅 no encontré 'Que lo mando a recoger' en el
+    // menú" - confunde más de lo que ayuda. Si la recogida fue lo ÚNICO que
+    // se detectó de verdad (nada más aplicable en el resultado), se omite
+    // este segundo aviso.
+    const soloEraAvisoDeRecogida = pickupJustDetected && !targetProduct
+        && !(result.sabores && result.sabores.length > 0)
+        && !(result.toppings && result.toppings.length > 0)
+        && !result.cantidad
+        && !(Array.isArray(result.bebidas) && result.bebidas.length > 0)
+        && !result.direccion;
+    if (result.no_reconocido && acted && !soloEraAvisoDeRecogida) {
         await say(sock, jid, `😅 Ojo: no encontré *"${result.no_reconocido}"* en el menú, así que no lo agregué. ¿Quieres que te muestre el menú para revisar el nombre exacto?`, ctx);
     }
 
