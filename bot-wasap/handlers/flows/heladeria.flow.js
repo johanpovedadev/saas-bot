@@ -303,6 +303,49 @@ const TOPPING_STOPWORDS = new Set([
     'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
 ]);
 
+// Bug real (replay 29-30 sep 2026): el paso de toppings trataba CUALQUIER
+// mensaje con "todo/todos/todas" como "agregar todos los toppings del
+// catálogo" - "Todos de chocolate" o "Todos iguales" (el cliente quiere lo
+// MISMO para todas las unidades, no los ~21 toppings que existen) terminaba
+// cobrando $44.000 en vez de $13.000 y $84.000 en vez de $22.000. Solo es
+// "de todo" cuando el mensaje no dice NADA más que eso ("todos", "de todo",
+// "con todo", "todos los toppings"). Si "todos" viene calificado ("todos de
+// chocolate", "todas con oreo"), el cuantificador se quita y lo que queda se
+// procesa como nombres de topping normales. Si lo único que queda es "iguales"
+// / "lo mismo", no nombró ningún topping - se pregunta cuál, nunca se adivina.
+const TOPPING_ALL_WORDS = new Set(['todo', 'toda', 'todos', 'todas']);
+const TOPPING_ALL_FILLERS = new Set([
+    'topping', 'toppings', 'adicion', 'adiciones', 'adicional', 'adicionales',
+    'pones', 'ponga', 'pongale', 'ponemos', 'ponerle', 'echale', 'echele', 'lleva', 'llevan'
+]);
+const TOPPING_SAME_WORDS = new Set([
+    'igual', 'iguales', 'igualitos', 'igualitas', 'mismo', 'misma', 'mismos', 'mismas', 'lo',
+    'cada', 'uno', 'unidad', 'unidades', 'helado', 'helados', 'copa', 'copas', 'ellos', 'ellas'
+]);
+const TOPPING_DONE_REGEX = /^(eso (es|seria) todo|es todo|seria todo|eso seria todo|nada mas|asi esta bien)$/;
+
+/**
+ * Interpreta "todo(s)" en el paso de toppings (ver TOPPING_ALL_WORDS arriba).
+ * @param {string} input - texto ya en minúsculas y sin acentos.
+ * @returns {{kind: 'none'|'all'|'qualified', rest: string}}
+ *   - none: el mensaje no usa "todo(s)" - flujo normal sin cambios.
+ *   - all: pidió explícitamente todos los toppings del catálogo.
+ *   - qualified: "todos" + algo más; `rest` es ese algo más sin el
+ *     cuantificador (vacío si solo dijo "todos iguales" o pidió una
+ *     exclusión como "de todo menos queso" - en ambos casos se pregunta).
+ */
+function interpretToppingAllKeyword(input) {
+    const tokens = String(input || '').split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    if (!tokens.some(t => TOPPING_ALL_WORDS.has(t))) return { kind: 'none', rest: input };
+    // "de todo menos queso" / "todos excepto maní": exclusión - no se adivina
+    // cuáles quedan (ni todos, ni solo el nombrado), se pregunta.
+    if (tokens.some(t => /^(menos|excepto|salvo|quitando|sin)$/.test(t))) return { kind: 'qualified', rest: '' };
+    const remaining = tokens.filter(t => !TOPPING_ALL_WORDS.has(t) && !TOPPING_STOPWORDS.has(t) && !TOPPING_ALL_FILLERS.has(t));
+    if (remaining.length === 0) return { kind: 'all', rest: '' };
+    const rest = remaining.filter(t => !TOPPING_SAME_WORDS.has(t));
+    return { kind: 'qualified', rest: rest.join(' ') };
+}
+
 const SABOR_STOPWORDS = new Set([
     'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
     'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'dame',
@@ -834,10 +877,10 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
     if (flow.pendingToppingGuess) { await resolveToppingGuess(sock, jid, text, userSession, ctx); return; }
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
-    const input = stripAccents(text.toLowerCase().trim());
+    let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input)) {
+    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
         userSession.phase = HELADO_QUANTITY;
         await say(sock, jid, `✅ Sin toppings.\n\n¿Cuántas unidades deseas?`, ctx);
         return;
@@ -854,8 +897,18 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    // "todos" / "de todo" → agregar todos. Se ignora si pide la LISTA de todos.
-    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+    // "todos" / "de todo" → agregar todos, SOLO si no dice nada más (ver
+    // interpretToppingAllKeyword). Se ignora si pide la LISTA de todos.
+    const allKeyword = interpretToppingAllKeyword(input);
+    if (allKeyword.kind === 'qualified') {
+        if (!allKeyword.rest) {
+            await say(sock, jid,
+                `👍 ¿Cuál topping quieres? Escribe el nombre de cada uno (ej: "oreo y queso") o *"no"* para continuar sin toppings.`, ctx);
+            return;
+        }
+        input = allKeyword.rest;
+    }
+    if (allKeyword.kind === 'all') {
         for (const t of toppingsList) {
             if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
                 flow.toppingsSeleccionados.push(t);
@@ -1264,10 +1317,10 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
     const customization = flow.customization;
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
-    const input = stripAccents(text.toLowerCase().trim());
+    let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input)) {
+    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
         await pushPerUnit(sock, jid, userSession, ctx);
         return;
     }
@@ -1280,7 +1333,18 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+    // Mismo criterio que handleToppings (interpretToppingAllKeyword): "todos
+    // de chocolate" / "todos iguales" NUNCA agregan el catálogo completo.
+    const allKeyword = interpretToppingAllKeyword(input);
+    if (allKeyword.kind === 'qualified') {
+        if (!allKeyword.rest) {
+            await say(sock, jid,
+                `👍 ¿Cuál topping quieres para la *unidad ${customization.currentUnit + 1}*? Escribe el nombre de cada uno (ej: "oreo y queso") o *"no"* para continuar sin toppings.`, ctx);
+            return;
+        }
+        input = allKeyword.rest;
+    }
+    if (allKeyword.kind === 'all') {
         for (const t of toppingsList) {
             if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
                 customization.currentToppings.push(t);
