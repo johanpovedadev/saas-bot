@@ -531,7 +531,20 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
 
-    if (/^(2|pagar|carrito|checkout|confirmar|ir a pagar|finalizar|listo|ya|dale|eso es todo|nada mas|nada más)$/.test(normalized)) {
+    // Bug real (conversaciones reales, jid 573138777115@c.us y otros): la
+    // intención de pagar casi nunca llega como el texto exacto "pagar" - llega
+    // envuelta en frase natural ("Quiero pagar", "Ya quiero pagar") o con un
+    // typo de espacio muy común en móvil ("Ir apagar" por "Ir a pagar"), y el
+    // match exacto de arriba (^...$) las rechazaba todas, cayendo al fallback
+    // genérico "❌ No entendí" pese a que la intención era inequívoca. Se
+    // agrega un match por PALABRA (\b) para las señales fuertes e inequívocas
+    // (pagar/apagar/checkout/confirmar/finalizar) que no dependen de que el
+    // cliente escriba SOLO esa palabra - sin tocar la lista de confirmaciones
+    // cortas (ya, dale, listo...) que sí necesitan ser exactas para no
+    // disparar con cualquier mensaje que las contenga de pasada.
+    const wantsToPayLoose = /\b(pagar|apagar|checkout|confirmar|finalizar)\b/i.test(normalized)
+        && !/\bno\b[\s\S]{0,15}\b(pagar|apagar)\b/i.test(normalized);
+    if (wantsToPayLoose || /^(2|pagar|carrito|checkout|confirmar|ir a pagar|finalizar|listo|ya|dale|eso es todo|nada mas|nada más)$/.test(normalized)) {
         logger.info(`[${jid}] -> HELADO_POST_ADD: ir a pagar ("${text}")`);
         userSession.pendingVoiceGuided = null;
         resetGuidedState(userSession);
