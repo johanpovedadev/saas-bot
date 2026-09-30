@@ -152,7 +152,11 @@ let catalogCache = { key: null, text: '' };
 
 function buildCatalogText(ctx) {
     const products = getProducts(ctx);
-    const key = products.length + ':' + products.map(p => codeOf(p) + priceOf(p)).join('|').length;
+    // La clave es el contenido completo (código+precio+nombre de cada
+    // producto): antes era solo su LARGO, así que un cambio de precio que no
+    // cambiaba la cantidad de dígitos (12000 -> 13000) dejaba a la IA viendo
+    // el catálogo viejo.
+    const key = products.map(p => `${codeOf(p)}:${priceOf(p)}:${nameOf(p)}:${p.Categoria || ''}`).join('|');
     if (catalogCache.key === key) return catalogCache.text;
     const { sabores, toppings } = optionLists(ctx);
     const prodLines = orderableProducts(ctx).map(p => {
@@ -402,7 +406,12 @@ async function keepOrphan(T, patch, label) {
  */
 function toppingIsGrounded(name, T) {
     const text = norm(T.text);
-    if (/\btod[oa]s?\b|\bde todo\b/.test(text)) return true;
+    // Solo un pedido EXPLÍCITO de todos los toppings ("todos", "de todo",
+    // "todos los toppings") fundamenta cualquier topping. "Todos de
+    // chocolate" / "todos iguales" NO (mismo bug que tuvo el flujo de reglas:
+    // cobraba los ~21 toppings del catálogo) - ahí cada topping tiene que
+    // estar nombrado.
+    if (I.interpretToppingAllKeyword(text).kind === 'all') return true;
     const list = optionLists(T.ctx).toppings;
     const r = resolveIn(list, name);
     const idx = r.item ? list.indexOf(r.item) + 1 : 0;
@@ -950,6 +959,48 @@ const EXECUTORS = {
     }
 };
 
+/**
+ * Efectos de cada herramienta propia (el núcleo exige `ground` para las que
+ * tocan plata). El grounding de producto y toppings dentro de
+ * agregar_producto/elegir_toppings sigue en su ejecutor porque a veces tiene
+ * que PREGUNTAR (aclaración) en vez de solo descartar; lo que es un descarte
+ * puro (cantidad o modo que el cliente no dijo) se valida acá, antes de
+ * ejecutar.
+ */
+const TOOL_EFFECTS = {
+    agregar_producto: ['money', 'order_state'],
+    elegir_toppings: ['money', 'order_state'],
+    fijar_cantidad: ['money', 'order_state'],
+    elegir_modo_unidades: ['money', 'order_state'],
+    elegir_sabores: ['order_state'], sin_toppings: ['order_state'], quitar_topping: ['order_state'],
+    mostrar_opciones_del_paso: [], pedido_por_encargo: []
+};
+const TOOL_GROUNDS = {
+    agregar_producto(args, T) {
+        // Cantidad o modo de unidades que el cliente no dijo: se descartan
+        // (el flujo pregunta), el resto del pedido sigue.
+        const clean = { ...args };
+        if (clean.cantidad !== undefined && clean.cantidad !== null && !G.qtyIsGrounded(parseInt(clean.cantidad, 10), T.text)) clean.cantidad = null;
+        if (clean.modo_unidades && !modoIsGrounded(T)) clean.modo_unidades = null;
+        return { ok: true, args: clean };
+    },
+    elegir_toppings(args, T) {
+        // Cada topping cuesta plata: si NINGUNO está fundamentado, el
+        // ejecutor igual avisa (groundToppings); acá solo se exige que sean
+        // nombres del catálogo o códigos T<n>, nunca texto libre largo.
+        const names = Array.isArray(args.toppings) ? args.toppings.filter(n => typeof n === 'string' && n.length <= 60) : [];
+        return { ok: true, args: { ...args, toppings: names } };
+    },
+    fijar_cantidad(args, T) {
+        const n = parseInt(args.cantidad, 10);
+        if (n >= 1 && n <= 100 && !G.qtyIsGrounded(n, T.text)) return { ok: false, reason: `cantidad ${n} no dicha por el cliente ("${T.text}")` };
+        return { ok: true };
+    },
+    elegir_modo_unidades(args, T) {
+        return modoIsGrounded(T) ? { ok: true } : { ok: false, reason: `modo "${args.modo}" no dicho por el cliente` };
+    }
+};
+
 const TOOL_EXEC_ORDER = {
     quitar_topping: 5,
     agregar_producto: 6,
@@ -995,6 +1046,13 @@ const hooks = {
     sendMenu: (T) => I.sendMenuImages(T.sock, T.jid, T.ctx),
     addPlainItem: (userSession, r) => I.addPlainToCarrito(userSession, r),
     answerQuestion: (pregunta, T) => heladeriaAi.answerDoubt(pregunta, I.buildClassifierContext(T.userSession, T.ctx)),
+    // Fuente de verdad para las cifras de las respuestas libres: el catálogo
+    // (con precios y cuántos sabores lleva cada producto) + las FAQs reales.
+    answerSources(T) {
+        const c = I.buildClassifierContext(T.userSession, T.ctx);
+        const faqs = (Array.isArray(c.faqs) ? c.faqs : []).map(f => `${f.Pregunta || f.pregunta || ''} ${f.Respuesta || f.respuesta || ''}`);
+        return [buildCatalogText(T.ctx), ...(c.products || []), ...faqs].join('\n');
+    },
     extractMentionedProducts: (answer, ctx) => I.extractMentionedProducts(answer, ctx),
     detectSensitive: (text) => heladeriaAi.detectSensitiveData(text),
     escalateSensitive: (sock, jid, text, userSession, ctx) => heladeriaFlow.escalateIfSensitive(sock, jid, text, userSession, ctx),
@@ -1035,7 +1093,10 @@ const agent = core.createCartAgent({
     fastPathApplies,
     buildSystemInstruction,
     describeState,
-    tools: Object.keys(DECL).map(name => ({ declaration: DECL[name], exec: EXECUTORS[name], order: TOOL_EXEC_ORDER[name] })),
+    tools: Object.keys(DECL).map(name => ({
+        declaration: DECL[name], exec: EXECUTORS[name], order: TOOL_EXEC_ORDER[name],
+        effects: TOOL_EFFECTS[name], ground: TOOL_GROUNDS[name]
+    })),
     toolOrder: TOOL_ORDER,
     toolDescriptions: TOOL_DESCRIPTIONS,
     hooks,

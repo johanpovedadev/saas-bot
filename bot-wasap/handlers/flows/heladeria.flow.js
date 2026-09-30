@@ -3349,6 +3349,7 @@ module.exports = {
     // reimplementarlas. Solo se agregan referencias; ningún comportamiento
     // de este flow cambia.
     _internal: {
+        interpretToppingAllKeyword,
         afterAddToCarrito,
         isOutOfHoursOrderable,
         resolveProducts,

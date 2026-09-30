@@ -16,6 +16,12 @@
  *     con confirmación explícita.
  *   - Escalar deja WAITING_HUMAN y avisa al admin con link wa.me.
  *   - El cliente nunca queda sin respuesta.
+ *   - Candados del núcleo (endurecimiento 30 sep 2026): herramienta de un
+ *     plugin que toca plata/datos del cliente sin `ground` -> no arranca;
+ *     nombre/teléfono/dirección/pago que el cliente no escribió no se
+ *     guardan; el precio de lo que entra al carrito sale del catálogo aunque
+ *     el plugin diga otro; una cifra inventada en una respuesta libre
+ *     (ej. "la caja es de 5 litros") no llega al cliente.
  * Uso: node test_cart_agent_core_generico.js
  */
 const os = require('os');
@@ -48,6 +54,7 @@ let failures = 0;
 function check(cond, msg) { if (cond) console.log('✅', msg); else { failures++; console.log('❌', msg); } }
 
 let nextDecision = null;
+let answerText = 'Abrimos de 7am a 7pm.';
 cartAgentAi.decideTurn = async () => (nextDecision ? { calls: nextDecision, usage: {}, latencyMs: 1, model: 'mock' } : null);
 
 const productsCache = [
@@ -63,6 +70,8 @@ function buildTestPlugin(overrides) {
     const tools = [{
         declaration: { name: 'agregar_producto', description: 'Agrega un producto.', parameters: { type: 'OBJECT', properties: { producto: { type: 'STRING' } }, required: ['producto'] } },
         order: 6,
+        effects: ['money'],
+        ground: (args) => ({ ok: typeof args.producto === 'string' && args.producto.length > 0, reason: 'sin producto' }),
         async exec(args, T) {
             const p = productsCache.find(x => x.NombreProducto.toLowerCase() === String(args.producto || '').toLowerCase());
             if (!p) { T.notFound = true; return; }
@@ -97,7 +106,7 @@ function buildTestPlugin(overrides) {
             sendPostAddOptions: async (T) => say(T.sock, T.jid, '1) Seguir comprando 2) Pagar', T.ctx),
             sendMenu: async (T) => say(T.sock, T.jid, '[menú de la tienda]', T.ctx),
             addPlainItem: (s, r) => core.ensureCarrito(s).push({ codigo: r.product.CodigoProducto, nombre: r.product.NombreProducto, precio: r.precio, cantidad: r.cantidad, observaciones: '', sabores: [], toppings: [], subtotal: r.precio * r.cantidad }),
-            answerQuestion: async () => 'Abrimos de 7am a 7pm.',
+            answerQuestion: async () => answerText,
             extractMentionedProducts: () => [],
             detectSensitive: (t) => /\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b/.test(t),
             escalateSensitive: async (sock, jid, text, s, ctx) => { s.phase = PHASE.WAITING_HUMAN; await say(sock, jid, 'Dato sensible: te paso con una persona.', ctx); },
@@ -132,6 +141,19 @@ function setup(seed) {
             let threw = false;
             try { core.createCartAgent(buildTestPlugin({ hooks: { isBroadcast: async () => false } })); } catch (e) { threw = /faltan hooks/.test(e.message); }
             check(threw, 'un plugin sin los hooks obligatorios se rechaza al crearse (no arranca a medias)');
+        }
+
+        // ---- 1b) Herramienta que toca plata sin grounding: falla cerrado ----
+        {
+            let threw = false;
+            const base = buildTestPlugin();
+            const sinGround = { ...base.tools[0], ground: undefined };
+            try { core.createCartAgent(buildTestPlugin({ tools: [sinGround] })); } catch (e) { threw = /sin 'ground'/.test(e.message); }
+            check(threw, 'una herramienta del plugin que toca plata sin "ground" impide crear el agente');
+            let threw2 = false;
+            const sinEffects = { ...base.tools[0], effects: undefined };
+            try { core.createCartAgent(buildTestPlugin({ tools: [sinEffects] })); } catch (e) { threw2 = /effects/.test(e.message); }
+            check(threw2, 'una herramienta sin "effects" declarados también impide crear el agente');
         }
 
         const agent = core.createCartAgent(buildTestPlugin());
@@ -197,6 +219,59 @@ function setup(seed) {
             await run(t, 'quiero hablar con alguien', [{ name: 'escalar_a_humano', args: { motivo: 'pide persona' } }, { name: 'responder_breve', args: { texto: 'hola' } }]);
             check(t.s().phase === PHASE.WAITING_HUMAN && /wa\.me\/57399800/.test(t.admin.join('\n')), 'escalar deja WAITING_HUMAN y avisa al admin con link wa.me');
             check(t.sent.length === 1 && /persona del equipo/.test(t.sent[0]), 'si se escala no se ejecuta nada más en el turno');
+        }
+
+        // ---- 8b) Datos del cliente: solo lo que el cliente escribió ----
+        {
+            const t = setup({ phase: PHASE.CHECK_NAME, carrito: [{ codigo: 'CAFE', nombre: 'Café Tinto', precio: 2500, cantidad: 1, sabores: [], toppings: [], observaciones: '' }] });
+            await run(t, 'a nombre de maria', [{ name: 'fijar_nombre', args: { nombre: 'María José Pérez' } }]);
+            check(!t.s().order.name, 'un nombre que la IA "completó" (María José Pérez de "maria") no se guarda');
+            await run(t, 'maría josé', [{ name: 'fijar_nombre', args: { nombre: 'María José' } }]);
+            check(t.s().order.name === 'María José', 'el nombre que el cliente sí escribió se guarda (tolerando tildes)');
+            await run(t, 'mi cel es el de siempre', [{ name: 'fijar_telefono', args: { telefono: '3001234567' } }]);
+            check(!t.s().order.telefono && /tel[eé]fono/i.test(t.sent.join('\n')), 'un teléfono que el cliente no escribió no se guarda y se le pide');
+            await run(t, '300 123 4567', [{ name: 'fijar_telefono', args: { telefono: '3001234567' } }]);
+            check(t.s().order.telefono === '3001234567', 'el teléfono escrito (con espacios) se guarda');
+            await run(t, 'a mi casa', [{ name: 'fijar_direccion', args: { direccion: 'Calle 45 #12-30 barrio El Prado' } }]);
+            check(!t.s().order.address, 'una dirección inventada por la IA no se guarda');
+            await run(t, 'calle 45 # 12-30 el prado', [{ name: 'fijar_direccion', args: { direccion: 'Calle 45 #12-30 barrio El Prado' } }]);
+            check(t.s().order.address === 'Calle 45 #12-30 barrio El Prado', 'la dirección que sí escribió (con "barrio" agregado) se guarda');
+            await run(t, 'ok', [{ name: 'fijar_metodo_pago', args: { metodo: 'transferencia' } }]);
+            check(!t.s().order.paymentMethod, 'un método de pago que el cliente no dijo no se guarda');
+            await run(t, 'por nequi', [{ name: 'fijar_metodo_pago', args: { metodo: 'transferencia' } }]);
+            check(t.s().order.paymentMethod === 'transferencia', 'nequi = transferencia se guarda');
+        }
+
+        // ---- 8c) Plata: el precio lo pone el catálogo, no el plugin ----
+        {
+            const precioTrucho = core.createCartAgent(buildTestPlugin({
+                activation: { businessKey: 'tienda_prueba', flagEnv: 'TIENDA_PRUEBA_AI_AGENT', jidsEnv: 'X' },
+                tools: [{
+                    ...buildTestPlugin().tools[0],
+                    async exec(args, T) {
+                        T.plainAdds.push({ product: { CodigoProducto: 'PAN-1', NombreProducto: 'Pan Integral', Precio_Venta: '1' }, cantidad: 1, precio: 1, notas: '' });
+                        T.plainAdds.push({ product: { CodigoProducto: 'NO-EXISTE', NombreProducto: 'Torta gratis', Precio_Venta: '0' }, cantidad: 1, precio: 0, notas: '' });
+                    }
+                }]
+            }));
+            const t = setup();
+            nextDecision = [{ name: 'agregar_producto', args: { producto: 'Pan Integral' } }];
+            await precioTrucho.processMessage(t.sock, t.jid, 'un pan integral', t.s(), t.ctx);
+            check(t.s().carrito.length === 1 && t.s().carrito[0].precio === 6000, 'el carrito cobra el precio del catálogo ($6.000) aunque el plugin pase $1, y un producto fuera del catálogo no entra');
+        }
+
+        // ---- 8d) Respuestas libres: sin cifras inventadas ----
+        {
+            const t = setup();
+            answerText = 'El Pan Integral vale $6.000. La bolsa trae 5 litros de alegría.';
+            await run(t, 'cuánto trae el pan', [{ name: 'responder_pregunta', args: { pregunta: 'cuánto trae el pan integral' } }]);
+            const out = t.sent.join('\n');
+            check(/6\.000/.test(out) && !/5 litros/.test(out), 'la cifra real del catálogo se conserva y la inventada ("5 litros") se quita');
+            const t2 = setup();
+            answerText = 'La caja es de 10 litros.';
+            await run(t2, 'de cuántos litros es la caja', [{ name: 'responder_pregunta', args: { pregunta: 'de cuántos litros es la caja' } }]);
+            check(t2.s().phase === PHASE.WAITING_HUMAN && !/10 litros/.test(t2.sent.join('\n')), 'si lo único que había era una cifra inventada, no se dice nada falso: pasa a una persona');
+            answerText = 'Abrimos de 7am a 7pm.';
         }
 
         // ---- 9) Nunca sin respuesta ----

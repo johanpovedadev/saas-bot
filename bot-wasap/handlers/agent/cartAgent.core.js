@@ -101,6 +101,17 @@ function markPrompted(T) { T.prompted = true; }
 
 function recentHistory(jid) { return chatHistory.getRecentMessages(jid); }
 
+/** Lo que escribió el CLIENTE: el mensaje de este turno + sus mensajes recientes. */
+function customerTexts(T) {
+    const past = recentHistory(T.jid).filter(m => !m.fromMe).slice(-6).map(m => m.text);
+    return [T.text, ...past];
+}
+
+function lastBotText(T) {
+    const lastBot = [...recentHistory(T.jid)].reverse().find(m => m.fromMe);
+    return lastBot ? lastBot.text : '';
+}
+
 /**
  * Aclaración con opciones REALES del catálogo: la pregunta de la IA pasa por
  * sanitizeFreeText (sin precios inventados) y cada opción lleva el precio del
@@ -174,6 +185,13 @@ function describePendingOptions(userSession) {
     return null;
 }
 
+/** Fuente de verdad para las respuestas libres: la del plugin o, por defecto, el catálogo. */
+function answerSources(T) {
+    if (typeof T.plugin.hooks.answerSources === 'function') return T.plugin.hooks.answerSources(T);
+    const { nameOf, priceOf } = T.acc;
+    return T.plugin.catalog.orderable(T.ctx).map(p => `${nameOf(p)} | $${priceOf(p)} | ${p.Descripcion || p.descripcion || ''}`).join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Herramientas GENÉRICAS (declaración + ejecutor)
 // ---------------------------------------------------------------------------
@@ -237,6 +255,59 @@ const CORE_EXEC_ORDER = {
 // antes de ejecutar (el mensaje de navegación ya muestra el carrito).
 const NAVIGATION_ORDER = 8;
 const NAVIGATING_TOOLS = ['ir_a_pagar', 'confirmar_pedido', 'ver_carrito', 'editar_pedido'];
+
+/**
+ * EFECTOS de cada herramienta. Candado del núcleo, igual para todo tenant:
+ * una herramienta que toca PLATA (precio/total/cobro), DATOS DEL CLIENTE o el
+ * ESTADO FINAL del pedido tiene que traer un `ground(args, T)` que valide sus
+ * argumentos contra datos reales ANTES de ejecutarse. createCartAgent se
+ * niega a arrancar si un plugin declara una así sin `ground` (falla cerrado:
+ * un negocio nuevo no puede olvidarse del candado).
+ */
+const SENSITIVE_EFFECTS = new Set(['money', 'customer_data', 'order_final']);
+const CORE_TOOL_EFFECTS = {
+    fijar_direccion: ['customer_data'], fijar_nombre: ['customer_data'], fijar_telefono: ['customer_data'],
+    fijar_metodo_pago: ['customer_data', 'money'], fijar_recogida_en_local: ['order_state'],
+    confirmar_pedido: ['order_final'], cancelar_pedido: ['order_final'], quitar_producto_del_carrito: ['order_state'],
+    editar_pedido: ['order_state'], ir_a_pagar: ['order_state'], seguir_comprando: [], ver_carrito: [],
+    informar_precios: [], mostrar_menu: [], info_local: [], responder_pregunta: [], preguntar_aclaracion: [],
+    escalar_a_humano: [], saludar: [], responder_breve: []
+};
+
+/**
+ * Validaciones del núcleo para sus herramientas sensibles. Devuelven
+ * { ok: true } o { ok: false, reason, reply? } (reply = lo que se le dice al
+ * cliente en vez de guardar un dato que él no dio).
+ */
+const CORE_GROUNDS = {
+    fijar_nombre(args, T) {
+        return G.nameGrounded(args.nombre, customerTexts(T)) ? { ok: true } : { ok: false, reason: `nombre "${args.nombre}" no escrito por el cliente` };
+    },
+    fijar_telefono(args, T) {
+        const digits = String(args.telefono || '').replace(/[^0-9]/g, '');
+        if (digits.length < 7 || digits.length > 13) return { ok: true }; // el ejecutor ya pide que lo repita
+        return G.phoneGrounded(digits, customerTexts(T)) ? { ok: true } : {
+            ok: false, reason: `teléfono ${digits} no escrito por el cliente`,
+            reply: '📞 ¿Me confirmas tu número de teléfono? Escríbemelo completo, por favor.'
+        };
+    },
+    fijar_direccion(args, T) {
+        const dir = String(args.direccion || '').trim();
+        if (dir.length < 5) return { ok: true }; // el ejecutor ya pide la dirección completa
+        return G.addressGrounded(dir, customerTexts(T)) ? { ok: true } : {
+            ok: false, reason: `dirección "${dir}" no escrita por el cliente`,
+            reply: '📍 ¿Me escribes la dirección de entrega completa? (ej: Calle 10 #20-30, barrio)'
+        };
+    },
+    fijar_metodo_pago(args, T) {
+        return G.paymentGrounded(args.metodo, T.text, lastBotText(T)) ? { ok: true } : { ok: false, reason: `método de pago "${args.metodo}" no dicho por el cliente` };
+    },
+    // confirmar_pedido y cancelar_pedido validan dentro de su ejecutor
+    // (resumen final ya en pantalla + confirmación explícita / intención
+    // explícita de cancelar) porque su candado depende de la fase del turno.
+    confirmar_pedido: () => ({ ok: true }),
+    cancelar_pedido: () => ({ ok: true })
+};
 
 const CORE_EXECUTORS = {
     async quitar_producto_del_carrito(args, T) {
@@ -497,7 +568,17 @@ const CORE_EXECUTORS = {
             }
             return;
         }
-        const answer = await plugin.hooks.answerQuestion(pregunta, T);
+        const rawAnswer = await plugin.hooks.answerQuestion(pregunta, T);
+        // Candado de RESPUESTAS LIBRES: toda cifra (volumen, peso, porciones,
+        // tiempo, precio) tiene que estar en la fuente de verdad del tenant
+        // (catálogo + FAQs). Las oraciones con cifras inventadas se quitan;
+        // si no queda nada verdadero que decir, es "no tengo el dato".
+        let answer = rawAnswer;
+        if (rawAnswer) {
+            const g = G.groundAnswerClaims(rawAnswer, answerSources(T));
+            if (g.dropped.length) logger.warn(`[${plugin.logTag}] ${jid} respuesta con cifras que no están en el catálogo/FAQs, descartado: ${g.dropped.join(' | ').slice(0, 300)}`);
+            answer = g.text;
+        }
         // La respuesta "no sé" legítima escala; una respuesta NEGATIVA
         // legítima ("no tenemos agua sola, pero hay jugos...") no. Replay
         // real: con el agente, que manda MÁS preguntas por acá, confundir las
@@ -613,7 +694,19 @@ async function flushPlainAdds(T, navigatingNext) {
     const { sock, jid, userSession, ctx, plugin } = T;
     const { nameOf } = T.acc;
     if (!T.plainAdds.length) return;
-    const adds = T.plainAdds.splice(0);
+    // Candado de PLATA: el precio de lo que entra al carrito se recalcula
+    // desde el catálogo real (por código), sin importar qué haya armado el
+    // plugin; un producto que no está en el catálogo no entra.
+    const catalog = plugin.catalog.orderable(ctx);
+    const { codeOf, priceOf } = T.acc;
+    const adds = [];
+    for (const r of T.plainAdds.splice(0)) {
+        const real = r && r.product && catalog.find(p => codeOf(p) && codeOf(p) === codeOf(r.product));
+        if (!real) { logger.warn(`[${plugin.logTag}] ${jid} producto fuera del catálogo descartado: ${r && r.product && nameOf(r.product)}`); continue; }
+        const cantidad = Number.isInteger(r.cantidad) && r.cantidad >= 1 && r.cantidad <= 100 ? r.cantidad : 1;
+        adds.push({ ...r, product: real, precio: priceOf(real), cantidad });
+    }
+    if (!adds.length) return;
     for (const r of adds) {
         plugin.hooks.addPlainItem(userSession, r);
         if (r.notas) {
@@ -758,6 +851,11 @@ function createCartAgent(plugin) {
 
     const acc = G.catalogAccessors(plugin.fields);
     const pluginTools = new Map(plugin.tools.map(t => [t.declaration.name, t]));
+    const unguarded = plugin.tools.filter(t => !Array.isArray(t.effects) ||
+        (t.effects.some(e => SENSITIVE_EFFECTS.has(e)) && typeof t.ground !== 'function'));
+    if (unguarded.length) {
+        throw new Error(`cartAgent(${plugin.id}): herramientas sin 'effects' declarados o que tocan plata/datos del cliente/pedido final sin 'ground': ${unguarded.map(t => t.declaration.name).join(', ')}`);
+    }
 
     // Declaraciones que ve la IA, en el orden que fija el plugin (el orden y
     // el texto de las descripciones son parte del prompt).
@@ -778,6 +876,10 @@ function createCartAgent(plugin) {
     for (const t of plugin.tools) EXEC_ORDER[t.declaration.name] = t.order;
     const EXECUTORS = { ...CORE_EXECUTORS };
     for (const t of plugin.tools) EXECUTORS[t.declaration.name] = t.exec;
+    const GROUNDS = { ...CORE_GROUNDS };
+    for (const t of plugin.tools) if (t.ground) GROUNDS[t.declaration.name] = t.ground;
+    const EFFECTS = { ...CORE_TOOL_EFFECTS };
+    for (const t of plugin.tools) EFFECTS[t.declaration.name] = t.effects;
 
     const { businessKey, flagEnv, jidsEnv } = plugin.activation;
 
@@ -919,7 +1021,15 @@ function createCartAgent(plugin) {
                 await flushPlainAdds(T, NAVIGATING_TOOLS.includes(c.name));
             }
             try {
-                await EXECUTORS[c.name](c.args || {}, T);
+                const args = c.args || {};
+                const g = GROUNDS[c.name] ? await GROUNDS[c.name](args, T) : { ok: true };
+                if (g && g.ok === false) {
+                    logger.warn(`[${plugin.logTag}] ${jid} ${c.name} BLOQUEADA por grounding (${(EFFECTS[c.name] || []).join('/')}): ${g.reason}`);
+                    if (g.reply) await sendClarification(T, g.reply, null);
+                    executed.push(`${c.name}!blocked`);
+                    continue;
+                }
+                await EXECUTORS[c.name]((g && g.args) || args, T);
                 executed.push(c.name);
             } catch (e) {
                 logger.error(`[${plugin.logTag}] ${jid} herramienta ${c.name} falló: ${e.stack || e.message}`);
@@ -944,7 +1054,7 @@ function createCartAgent(plugin) {
         isEnabledFor,
         processMessage,
         setTraceListener,
-        _internal: { TOOLS, EXECUTORS, EXEC_ORDER, buildUserContent, describeHistory }
+        _internal: { TOOLS, EXECUTORS, EXEC_ORDER, GROUNDS, EFFECTS, buildUserContent, describeHistory }
     };
 }
 
@@ -962,5 +1072,7 @@ module.exports = {
     describeHistory,
     CHECKOUT_DATA_PHASES,
     CORE_TOOL_DECLARATIONS,
-    CORE_EXEC_ORDER
+    CORE_EXEC_ORDER,
+    CORE_TOOL_EFFECTS,
+    SENSITIVE_EFFECTS
 };

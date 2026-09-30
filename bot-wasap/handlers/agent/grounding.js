@@ -132,7 +132,127 @@ function affirmsLastBotOffer(targetName, text, history) {
     return !!(lastBot && isShortAffirmation(norm(text)) && norm(lastBot.text).includes(norm(targetName)));
 }
 
+// ---------------------------------------------------------------------------
+// Candados de DATOS DEL CLIENTE (cualquier tenant): nombre, teléfono,
+// dirección y método de pago solo se guardan si salieron de lo que el
+// CLIENTE escribió - nunca de un texto que la IA armó, "corrigió" o sacó de
+// un mensaje del bot.
+// ---------------------------------------------------------------------------
+
+/** ¿Cada palabra del nombre aparece (tolerando tildes/typos leves) en algún texto del cliente? */
+function nameGrounded(name, customerTexts) {
+    const tokens = norm(name).split(/[^a-z0-9ñ]+/).filter(t => t.length >= 2);
+    if (!tokens.length) return false;
+    const words = customerTexts.flatMap(t => norm(t).split(/[^a-z0-9ñ]+/)).filter(Boolean);
+    return tokens.every(tok => words.some(w => w === tok || (tok.length >= 4 && similarityScore(w, tok) >= 0.8)));
+}
+
+/** ¿Los dígitos del teléfono aparecen, seguidos, en ALGÚN mensaje del cliente? */
+function phoneGrounded(digits, customerTexts) {
+    const d = String(digits || '').replace(/[^0-9]/g, '');
+    if (d.length < 7) return false;
+    return customerTexts.some(t => String(t || '').replace(/[^0-9]/g, '').includes(d));
+}
+
+/**
+ * ¿La dirección salió del cliente? Todos sus números tienen que aparecer
+ * tal cual en lo que escribió, y al menos el 70% de sus palabras.
+ */
+// Palabras que la IA suele agregar al "ordenar" una dirección sin inventar
+// el lugar - no cuentan ni a favor ni en contra (los NÚMEROS sí se exigen).
+const ADDRESS_FILLERS = new Set(['barrio', 'casa', 'apto', 'apartamento', 'edificio', 'torre', 'conjunto', 'sector',
+    'piso', 'local', 'numero', 'num', 'nro', 'urbanizacion', 'urb', 'manzana', 'mza', 'lote', 'frente', 'cerca', 'entrega']);
+function addressGrounded(address, customerTexts) {
+    const toks = norm(address).split(/[^a-z0-9ñ]+/).filter(t => (/^\d+$/.test(t) || t.length >= 3) && !ADDRESS_FILLERS.has(t));
+    if (!toks.length) return false;
+    const joined = customerTexts.map(norm).join(' ');
+    const words = new Set(joined.split(/[^a-z0-9ñ]+/).filter(Boolean));
+    const nums = toks.filter(t => /^\d+$/.test(t));
+    if (nums.some(n => !new RegExp(`(^|[^0-9])${n}([^0-9]|$)`).test(joined))) return false;
+    const letters = toks.filter(t => !/^\d+$/.test(t));
+    if (!letters.length) return true;
+    const found = letters.filter(t => words.has(t) || [...words].some(w => w.length >= 4 && similarityScore(w, t) >= 0.8)).length;
+    return found / letters.length >= 0.7;
+}
+
+const PAYMENT_WORDS = {
+    efectivo: /\b(efectivo|cash|billete|contado|en fisico|pago al recibir|contra ?entrega)\b/,
+    transferencia: /\b(transferen\w*|transfier\w*|nequi|daviplata|bancolombia|qr|consign\w*|llave|bre-?b)\b/
+};
+/**
+ * ¿El cliente dijo ese método de pago (o respondió "sí" a una pregunta del
+ * bot que lo nombraba)? Afecta plata: transferencia manda un QR.
+ */
+function paymentGrounded(metodo, customerText, lastBotText) {
+    const re = PAYMENT_WORDS[metodo];
+    if (!re) return false;
+    const t = norm(customerText);
+    if (re.test(t)) return true;
+    // "sí" solo elige si el bot ofreció ESE método y ningún otro ("¿pagas
+    // por Nequi?" -> "sí"). A "¿transferencia o efectivo?" un "ok" no elige.
+    const bot = norm(lastBotText || '');
+    const others = Object.keys(PAYMENT_WORDS).filter(k => k !== metodo);
+    return !!(bot && isShortAffirmation(t) && re.test(bot) && !others.some(k => PAYMENT_WORDS[k].test(bot)));
+}
+
+// ---------------------------------------------------------------------------
+// Candado de RESPUESTAS LIBRES (responder_pregunta de cualquier tenant): una
+// cifra que la IA afirma (volumen, peso, porciones, tiempo, precio) tiene que
+// existir en la fuente de verdad del tenant (catálogo + FAQs). Caso real de
+// heladería: dijo que una caja de $50.000 era de 5 litros, y otra vez de 10 -
+// ninguna de las dos cifras estaba en el catálogo.
+// ---------------------------------------------------------------------------
+
+const UNIT_CLAIM_RE = /(\d+(?:[.,]\d+)?)\s*(litros?|lts?|l|ml|mililitros?|onzas?|oz|gramos?|grs?|g|kg|kilos?|libras?|lb|cm|personas?|porciones?|bolas?|unidades?|und|piezas?|rebanadas?|sabores?|toppings?|minutos?|mins?|horas?|hrs?|d[ií]as?)(?![a-z])/g;
+const MONEY_CLAIM_RE = /\$\s?\d[\d.,]*|\b\d{1,3}(?:\.\d{3})+\b|\b\d+\s*mil\b|\b\d{4,7}\s*(?:pesos|cop)\b/g;
+
+function moneyValue(raw) {
+    const s = norm(raw);
+    const mil = /mil/.test(s);
+    const n = parseInt(s.replace(/[^0-9]/g, ''), 10);
+    if (!Number.isFinite(n)) return null;
+    return mil ? n * 1000 : n;
+}
+
+function numberForms(n) {
+    const v = String(n).replace(',', '.');
+    return new Set([v, v.replace(/\.0+$/, '')]);
+}
+
+/**
+ * Quita de `answer` las oraciones con cifras que NO están en `sourcesText`.
+ * @returns {{text:string, dropped:string[]}}
+ */
+function groundAnswerClaims(answer, sourcesText) {
+    const src = norm(sourcesText);
+    const srcNumbers = new Set((src.match(/\d+(?:[.,]\d+)?/g) || []).flatMap(x => [...numberForms(x)]));
+    const srcMoney = new Set((String(sourcesText || '').match(/\d[\d.,]*/g) || []).map(moneyValue).filter(v => v !== null));
+    const sentences = String(answer || '').split(/(?<=[.!?])\s+|\n+/).filter(s => s.trim());
+    const kept = [];
+    const dropped = [];
+    for (const sentence of sentences) {
+        const ns = norm(sentence);
+        let ok = true;
+        for (const m of ns.matchAll(UNIT_CLAIM_RE)) {
+            if (![...numberForms(m[1])].some(f => srcNumbers.has(f))) { ok = false; break; }
+        }
+        if (ok) {
+            for (const m of sentence.match(MONEY_CLAIM_RE) || []) {
+                const v = moneyValue(m);
+                if (v !== null && !srcMoney.has(v)) { ok = false; break; }
+            }
+        }
+        (ok ? kept : dropped).push(sentence.trim());
+    }
+    return { text: kept.join(' ').trim(), dropped };
+}
+
 module.exports = {
+    nameGrounded,
+    phoneGrounded,
+    addressGrounded,
+    paymentGrounded,
+    groundAnswerClaims,
     norm,
     catalogAccessors,
     resolveIn,
