@@ -978,9 +978,18 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
         // FASE: ENCARGO PERSONALIZADO
         // Siguiente: BROWSE_IMAGES o SELECCION_OPCION
         // ===================================
-        case PHASE.ENCARGO:
-            await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+        case PHASE.ENCARGO: {
+            // Un tenant puede envolver el encargo para contar errores (hoy:
+            // heladería). Sin la capacidad, comportamiento idéntico al de
+            // siempre - los demás tenants no cambian.
+            const encargoFlow = flowRegistry.getTenantFlowWithCapability('handleEncargoPhase');
+            if (encargoFlow) {
+                await encargoFlow.handleEncargoPhase(sock, jid, text, userSession, ctx);
+            } else {
+                await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+            }
             break;
+        }
 
         // ===================================
         // FASE: ESPERANDO ATENCIÓN HUMANA

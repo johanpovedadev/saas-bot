@@ -390,6 +390,11 @@ async function handleAwaitingField(sock, jid, text, userSession, ctx) {
  * @param {string} text - Texto del usuario
  * @param {Object} userSession - Sesión del usuario
  * @param {Object} ctx - Contexto global
+ * @returns {Promise<'reserva'|'menu_order'|'instructions'>} qué pasó con el
+ *   mensaje - 'instructions' significa que NO se entendió y solo se repitió
+ *   el formato. Los callers existentes ignoran el valor (comportamiento sin
+ *   cambios); heladeria.flow.js#handleEncargoPhase lo usa para contar
+ *   errores y escalar.
  */
 async function handleEncargo(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
@@ -434,6 +439,7 @@ async function handleEncargo(sock, jid, text, userSession, ctx) {
                 ctx
             );
         }
+        return 'reserva';
     } else {
         // Bug real (26 sep 2026): una fase ENCARGO activada por una
         // clasificación de la IA que no logró resolver a qué producto se
@@ -448,7 +454,7 @@ async function handleEncargo(sock, jid, text, userSession, ctx) {
         const flowRegistry = require('../flowRegistry');
         const menuOrderFlow = flowRegistry.getTenantFlowWithCapability('tryHandleAsMenuOrder');
         if (menuOrderFlow && await menuOrderFlow.tryHandleAsMenuOrder(sock, jid, text, userSession, ctx)) {
-            return;
+            return 'menu_order';
         }
 
         // No se pudo parsear ni resolver como pedido normal, mostrar instrucciones
@@ -462,6 +468,7 @@ async function handleEncargo(sock, jid, text, userSession, ctx) {
             `O simplemente dinos qué necesitas y te ayudamos. 😊`,
             ctx
         );
+        return 'instructions';
     }
 }
 

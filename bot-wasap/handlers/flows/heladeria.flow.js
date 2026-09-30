@@ -1686,6 +1686,35 @@ async function tryHandleAsMenuOrder(sock, jid, text, userSession, ctx) {
 }
 
 /**
+ * Fase ENCARGO de heladería (handler.js la delega acá vía la capacidad
+ * handleEncargoPhase). Envuelve reservationsHandler.handleEncargo SIN cambiar
+ * lo que hace - solo cuenta los turnos en que no entendió nada.
+ *
+ * Bug real (replay 29-30 sep 2026): el sub-flujo de encargo repitió el MISMO
+ * mensaje de instrucciones ("Para hacer un pedido especial... envía un
+ * mensaje con el siguiente formato: Nombre, dirección, tipo, pago,
+ * teléfono") hasta 14 veces seguidas sin escalar a humano. handleEncargo
+ * nunca subía errorCount cuando no lograba parsear el mensaje, así que el
+ * chequeo global de frustración de handler.js (paso 10, umbral 2) no se
+ * enteraba nunca; y el detector de loop tampoco saltaba porque el cliente
+ * escribía cosas DISTINTAS cada vez (es el bot el que se repetía, no él).
+ * Ahora cada turno que termina en "repetir instrucciones" cuenta como
+ * error (al 2do consecutivo el chequeo global escala, como en cualquier
+ * otra fase); una reserva parseada o un pedido normal resuelto lo resetean.
+ * La PRIMERA vez que se muestran las instrucciones (al entrar a ENCARGO por
+ * routeIntent/custom_order o por la opción 2 del menú) no pasa por acá -
+ * solo cuentan los mensajes que el cliente manda ya estando en ENCARGO.
+ */
+async function handleEncargoPhase(sock, jid, text, userSession, ctx) {
+    const outcome = await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+    if (outcome === 'instructions') {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
+    } else if (outcome) {
+        userSession.errorCount = 0;
+    }
+}
+
+/**
  * Enruta el resultado de intención de IA (audio) a la acción correspondiente.
  * Si el producto requiere sabores/toppings, inicia el flujo guiado en lugar
  * de agregarlo directo al carrito.
@@ -3299,6 +3328,7 @@ module.exports = {
     escalateIfSensitive,
     tryRemoveOrderAddition,
     tryHandleAsMenuOrder,
+    handleEncargoPhase,
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => HELADERIA_PHASES.includes(phase),
     getPhases: () => HELADERIA_PHASES,
