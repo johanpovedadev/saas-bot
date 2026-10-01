@@ -15,24 +15,22 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { logger } = require('../utils/logger');
+const sharedJsonFile = require('../utils/sharedJsonFile');
 
 const STORE_PATH = process.env.BOOKING_STORE_PATH || path.join(__dirname, '..', 'data', 'appointments.json');
 
 function readAll() {
-    try {
-        if (!fs.existsSync(STORE_PATH)) return {};
-        return JSON.parse(fs.readFileSync(STORE_PATH, 'utf-8') || '{}');
-    } catch (e) {
-        logger.error(`bookingStore: error leyendo registro: ${e.message}`);
+    const r = sharedJsonFile.readJson(STORE_PATH);
+    if (!r.ok) {
+        logger.error(`bookingStore: archivo corrupto (se guardó copia .corrupt-*): ${r.error && r.error.message}`);
         return {};
     }
+    return r.data;
 }
 
 function writeAll(data) {
     try {
-        const dir = path.dirname(STORE_PATH);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+        sharedJsonFile.writeJsonAtomic(STORE_PATH, data);
     } catch (e) {
         logger.error(`bookingStore: error escribiendo registro: ${e.message}`);
     }
@@ -232,8 +230,19 @@ function markDayBeforeReminded(businessKey, appointmentId) {
     writeAll(all);
 }
 
-module.exports = {
-    listProfessionals, addProfessional, removeProfessional,
-    bookAppointment, getAppointment, attachCalendarEvent, rescheduleAppointment, cancelAppointment,
-    listAppointments, getAvailableSlots, markReminded, markDayBeforeReminded
-};
+// Las operaciones que leen-modifican-escriben van con candado entre procesos
+// (varios bots comparten este archivo) - ver utils/sharedJsonFile.js.
+module.exports = sharedJsonFile.lockedExports(STORE_PATH, {
+    listProfessionals,
+    addProfessional,
+    removeProfessional,
+    bookAppointment,
+    getAppointment,
+    attachCalendarEvent,
+    rescheduleAppointment,
+    cancelAppointment,
+    listAppointments,
+    getAvailableSlots,
+    markReminded,
+    markDayBeforeReminded
+}, ['addProfessional', 'removeProfessional', 'bookAppointment', 'attachCalendarEvent', 'rescheduleAppointment', 'cancelAppointment', 'markReminded', 'markDayBeforeReminded']);
