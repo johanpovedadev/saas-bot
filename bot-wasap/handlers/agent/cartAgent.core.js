@@ -701,7 +701,11 @@ async function flushPlainAdds(T, navigatingNext) {
     const { codeOf, priceOf } = T.acc;
     const adds = [];
     for (const r of T.plainAdds.splice(0)) {
-        const real = r && r.product && catalog.find(p => codeOf(p) && codeOf(p) === codeOf(r.product));
+        // El mismo objeto del catálogo (lo normal: el plugin lo resolvió de
+        // ahí) o, si el plugin armó una copia, el producto con el mismo
+        // código. Un producto sin código en el catálogo solo entra por identidad.
+        const real = r && r.product && (catalog.find(p => p === r.product) ||
+            catalog.find(p => codeOf(p) && codeOf(p) === codeOf(r.product)));
         if (!real) { logger.warn(`[${plugin.logTag}] ${jid} producto fuera del catálogo descartado: ${r && r.product && nameOf(r.product)}`); continue; }
         const cantidad = Number.isInteger(r.cantidad) && r.cantidad >= 1 && r.cantidad <= 100 ? r.cantidad : 1;
         adds.push({ ...r, product: real, precio: priceOf(real), cantidad });

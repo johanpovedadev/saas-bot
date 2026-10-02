@@ -260,6 +260,21 @@ function setup(seed) {
             check(t.s().carrito.length === 1 && t.s().carrito[0].precio === 6000, 'el carrito cobra el precio del catálogo ($6.000) aunque el plugin pase $1, y un producto fuera del catálogo no entra');
         }
 
+        // ---- 8c2) Producto del catálogo SIN código: entra (por identidad) ----
+        {
+            const sinCodigo = { NombreProducto: 'Galleta de la casa', Precio_Venta: '1500', Categoria: 'Panes' };
+            productsCache.push(sinCodigo);
+            const ag = core.createCartAgent(buildTestPlugin({
+                activation: { businessKey: 'tienda_prueba', flagEnv: 'TIENDA_PRUEBA_AI_AGENT', jidsEnv: 'X' },
+                tools: [{ ...buildTestPlugin().tools[0], async exec(args, T) { T.plainAdds.push({ product: sinCodigo, cantidad: 1, precio: 1500, notas: '' }); } }]
+            }));
+            const t = setup();
+            nextDecision = [{ name: 'agregar_producto', args: { producto: 'Galleta de la casa' } }];
+            await ag.processMessage(t.sock, t.jid, 'una galleta de la casa', t.s(), t.ctx);
+            check(t.s().carrito.length === 1 && t.s().carrito[0].precio === 1500, 'un producto real del catálogo sin código igual se puede agregar (no se descarta)');
+            productsCache.pop();
+        }
+
         // ---- 8d) Respuestas libres: sin cifras inventadas ----
         {
             const t = setup();
