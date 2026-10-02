@@ -48,7 +48,14 @@ function acquireInstanceLock(authDir, { now = Date.now } = {}) {
         fs.renameSync(tmp, lockPath);
     };
     const started = now();
-    write();
+    try {
+        write();
+    } catch (e) {
+        // No poder escribir el candado (permisos, antivirus de Windows) no debe
+        // dejar al negocio sin bot: se arranca igual y se avisa.
+        console.warn(`⚠️ No se pudo escribir ${lockPath} (${e.message}): no hay protección contra un segundo proceso de este negocio.`);
+        return { ok: true, release: () => {} };
+    }
     const timer = setInterval(() => { try { write(); } catch (_) { /* best-effort */ } }, HEARTBEAT_MS);
     if (timer.unref) timer.unref();
     let released = false;

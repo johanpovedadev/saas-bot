@@ -49,8 +49,20 @@ function ensureDir(filePath) {
 /**
  * @returns {{ok: true, data: Object} | {ok: false, error: Error}}
  */
+// Archivos ya reconocidos como corruptos (por tamaño+fecha): se respaldan UNA
+// vez y las lecturas siguientes no reintentan ni duermen - si no, cada
+// mensaje de cada cliente (isMuted/isWaiting se consultan en cada mensaje)
+// creaba otra copia y esperaba 60ms.
+const knownCorrupt = new Map(); // filePath -> firma "size:mtime"
+
+function signatureOf(filePath) {
+    try { const st = fs.statSync(filePath); return `${st.size}:${st.mtimeMs}`; } catch (_) { return null; }
+}
+
 function readJson(filePath) {
     if (!fs.existsSync(filePath)) return { ok: true, data: {} };
+    const sig = signatureOf(filePath);
+    if (sig && knownCorrupt.get(filePath) === sig) return { ok: false, error: new Error('archivo corrupto (ya respaldado)') };
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -64,10 +76,14 @@ function readJson(filePath) {
             sleepSync(20);
         }
     }
-    try {
-        const backup = `${filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-        fs.copyFileSync(filePath, backup);
-    } catch (_) { /* best-effort */ }
+    const finalSig = signatureOf(filePath);
+    if (finalSig && knownCorrupt.get(filePath) !== finalSig) {
+        knownCorrupt.set(filePath, finalSig);
+        try {
+            const backup = `${filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+            fs.copyFileSync(filePath, backup);
+        } catch (_) { /* best-effort */ }
+    }
     return { ok: false, error: lastErr };
 }
 
@@ -91,6 +107,10 @@ function writeJsonAtomic(filePath, data) {
     throw lastErr;
 }
 
+function isPidAlive(pid) {
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
 // Reentrante por proceso: una operación con candado que llama a otra del mismo
 // store no se bloquea a sí misma.
 const heldLocks = new Map(); // lockPath -> depth
@@ -106,6 +126,10 @@ function acquire(lockPath) {
         } catch (e) {
             if (e.code !== 'EEXIST') throw e;
             try {
+                // Dueño muerto (proceso que se cayó con el candado tomado): se
+                // libera de una, sin hacer esperar a todos los demás bots.
+                const holderPid = parseInt(String(fs.readFileSync(lockPath, 'utf-8')).split(' ')[0], 10);
+                if (holderPid && holderPid !== process.pid && !isPidAlive(holderPid)) { fs.unlinkSync(lockPath); continue; }
                 const age = Date.now() - fs.statSync(lockPath).mtimeMs;
                 if (age > LOCK_STALE_MS) { fs.unlinkSync(lockPath); continue; }
             } catch (_) { continue; } // lo soltaron justo ahora
