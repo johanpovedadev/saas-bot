@@ -68,3 +68,34 @@ módulo propio (`citas.flow.js` para Lite y/o `citas.agent.js` para Agente) sin 
 Decisiones pendientes: si las dos líneas viven en el mismo repo con un flag por negocio (recomendado:
 un solo código, menos mantenimiento) o en repos/ramas separadas; y cómo se factura el consumo de IA
 del Agente (por negocio, con su propia `GEMINI_API_KEY` en `.env.<negocio>`, recomendado).
+
+## Validación previa a subir (2 oct 2026)
+
+Revisión adversarial de los 13 commits con entradas realistas, antes de subir nada. Se encontraron
+y corrigieron 10 fallas propias, cada una con su test:
+
+| Falla | Test que la fija |
+|---|---|
+| "5 litros" pasaba con el catálogo real (el 5 de "S5") | `test_cart_agent_grounding.js` |
+| Teléfono con +57, dirección "cra"/"cl", "pago cuando llegue"/PSE rechazados | `test_cart_agent_grounding.js` |
+| Producto del catálogo sin código descartado por el agente | `test_cart_agent_core_generico.js` |
+| JSON corrupto: una copia por lectura y 60ms de espera por mensaje | `test_shared_json_file.js` |
+| Candado de un proceso muerto: 3s de espera por operación durante 10s | `test_shared_json_file.js` |
+| Candado de instancia que no se puede escribir tumbaba el bot | (código; no reproducible como root) |
+| `launch-tenants.js` dejaba "x " con espacio en BUSINESS_KEY | (código) |
+| "de todo un poco" / "todos x favor" ya no agregaban todos | `test_heladeria_todos_no_agrega_catalogo_completo.js` |
+
+Verificación:
+- Suite completa: 91/120, las mismas 29 fallas preexistentes que la base (Django ausente, finanzas,
+  `test_admin_roles_split.js` esperado).
+- Con un Django **simulado** (catálogo realista) corren 22 tests de heladería que normalmente no
+  pueden correr acá: base y versión final dan **exactamente** los mismos resultados (203 checks ✅
+  iguales, 0 regresiones).
+- Diferencial del agente contra el monolito original: 33 escenarios legítimos idénticos; los
+  adversariales cambian solo donde deben.
+- Carga: 20 procesos x 100 escrituras simultáneas en el mismo archivo, 0 perdidas.
+- Smoke de carga de 6 negocios (pescadería, finance, heladería, mascotas, pilates, pilates_clientas).
+- Sin credenciales en lo agregado.
+
+Lo que NO se pudo validar acá (hay que hacerlo en el equipo): Windows real (rename/candados con
+antivirus), WhatsApp real con 3 bots en vivo, y el replay del agente con la API real de Gemini.
