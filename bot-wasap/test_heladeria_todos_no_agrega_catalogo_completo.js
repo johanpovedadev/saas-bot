@@ -129,7 +129,7 @@ function setup(jid, phase, flowPatch) {
         }
 
         // ==== 5) Regresión: pedir explícitamente todos los toppings sigue funcionando ====
-        for (const [i, phrase] of ['todos', 'de todo', 'con todo', 'todos los toppings'].entries()) {
+        for (const [i, phrase] of ['todos', 'de todo', 'con todo', 'todos los toppings', 'de todo un poco', 'todos x favor'].entries()) {
             const JID = `57390000411${i}@c.us`;
             const { ctx, sock } = setup(JID, PHASE.HELADO_TOPPINGS);
             const out = await send(sock, ctx, JID, phrase);

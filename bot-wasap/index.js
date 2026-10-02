@@ -14,6 +14,11 @@ if (!RAW_BUSINESS_KEY || /[^a-z0-9_-]/i.test(RAW_BUSINESS_KEY)) {
     console.error(`❌ BUSINESS_KEY ${RAW_BUSINESS_KEY ? `inválido ("${RAW_BUSINESS_KEY}")` : 'no definido'}: el bot no arranca sin saber de qué negocio es (cada negocio tiene su propia sesión de WhatsApp en auth/<BUSINESS_KEY>).`);
     process.exit(1);
 }
+// Todos los módulos leen process.env.BUSINESS_KEY: se deja ya limpio. En
+// Windows, `set BUSINESS_KEY=x && node index.js` (launch-tenants.js viejo)
+// guardaba "x " con espacio final -> no se encontraba config/businesses/x.json
+// ni .env.x y el bot arrancaba con la configuración por defecto.
+process.env.BUSINESS_KEY = RAW_BUSINESS_KEY;
 {
     const instanceLock = require('./utils/tenantInstanceLock').acquireInstanceLock(path.join(__dirname, 'auth', RAW_BUSINESS_KEY));
     if (!instanceLock.ok) {
