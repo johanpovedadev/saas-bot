@@ -410,8 +410,14 @@ function formatToppingsGrouped(ctx) {
     const list = buildOptionLists(ctx).toppings;
     const codeByItem = new Map(list.map((p, i) => [p[dbFields.productCode] || p, i + 1]));
     const blocks = [];
+    // Cada topping va SOLO en el primer grupo que lo reconoce. Bug real en
+    // producción (encontrado al validar el agente, 3 oct 2026): "✨ Otros"
+    // coincide con todo (/.+/), así que la lista que veía el cliente repetía
+    // TODOS los toppings dos veces (una en su grupo y otra en "Otros").
+    const placed = new Set();
     for (const g of TOPPING_GROUPS) {
-        const items = list.filter(p => g.match.test(String(p[dbFields.productName] || '')));
+        const items = list.filter(p => !placed.has(p) && g.match.test(String(p[dbFields.productName] || '')));
+        items.forEach(p => placed.add(p));
         if (!items.length) continue;
         const itemLines = items.map(p => {
             const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
