@@ -269,8 +269,12 @@ async function say(sock, jid, text, ctx) {
         900
     ) || 900;
 
+    // Mientras el agente IA arma la respuesta de ESTE cliente, sus mensajes se
+    // retienen y se envían juntos al final del turno (cartAgent.core.js): la
+    // espera de "escribiendo..." se hace una sola vez ahí, no por mensaje.
+    const agentBuffering = ctx.__agentBufferingJids && ctx.__agentBufferingJids.has(jid);
     try {
-        await sleep(writingMs);    } catch (err) {
+        if (!agentBuffering) await sleep(writingMs);    } catch (err) {
         console.warn('sleep failed in say():', err && err.message ? err.message : err);
     }
 

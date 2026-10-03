@@ -52,6 +52,7 @@ const heladeriaAi = require('../../services/heladeriaAi');
 const heladeriaFlow = require('./heladeria.flow');
 const businessHours = require('../../utils/businessHours');
 const core = require('../agent/cartAgent.core');
+const presenter = require('./heladeria.agent.presenter');
 const G = require('../agent/grounding');
 
 const I = heladeriaFlow._internal;
@@ -400,6 +401,14 @@ function orphanCandidates(T) {
 async function keepOrphan(T, patch, label) {
     T.userSession._agentOrphanSlots = Object.assign(T.userSession._agentOrphanSlots || {}, patch);
     const cands = orphanCandidates(T);
+    // Un solo producto en conversación (ej. preguntó por la Copa Osito y dice
+    // "de vainilla toda"): es para ese - se arma de una en vez de preguntar
+    // "¿para cuál producto?" con una lista de una sola opción.
+    if (cands.length === 1 && (T.pendingBefore || []).length <= 1) {
+        T.pendingBefore = [nameOf(cands[0])];
+        await EXECUTORS.agregar_producto({ producto: nameOf(cands[0]) }, T);
+        return;
+    }
     await sendClarification(T, `📝 Anotado: ${label}. ¿Para cuál producto es? 😊`, cands);
 }
 
@@ -464,8 +473,16 @@ function productIsGrounded(product, T) {
     if ((T.pendingBefore || []).some(o => norm(o) === norm(name))) return true;
     if (norm(codeOf(product)) && text.includes(norm(codeOf(product)))) return true;
     if (G.nameWordsInText(name, text, { ignore: GENERIC_WORDS })) return true;
-    return G.affirmsLastBotOffer(name, text, T.history());
+    if (G.affirmsLastBotOffer(name, text, T.history())) return true;
+    // "dame una entonces" / "la quiero" justo después de que el bot habló de
+    // UN solo producto (precio, ingredientes): es ese. Con varios productos
+    // en conversación no se adivina.
+    const before = (T.mentionedBefore || []).map(p => norm(typeof p === 'string' ? p : nameOf(p)));
+    return before.length === 1 && before[0] === norm(name) && ORDER_INTENT_RE.test(text);
 }
+// Verbos de pedido. "esa"/"una" solo cuentan si son TODO el mensaje ("tengo
+// una pregunta" no es un pedido).
+const ORDER_INTENT_RE = /\b(dame|deme|damela|demela|me (la|lo) (das|da|llevo|regalas|mandas|traes)|la quiero|lo quiero|quiero (una|uno|esa|ese|la|el|dos|tres)|agregal[ao]|ponmela|pidela|pidemela|regalame|regaleme|mandame|mandeme|traeme|vendeme)\b|^(esa|ese|una|uno|la misma)( (por favor|porfa|pues|entonces|esa))?$/;
 
 async function groundSabores(names, T, silent) {
     const kept = [];
@@ -1066,7 +1083,12 @@ const hooks = {
     extractMentionedProducts: (answer, ctx) => I.extractMentionedProducts(answer, ctx),
     detectSensitive: (text) => heladeriaAi.detectSensitiveData(text),
     escalateSensitive: (sock, jid, text, userSession, ctx) => heladeriaFlow.escalateIfSensitive(sock, jid, text, userSession, ctx),
-    isBroadcast: (text) => heladeriaAi.isAutomatedBroadcast(text, { deterministic: true })
+    isBroadcast: (text) => heladeriaAi.isAutomatedBroadcast(text, { deterministic: true }),
+    // Respuestas conversacionales (sin menús numerados ni códigos) - ver
+    // heladeria.agent.presenter.js.
+    present: (messages, T) => presenter.present(messages, T),
+    // "Hola, quiero..." -> saludo corto, sin el menú de bienvenida.
+    greetShort: (T) => say(T.sock, T.jid, `¡Holiii! ☺️`, T.ctx)
 };
 
 const texts = {

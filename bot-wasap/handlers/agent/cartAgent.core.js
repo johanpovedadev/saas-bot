@@ -661,6 +661,16 @@ const CORE_EXECUTORS = {
         plugin.hooks.resetPluginState(userSession);
         // Solo "hola": el resto del mensaje (si traía un pedido) lo manejan
         // las otras herramientas que la IA llamó en este mismo turno.
+        // Saludo CON pedido ("hola, quiero una copa..."): un saludo corto y
+        // directo al pedido - no el menú de bienvenida con opciones numeradas
+        // (feedback de la dueña de Mundo Helados, 3 oct 2026: "si el bot no le
+        // responde a las personas de una... no pega").
+        if (T.callCount > 1 && typeof plugin.hooks.greetShort === 'function') {
+            plugin.hooks.clearInProgress(userSession);
+            await plugin.hooks.greetShort(T);
+            T.greeted = true;
+            return;
+        }
         await plugin.flow.showWelcome(sock, jid, ctx, 'hola');
         markPrompted(T);
         T.greeted = true;
@@ -806,6 +816,42 @@ async function closeTurn(T) {
             await plugin.hooks.sendPostAddOptions(T);
         } else {
             await say(sock, jid, plugin.texts.idlePrompt, ctx);
+        }
+    }
+}
+
+/**
+ * Envía los mensajes retenidos del turno, presentados por el plugin. Siempre
+ * envía algo si hubo mensajes (si el plugin falla, van tal cual): el cliente
+ * nunca se queda sin respuesta por culpa de la presentación.
+ */
+async function flushOutbox(T, realSock, outbox, turnStartIso) {
+    const { jid, ctx, plugin } = T;
+    if (ctx.__agentBufferingJids) ctx.__agentBufferingJids.delete(jid);
+    if (!outbox.length) return;
+    let final = outbox;
+    try {
+        const presented = plugin.hooks.present(outbox.map(m => ({ ...m })), T);
+        if (Array.isArray(presented) && presented.length) final = presented;
+    } catch (e) {
+        logger.error(`[${plugin.logTag}] ${jid} error presentando la respuesta, se envía tal cual: ${e.message}`);
+    }
+    // El historial registró el texto crudo (say lo anota al "enviar"): se
+    // reemplaza por lo que el cliente de verdad va a ver.
+    try { chatHistory.removeBotMessagesSince(jid, turnStartIso); } catch (_) { /* best-effort */ }
+    try { await require('../../services/bot_core').sendTypingIndicator(realSock, jid); } catch (_) { /* opcional */ }
+    const writingMs = Number(process.env.TIME_WRITING_SIMULATION_MS || process.env.WRITING_SIMULATION_MS || 900) || 900;
+    await new Promise(r => setTimeout(r, Math.min(writingMs, 1500)));
+    for (const m of final) {
+        try {
+            const sent = await realSock.sendMessage(jid, m.content, m.opts);
+            if (typeof m.content === 'string') {
+                chatHistory.recordMessage(jid, true, m.content);
+                const messageId = sent && sent.id && sent.id._serialized;
+                if (messageId) { try { require('../../lion-leads-readonly').recordOutboundMessage(jid, messageId); } catch (_) { /* best-effort */ } }
+            }
+        } catch (e) {
+            logger.error(`[${plugin.logTag}] ${jid} no se pudo enviar un mensaje del turno: ${e.message}`);
         }
     }
 }
@@ -983,10 +1029,28 @@ function createCartAgent(plugin) {
             return true;
         }
 
+        // Mensajes al cliente de este turno: si el plugin sabe "presentarlos"
+        // (hooks.present), se retienen y se envían juntos al final, ya
+        // reescritos en tono conversacional (sin menús numerados ni códigos,
+        // sin preguntas intermedias que el mismo mensaje ya contestó). Los
+        // mensajes a otros números (avisos a admins) salen de inmediato.
         let sentCount = 0;
+        const buffering = typeof plugin.hooks.present === 'function';
+        const outbox = [];
+        const turnStartIso = new Date().toISOString();
+        if (buffering) {
+            ctx.__agentBufferingJids = ctx.__agentBufferingJids || new Set();
+            ctx.__agentBufferingJids.add(jid);
+        }
         const countingSock = new Proxy(sock, {
             get(target, prop) {
-                if (prop === 'sendMessage') return async (...a) => { sentCount++; return target.sendMessage(...a); };
+                if (prop === 'sendMessage') {
+                    return async (to, content, opts) => {
+                        sentCount++;
+                        if (buffering && to === jid) { outbox.push({ content, opts }); return { id: null }; }
+                        return target.sendMessage(to, content, opts);
+                    };
+                }
                 const v = target[prop];
                 return typeof v === 'function' ? v.bind(target) : v;
             }
@@ -994,6 +1058,7 @@ function createCartAgent(plugin) {
         const T = {
             sock: countingSock, jid, text, userSession, ctx, startPhase: phase, pendingBefore, callCount: calls.length,
             plugin, acc, agentExecutors: EXECUTORS, history: () => recentHistory(jid),
+            mentionedBefore: Array.isArray(userSession.lastMentionedProducts) ? [...userSession.lastMentionedProducts] : [],
             plainAdds: [], prompted: false, checkoutNeedsAdvance: false, checkoutAdvanced: false,
             addressSetThisTurn: false, cartChanged: false, clarified: false, escalated: false, ended: false,
             sentSomething: () => sentCount > 0
@@ -1040,7 +1105,11 @@ function createCartAgent(plugin) {
                 executed.push(`${c.name}!error`);
             }
         }
-        await closeTurn(T);
+        try {
+            await closeTurn(T);
+        } finally {
+            if (buffering) await flushOutbox(T, sock, outbox, turnStartIso);
+        }
 
         if (!T.clarified) userSession._agentClarifyStreak = 0;
         if (!T.escalated && !T.notFound) userSession.errorCount = 0;
