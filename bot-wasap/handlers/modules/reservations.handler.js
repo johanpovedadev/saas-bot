@@ -390,6 +390,11 @@ async function handleAwaitingField(sock, jid, text, userSession, ctx) {
  * @param {string} text - Texto del usuario
  * @param {Object} userSession - Sesión del usuario
  * @param {Object} ctx - Contexto global
+ * @returns {Promise<'reserva'|'menu_order'|'instructions'>} qué pasó con el
+ *   mensaje - 'instructions' significa que NO se entendió y solo se repitió
+ *   el formato. Los callers existentes ignoran el valor (comportamiento sin
+ *   cambios); heladeria.flow.js#handleEncargoPhase lo usa para contar
+ *   errores y escalar.
  */
 async function handleEncargo(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
@@ -434,18 +439,36 @@ async function handleEncargo(sock, jid, text, userSession, ctx) {
                 ctx
             );
         }
+        return 'reserva';
     } else {
-        // No se pudo parsear, mostrar instrucciones
-        await say(sock, jid, 
+        // Bug real (26 sep 2026): una fase ENCARGO activada por una
+        // clasificación de la IA que no logró resolver a qué producto se
+        // refería el cliente (ej. "2 de esas" sin memoria de la
+        // conversación) dejaba a CUALQUIER mensaje siguiente atrapado acá -
+        // incluso uno tan claro como "2 copa gusanito" (un producto real
+        // del menú) repetía este mismo formato de encargo para siempre, sin
+        // ninguna salida, hasta escalar por "mensaje repetido". Antes de
+        // rendirse con las instrucciones genéricas, se verifica con un
+        // match determinístico (sin IA) si el texto en realidad es un
+        // pedido normal resoluble contra el catálogo real del tenant.
+        const flowRegistry = require('../flowRegistry');
+        const menuOrderFlow = flowRegistry.getTenantFlowWithCapability('tryHandleAsMenuOrder');
+        if (menuOrderFlow && await menuOrderFlow.tryHandleAsMenuOrder(sock, jid, text, userSession, ctx)) {
+            return 'menu_order';
+        }
+
+        // No se pudo parsear ni resolver como pedido normal, mostrar instrucciones
+        await say(sock, jid,
             `📦 *Pedidos por Encargo*\n\n` +
             `Para hacer un pedido especial (litros, eventos, grandes cantidades), ` +
             `envía un mensaje con el siguiente formato:\n\n` +
             `*Nombre, dirección, tipo, pago, teléfono*\n\n` +
             `Ejemplo:\n` +
             `"Juan Pérez, Calle 10 #20-30, recoger, efectivo, 3001234567"\n\n` +
-            `O simplemente dinos qué necesitas y te ayudamos. 😊`, 
+            `O simplemente dinos qué necesitas y te ayudamos. 😊`,
             ctx
         );
+        return 'instructions';
     }
 }
 

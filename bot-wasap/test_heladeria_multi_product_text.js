@@ -15,7 +15,16 @@ process.env.BUSINESS_KEY = 'heladeria';
 const botCore = require('./services/bot_core');
 const heladeriaFlow = require('./handlers/flows/heladeria.flow.js');
 const heladeriaAi = require('./services/heladeriaAi');
+const businessHours = require('./utils/businessHours');
 const PHASE = require('./utils/phases');
+
+// Este test es sobre la cola de "varios productos en un mismo mensaje", no
+// sobre la regla de horario - se fuerza "abierto" (Copa Osito/Banana Split
+// no son de los permitidos fuera de horario, ver
+// test_heladeria_fuera_horario_solo_cajas.js para esa regla).
+const origIsOpen = businessHours.isWithinBusinessHours;
+businessHours.isWithinBusinessHours = () => true;
+process.on('exit', () => { businessHours.isWithinBusinessHours = origIsOpen; });
 
 const sent = [];
 const sock = { sendMessage: async (jid, text) => { sent.push(String(text)); }, getChatById: async () => null };

@@ -4,6 +4,7 @@
 const { say } = require('./bot_core');
 const notificationService = require('./notificationService');
 const waitingHumanStore = require('./waitingHumanStore');
+const unansweredQuestionsStore = require('./unansweredQuestionsStore');
 const PHASE = require('../utils/phases');
 const { logger } = require('../utils/logger');
 
@@ -199,7 +200,14 @@ async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustrac
         // de detección de loop llama a esta función y hace `return`
         // inmediato, sin pasar por ese chequeo global después.
         waitingHumanStore.markWaiting(process.env.BUSINESS_KEY, jid, reason);
-        
+
+        // Encola la última pregunta real del cliente como "candidato" para
+        // que el dueño la responda luego por chat (ver Parte 2 del resumen
+        // diario/preguntas graduales) - no rompe nada si falla, es best-effort.
+        try {
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, jid, userSession.lastMessageText || reason, reason);
+        } catch (_) { /* no crítico */ }
+
         // Resetear contadores de error para evitar múltiples notificaciones
         userSession.errorCount = 0;
         userSession.messageHistory = [];

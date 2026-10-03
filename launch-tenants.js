@@ -55,7 +55,7 @@ tenants.forEach((key, i) => {
     try { bizName = JSON.parse(fs.readFileSync(configPath, 'utf-8')).business_name || key; } catch (_) {}
 
     const title = `Bot ${bizName}`;
-    const cmd = `cd /d "${BOT_DIR}" && set BUSINESS_KEY=${key} && node index.js`;
+    const cmd = `cd /d "${BOT_DIR}" && set "BUSINESS_KEY=${key}" && node index.js`;
 
     // Launch each bot in its own CMD window via PowerShell Start-Process
     try {
@@ -85,7 +85,7 @@ tenants.forEach((key, i) => {
         bizName = JSON.parse(fs.readFileSync(p, 'utf-8')).business_name || key;
     } catch (_) {}
     const title = `Bot ${bizName}`;
-    const cmd = `cd /d "${BOT_DIR}" && set BUSINESS_KEY=${key} && node index.js`;
+    const cmd = `cd /d "${BOT_DIR}" && set "BUSINESS_KEY=${key}" && node index.js`;
     bat += `start "${title}" cmd /k "${cmd}"\n`;
 });
 fs.writeFileSync(path.join(__dirname, 'run_tenants.bat'), bat, 'utf-8');

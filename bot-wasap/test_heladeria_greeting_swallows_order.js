@@ -20,7 +20,17 @@ const botCore = require('./services/bot_core');
 const flowRegistry = require('./handlers/flowRegistry');
 const heladeriaFlow = require('./handlers/flows/heladeria.flow.js');
 const heladeriaAi = require('./services/heladeriaAi');
+const businessHours = require('./utils/businessHours');
 const PHASE = require('./utils/phases');
+
+// Este test es sobre si el pedido pegado al saludo se procesa o no - no
+// sobre la regla de horario (ver test_heladeria_fuera_horario_solo_cajas.js
+// para esa). Se fuerza "abierto" para que no dependa de la hora real en que
+// corra (Copa Osito, el producto de ejemplo, no es de los permitidos fuera
+// de horario, así que a las 22:xx reales el gate nuevo lo bloquearía sin
+// que tenga nada que ver con lo que este test valida).
+const origIsOpen = businessHours.isWithinBusinessHours;
+businessHours.isWithinBusinessHours = () => true;
 
 const sent = [];
 const sock = { sendMessage: async (jid, text) => { sent.push(String(text)); }, getChatById: async () => null };
@@ -79,6 +89,7 @@ async function send(text) {
         process.exitCode = 1;
     } finally {
         heladeriaAi.interpretOrderText = origInterpret;
+        businessHours.isWithinBusinessHours = origIsOpen;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

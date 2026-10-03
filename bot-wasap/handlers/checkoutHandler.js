@@ -11,6 +11,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const envConfig = require('../config/env.loader');
 const notificationService = require('../services/notificationService');
+const reviewRequestService = require('../services/reviewRequestService');
 const { similarityScore } = require('../utils/fuzzySearch');
 // NOTA: Google Sheets se maneja desde el backend de Python (inventario/google_sheets.py)
 // const googleSheetsService = require('../services/googleSheetsService');
@@ -58,13 +59,43 @@ async function delegateToAI(sock, jid, text, userSession, ctx) {
         const flowRegistry = require('./flowRegistry');
         const aiFlow = flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
         if (aiFlow) {
-            await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
-            return true;
+            // Bug real (25 sep 2026): esto devolvía `true` sin condición
+            // apenas la llamada terminaba sin tirar error - así que CUALQUIER
+            // dato de checkout inválido (ej. "no" como dirección) se trataba
+            // como "la IA ya lo resolvió" y el caller (handleEnterAddress,
+            // etc.) nunca subía su propio errorCount. handleNotUnderstood
+            // ahora sí devuelve si de verdad resolvió algo o si cayó en su
+            // respaldo genérico - se propaga ese valor real.
+            const resolved = await aiFlow.handleNotUnderstood(sock, jid, text, userSession, ctx);
+            return resolved === true;
         }
     } catch (aiErr) {
         logger.error(`[${jid}] Error delegando a IA en checkout: ${aiErr.message}`);
     }
     return false;
+}
+
+/**
+ * true si el tenant actual tiene su propio fallback de checkout con IA (ej.
+ * heladeria.flow.js#checkoutFallbackPrompt). Bug real (26 sep 2026): varios
+ * llamadores (handleEnterAddress, handleEnterName, handleEnterTelefono,
+ * handleEnterPaymentMethod, handleConfirmOrderChoice, el "1/2" de
+ * FINALIZE_ORDER) asumían que si delegateToAI devolvía `false` es porque el
+ * flow del tenant NO había hecho nada, así que hacían su PROPIO +1 de
+ * errorCount + mensaje genérico "por si acaso". Pero cuando el tenant SÍ
+ * tiene handleNotUnderstood, su checkoutFallbackPrompt YA responde y YA sube
+ * errorCount en TODAS las fases de checkout (CHECK_DIR/CHECK_NAME/
+ * CHECK_TELEFONO/CHECK_PAGO/CONFIRM_ORDER/FINALIZE_ORDER) sin importar si el
+ * texto era una pregunta de verdad (`wasQuestion`) - así que `false` acá NO
+ * significa "no hizo nada", significa "no era una pregunta, pero igual ya
+ * respondió". El resultado real era +2 en un solo mensaje poco claro,
+ * escalando a un humano desde el PRIMER fallo en vez del segundo. Cuando el
+ * tenant tiene este fallback, el llamador debe retornar SIEMPRE después de
+ * delegateToAI, sin repetir su propio mensaje ni su propio incremento.
+ */
+function hasTenantCheckoutFallback() {
+    const flowRegistry = require('./flowRegistry');
+    return !!flowRegistry.getTenantFlowWithCapability('handleNotUnderstood');
 }
 
 /**
@@ -463,8 +494,20 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Palabras de cancelación (escape oculto, no son opción visible)
     if (cleanInput === 'cancelar' || cleanInput === 'vaciar' || cleanInput === 'borrar' || cleanInput === 'cancelar pedido') {
         logger.info(`[${jid}] -> Usuario eligió CANCELAR pedido.`);
+        // Bug real (auditoría 23/9): esto solo vaciaba los PRODUCTOS, no los
+        // datos de entrega (dirección/nombre/teléfono/pago). Como
+        // askNextMissingCheckoutField solo pregunta por lo que falta, el
+        // SIGUIENTE pedido del cliente reusaba en silencio la dirección/pago
+        // del pedido cancelado sin volver a confirmarlos - riesgoso si el
+        // nuevo pedido es para otra dirección.
         if (userSession.order) {
             userSession.order.items = [];
+            delete userSession.order.address;
+            delete userSession.order.name;
+            delete userSession.order.telefono;
+            delete userSession.order.paymentMethod;
+            delete userSession.order.deliveryCost;
+            delete userSession.order.pickup;
         }
         if (Array.isArray(userSession.carrito)) {
             userSession.carrito = [];
@@ -485,12 +528,58 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     // Opción inválida: intentar IA híbrida antes del mensaje genérico
     logger.warn(`[${jid}] -> Opción inválida en CONFIRM_ORDER: "${input}"`);
     if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
-    // Cuenta como "no entendí" para el chequeo global de frustración (handlers/
-    // handler.js paso 10) - si el flow del tenant tiene su propio fallback de
-    // checkout (ej. heladeria.flow.js) que ya suma errorCount, esto es
-    // redundante pero inofensivo (mismo contador, mismo efecto).
+    // Este mensaje genérico + su propio incremento solo deben usarse cuando
+    // el tenant NO tiene su propio fallback de checkout (ver
+    // hasTenantCheckoutFallback) - si lo tiene, ya respondió y ya contó el
+    // error dentro de delegateToAI.
+    if (hasTenantCheckoutFallback()) return;
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     await say(sock, jid, '❌ Opción no válida. Por favor escribe:\n\n*1* para confirmar\n*2* para seguir comprando\n*3* para editar el pedido', ctx);
+}
+
+// Auditoría 23/9: validateInput('address'/'string') solo mira el LARGO del
+// texto (≥8 / ≥3 caracteres) - una pregunta real del cliente ("¿por qué
+// necesitan mi dirección?") pasa esa validación sin problema y quedaba
+// guardada TAL CUAL como la dirección/nombre de entrega, en vez de
+// intentarse responder. Heurística barata (sin IA) para detectar que el
+// texto es probablemente una pregunta, no un dato real, y darle prioridad a
+// la IA (delegateToAI) ANTES de aceptarlo como dirección/nombre válidos.
+// Bug real (chat real de una clienta, mayo 2026): "Me avisas cuando esté
+// listo, yo mando a recogerlo" - el cliente avisa que va a RECOGER el pedido
+// en el local, sin domicilio. El flujo de checkout no tenía ninguna forma de
+// entender esto - la frase caía en "No entendí" porque no calzaba con
+// ninguna dirección real, dejando al cliente atascado pidiendo algo que el
+// negocio sí ofrece (recogida en tienda).
+//
+// Bug real de producción (Johan probando en vivo, 28/9): "Envío a qué me lo
+// recojan y lo pago en efectivo" NUNCA se detectaba como recogida - el
+// cliente terminaba en el checkout normal, con la dirección pidiéndose de
+// todas formas pese a haber avisado que la recogía él mismo. Causa raíz: el
+// stem original (`recoj[oa]`) solo cubría la 1ra persona singular ("yo
+// recojo/recoja") y por eso fallaba con CUALQUIER otra conjugación del verbo
+// "recoger" - "me lo recojan", "lo recoge mi esposo", "lo recogen ellos",
+// "nosotros lo recogemos" - en la práctica más comunes que la 1ra persona,
+// porque el cliente casi nunca dice "yo recojo": habla de quién más pasa por
+// el pedido, o en modo impersonal/subjuntivo. Se reemplaza por las DOS raíces
+// reales del verbo en español ("recog-": recoge/recogen/recogemos/recoger/
+// recogió..., y "recoj-": recojo/recoja/recojan/recojas..., producto de la
+// alternancia ortográfica g→j antes de o/a) con \w* para cubrir cualquier
+// conjugación sin enumerar cada una a mano - ningún otro término común en
+// este dominio empieza con esas raíces, así que no hay riesgo real de falso
+// positivo.
+const PICKUP_RE = /\b(recog\w*|recoj\w*|pasar[eé]?\s+por|paso\s+(a\s+)?(recoger|por)|voy\s+a\s+recoger|mando\s+a\s+recoger|sin\s+domicilio|no\s+necesito\s+domicilio|para\s+recoger)\b/gi;
+function looksLikePickup(text) {
+    PICKUP_RE.lastIndex = 0;
+    return PICKUP_RE.test(String(text || ''));
+}
+
+function looksLikeQuestion(text) {
+    const t = String(text || '').trim();
+    // Al menos 2 letras de verdad - descarta relleno de pura puntuación
+    // ("???", "?!") que no es una pregunta real, solo frustración/typo.
+    if ((t.match(/[a-zA-ZÀ-ÿ]/g) || []).length < 2) return false;
+    if (t.includes('?') || t.includes('¿')) return true;
+    return /^(por qu[eé]|para qu[eé]|qu[eé] es|qu[eé] pasa|por que|para que|cu[aá]nto|cu[aá]ndo|c[oó]mo|d[oó]nde|es obligatorio|es necesario)\b/i.test(t);
 }
 
 // Una parte "parece TELÉFONO" si tiene ≥7 dígitos y casi no tiene letras
@@ -515,6 +604,312 @@ function looksLikePayment(p) {
 function looksLikeAddress(p) {
     if (/\b(cra|cll|calle|carrera|diagonal|diag|avenida|av|transv|trav|tv|kr|cr|manzana|mz|barrio|bloque|apto|casa|torre|vereda)\b/i.test(p)) return true;
     return /\d/.test(p);
+}
+
+/**
+ * Captura campos de entrega (dirección, teléfono, método de pago) desde
+ * CUALQUIER mensaje, en CUALQUIER fase — no solo cuando el bot está
+ * explícitamente pidiendo esos datos. Diseñado para negocios de carrito en
+ * general (no específico de heladería): un cliente puede mencionar su
+ * dirección o forma de pago mientras todavía está eligiendo producto, y ese
+ * dato no debe perderse solo porque el handler determinístico de esa fase
+ * (ej. selección de sabor/talla/variante) ya "resolvió" el mensaje por su
+ * cuenta y nunca llegó a mirar el resto.
+ *
+ * A propósito NO incluye el fallback "lo que sobra es el nombre" que sí
+ * tiene classifyDeliveryParts (abajo) — ese fallback solo es seguro cuando
+ * el bot YA pidió explícitamente los datos de entrega; acá el mensaje puede
+ * traer cualquier otra cosa (un sabor, una pregunta) que no es un nombre y
+ * no se debe adivinar como tal. Solo guarda lo que reconoce con confianza.
+ * No sobreescribe un campo que ya estaba guardado.
+ */
+function captureSideChannelFields(text, userSession) {
+    if (!text || typeof text !== 'string') return;
+    // Bug real (25 sep 2026): looksLikeAddress() acepta CUALQUIER texto con
+    // un dígito como fallback (diseñado para cuando el bot YA pidió la
+    // dirección explícitamente, donde un "1" suelto nunca llega ahí). Acá
+    // este captador corre en CUALQUIER fase, así que un simple "1" de menú o
+    // de confirmación (el caso más común de todos) se guardaba como
+    // dirección. Un dígito de menú (1-2 dígitos) nunca es un dato de
+    // entrega real - se descarta antes de intentar clasificar nada.
+    if (/^\d{1,2}$/.test(text.trim())) return;
+    const parts = text.includes(',')
+        ? text.split(',').map(p => p.trim()).filter(Boolean)
+        : [text.trim()];
+    if (!userSession.order) userSession.order = {};
+    for (const p of parts) {
+        if (/^\d{1,2}$/.test(p)) continue; // mismo guard que arriba, por parte individual
+        const digitsOnly = p.replace(/[^0-9]/g, '');
+        // Un teléfono real (con o sin indicativo de país) tiene entre 7 y 13
+        // dígitos. Un número de tarjeta (16 dígitos) o una clave larga NO debe
+        // guardarse como "teléfono" acá — este captador corre ANTES que la
+        // detección de datos sensibles de cada tenant (heladeriaAi.
+        // detectSensitiveData), así que tiene que ser conservador por su
+        // cuenta y nunca persistir algo que parezca una tarjeta.
+        if (!userSession.order.telefono && looksLikePhone(p) && digitsOnly.length <= 13) {
+            userSession.order.telefono = digitsOnly;
+        } else if (!userSession.order.paymentMethod && looksLikePayment(p)) {
+            const low = p.toLowerCase();
+            userSession.order.paymentMethod = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
+        } else if (!userSession.order.address && looksLikeAddress(p) && /\d/.test(p)) {
+            // Bug real (Johan probando en vivo, 25/9): "Que hay con manzana"
+            // (pregunta sobre un producto con manzana) se guardó como
+            // dirección, porque looksLikeAddress() reconoce "manzana" como
+            // palabra de dirección colombiana (manzana = cuadra) - correcto
+            // en su contexto original (classifyDeliveryParts, solo corre
+            // cuando el bot YA pidió la dirección), pero acá este captador
+            // corre en CUALQUIER fase, donde "manzana"/"casa"/etc. son
+            // igual de probables como parte de una pregunta sobre el menú.
+            // Una dirección real casi siempre trae un número (Cra 23 #10-05)
+            // - se exige un dígito además de la palabra clave, solo en este
+            // captador universal (classifyDeliveryParts no se toca, ahí sí
+            // es seguro el match por palabra sola).
+            //
+            // Quita prefijos comunes ("para la cra 23", "es en la calle 80")
+            // que el cliente agrega al mencionar la dirección de pasada, sin
+            // que se lo hayan pedido explícitamente.
+            const cleaned = p.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || p;
+            // Capitaliza la primera letra - el cliente casi siempre escribe
+            // en minúscula, y esta dirección puede terminar en un mensaje o
+            // notificación real para el negocio.
+            userSession.order.address = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+        }
+    }
+}
+
+// ====================================================================
+// 3) CORRECCIÓN de un campo de entrega YA capturado (cambiar/quitar) —
+//    generalización a la capa COMPARTIDA del patrón que heladería ya tenía
+//    para toppings ("quítale las gomitas"): señal de intención clara +
+//    comparar contra lo YA guardado, nunca reinterpretar un mensaje ambiguo.
+//    Aplica a los campos universales de cualquier negocio de carrito:
+//    dirección, nombre, teléfono y método de pago (mismo espíritu que
+//    captureSideChannelFields, pero para corregir lo ya capturado).
+// ====================================================================
+
+// Sufijos de pronombre enclítico que un verbo en imperativo puede llevar
+// pegados ("quítala", "cámbiamela", "bórraselo"...). Un regex con el verbo
+// base + \b nunca los reconoce porque la forma conjugada es un string
+// distinto (y además cambia el acento: "cambia" -> "cámbiala"). Por eso todo
+// esto se compara contra texto SIN TILDES (ver stripAccents + norm en
+// handleFieldCorrection/stripCorrectionPrefix) usando el RADICAL del verbo
+// como prefijo en vez de enumerar cada combinación de pronombre a mano.
+const PRONOUN_SUFFIX = '(?:melo|mela|selo|sela|telo|tela|noslo|nosla|lo|la|los|las|le|les|me|te|se|nos)?';
+
+// Palabras que indican intención de QUITAR un campo. A propósito NO incluye
+// "sin": "pago sin tarjeta" significa pagar de otra forma, no quitar el
+// método de pago (y "sin gomitas" es el patrón de toppings de heladería, que
+// vive en el flow del tenant, no acá).
+const FIELD_REMOVE_INTENT = new RegExp(
+    '\\b(?:quita' + PRONOUN_SUFFIX + '|quitar|saca' + PRONOUN_SUFFIX + '|sacar|' +
+    'elimina' + PRONOUN_SUFFIX + '|eliminar|borra' + PRONOUN_SUFFIX + '|borrar|' +
+    'olvida' + PRONOUN_SUFFIX + '|olvidar)\\b|\\bno (?:era|es)(?:\\s+(?:esa|la))?\\b',
+    'i'
+);
+// Palabras que indican intención de CAMBIAR un campo.
+const FIELD_CHANGE_INTENT = new RegExp(
+    '\\b(?:cambia' + PRONOUN_SUFFIX + '|cambiar|cambio|corrige' + PRONOUN_SUFFIX + '|corregir|' +
+    'actualiza' + PRONOUN_SUFFIX + '|actualizar|edita' + PRONOUN_SUFFIX + '|editar|' +
+    'anota' + PRONOUN_SUFFIX + '|anotar|apunta' + PRONOUN_SUFFIX + '|apuntar|' +
+    'rectifica' + PRONOUN_SUFFIX + '|rectificar|mejor|pon|ponme|deja|dejalo)\\b',
+    'i'
+);
+// Nombres de los campos universales (label del campo en el mensaje del cliente).
+const FIELD_ADDRESS_RE = /\b(direcci[oó]n(?:\s+de\s+entrega)?|domicilio)\b/i;
+const FIELD_NAME_RE = /\b(nombre)\b/i;
+const FIELD_PHONE_RE = /\b(tel[eé]fono|celular|cel|n[uú]mero|whatsapp)\b/i;
+const FIELD_PAYMENT_RE = /\b(pago|pagar|paga|m[eé]todo de pago|forma de pago)\b/i;
+const PAYMENT_WORD_RE = /\b(efectivo|transferencia|nequi|daviplata|tarjeta)\b/i;
+
+// Sin tildes + minúsculas. Mismo patrón local que ya usan heladeria.flow.js y
+// env.loader.js — no hay un util compartido en utils/*.js para esto.
+function stripAccents(text) {
+    return String(text || '').normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '');
+}
+
+function normalizePaymentWord(word) {
+    const low = String(word || '').toLowerCase();
+    if (low.includes('transfer')) return 'transferencia';
+    if (low.includes('efect')) return 'efectivo';
+    return low; // nequi, daviplata, tarjeta
+}
+
+/**
+ * Guard conservador de la capa compartida: un intento de "cambiar" nunca debe
+ * procesarse si el mensaje trae datos sensibles (tarjeta/cédula/clave).
+ * handler.js ya lo bloquea antes de llegar acá vía escalateIfSensitive del
+ * tenant, pero esta función también se llama directo (tests, otros puntos),
+ * así que se re-verifica con una versión mínima propia — sin importar la IA
+ * de ningún tenant (la capa compartida no puede depender de una específica).
+ */
+function looksLikeSensitiveData(text) {
+    const t = String(text || '');
+    if (/\b(?:\d[ -]?){13,19}\b/.test(t)) return true; // PAN de tarjeta
+    if (/\b(?:clave|contrase[ñn]a|password|cvv)\b/i.test(t) && /\d{3,}/.test(t)) return true;
+    if (/\b(?:c[eé]dula|documento|identificaci[oó]n|cc)\b[^.\n]{0,20}\d{6,10}/i.test(t)) return true;
+    return false;
+}
+
+/**
+ * Pela el prefijo de intención + label del campo y devuelve el NUEVO valor
+ * crudo ("cambia mi dirección a Cra 45 #12-30" -> "Cra 45 #12-30"). Si el
+ * label no está al inicio (tras quitar la intención), devuelve null — no es
+ * un patrón de corrección limpio y no se debe adivinar ("cambia la hora de
+ * entrega a las 6" no es una dirección).
+ *
+ * Recibe el texto ORIGINAL y su versión normalizada (sin tildes, minúsculas —
+ * ver stripAccents). Todo el reconocimiento de intención/label corre sobre la
+ * versión normalizada (así "cámbiala" calza igual que "cambia"), pero cada
+ * recorte se aplica EN PARALELO al texto original por longitud de caracteres
+ * — normalizar nunca cambia el largo del string — para que el valor nuevo
+ * devuelto conserve tildes/mayúsculas reales ("Cra 45 #12-30", "José").
+ */
+function stripCorrectionPrefix(originalText, normalizedText, fieldLabelRe) {
+    let orig = String(originalText || '').trim();
+    let norm = String(normalizedText || '').trim();
+
+    // Quitar la(s) palabra(s) de intención al inicio (hasta 2 veces para
+    // frases tipo "no era esa dirección, es Cra 45 #12-30").
+    const intentRe = new RegExp(`^(?:${FIELD_REMOVE_INTENT.source}|${FIELD_CHANGE_INTENT.source})\\s+`, 'i');
+    for (let i = 0; i < 2; i++) {
+        const m = norm.match(intentRe);
+        if (!m) break;
+        orig = orig.slice(m[0].length);
+        norm = norm.slice(m[0].length);
+    }
+
+    const labelMatch = norm.match(new RegExp(`^(?:mi|la|el|tu|su|ese|esa|los|las)?\\s*(?:${fieldLabelRe.source})`, 'i'));
+    if (!labelMatch) return null;
+    orig = orig.slice(labelMatch[0].length);
+    norm = norm.slice(labelMatch[0].length);
+
+    // Conectores y relleno ("a", "para", "es", "con", comas, guiones...).
+    // OJO: tras el slice el texto puede empezar con espacio (" a Cra 45"),
+    // así que el regex tolera espacios ANTES del conector.
+    let m = norm.match(/^\s*(?:a|para|por|es|en|con|de|al|que|ser[aá]|quede|ser[ií]a)?\s*/i);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+    m = norm.match(/^[,.\-:\s]+/);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+    m = norm.match(/^(?:es|queda|ser[aá]|quede|ser[ií]a)\s+(?:la|el|mi|tu|su)?\s*/i);
+    if (m) { orig = orig.slice(m[0].length); norm = norm.slice(m[0].length); }
+
+    orig = orig.trim();
+    return orig || null;
+}
+
+/**
+ * Detecta y aplica la intención del cliente de CAMBIAR o QUITAR un campo de
+ * entrega YA guardado en userSession.order (dirección, nombre, teléfono,
+ * método de pago). Corre en CUALQUIER fase (vía handler.js, después del check
+ * de datos sensibles y con el mismo guard de fases dedicadas de checkout y
+ * WAITING_HUMAN que captureSideChannelFields).
+ *
+ * Reglas (mismo criterio que el fix de "manzana" en captureSideChannelFields):
+ * - Requiere señal de intención clara (quita/cambia/corrige/mejor/no era...)
+ *   + el nombre del campo. Ante la duda, NO toca nada (retorna changed: false
+ *   y el mensaje sigue el procesamiento normal).
+ * - "Cambiar a X": reconoce el NUEVO valor con la misma lógica ya probada de
+ *   looksLikeAddress/looksLikePhone/looksLikePayment.
+ * - "Quitar": deja el campo en null para que askNextMissingCheckoutField() lo
+ *   vuelva a pedir naturalmente (ya existe, no se reinventa).
+ * - NUNCA procesa un mensaje con datos sensibles (tarjeta/cédula/clave).
+ * - No toca el carrito ni los productos — solo el campo indicado; el pedido
+ *   nunca se reinicia ni pierde lo demás ya armado.
+ *
+ * @returns {Promise<{changed: boolean, field: string|null, value: any}>}
+ *   changed: true → el mensaje era una corrección y ya se respondió (el
+ *   caller debe retornar sin procesarlo como pedido).
+ */
+async function handleFieldCorrection(sock, jid, text, userSession, ctx) {
+    const t = String(text || '').trim();
+    if (!t) return { changed: false, field: null, value: null };
+
+    if (looksLikeSensitiveData(t)) return { changed: false, field: null, value: null };
+
+    // Sin tildes + minúsculas: un verbo conjugado con pronombre pegado
+    // ("cámbiala", "quítamela") cambia de acento respecto al verbo base
+    // ("cambia", "quita") y un regex con tilde fija nunca lo reconoce.
+    const norm = stripAccents(t).toLowerCase();
+
+    const hasRemoveIntent = FIELD_REMOVE_INTENT.test(norm);
+    const hasChangeIntent = FIELD_CHANGE_INTENT.test(norm);
+    if (!hasRemoveIntent && !hasChangeIntent) return { changed: false, field: null, value: null };
+
+    // ¿A qué campo se refiere? (prioridad: dirección > teléfono > pago > nombre).
+    let field = null;
+    let labelRe = null;
+    if (FIELD_ADDRESS_RE.test(norm)) { field = 'address'; labelRe = FIELD_ADDRESS_RE; }
+    else if (FIELD_PHONE_RE.test(norm)) { field = 'telefono'; labelRe = FIELD_PHONE_RE; }
+    else if (FIELD_PAYMENT_RE.test(norm)) { field = 'paymentMethod'; labelRe = FIELD_PAYMENT_RE; }
+    else if (FIELD_NAME_RE.test(norm)) { field = 'name'; labelRe = FIELD_NAME_RE; }
+    else if (hasChangeIntent && PAYMENT_WORD_RE.test(norm)) { field = 'paymentMethod'; labelRe = null; } // "mejor con transferencia" (sin la palabra "pago")
+
+    if (!field) return { changed: false, field: null, value: null };
+
+    // Extraer el NUEVO valor (si lo hay). Para pago sin label explícito se
+    // toma la palabra de pago directo del texto.
+    let newValue = labelRe ? stripCorrectionPrefix(t, norm, labelRe) : null;
+    if (field === 'paymentMethod' && newValue === null) {
+        const m = PAYMENT_WORD_RE.exec(norm);
+        if (m) newValue = m[0];
+    }
+
+    // Validar el valor según el campo (misma lógica ya probada de
+    // looksLikeAddress/looksLikePhone/looksLikePayment).
+    let value = null;
+    if (newValue !== null) {
+        if (field === 'address') {
+            const cleaned = newValue.replace(/^(para|es|queda|es en)\s+(la|el)?\s*/i, '').trim() || newValue;
+            if (looksLikeAddress(cleaned) && /\d/.test(cleaned)) value = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+        } else if (field === 'telefono') {
+            const digits = newValue.replace(/[^0-9]/g, '');
+            if (digits.length >= 7 && digits.length <= 13) value = digits;
+        } else if (field === 'paymentMethod') {
+            const m = PAYMENT_WORD_RE.exec(newValue);
+            if (m) value = normalizePaymentWord(m[0]);
+        } else if (field === 'name') {
+            const candidate = newValue.replace(/^[,.\-:\s]+/, '').trim();
+            if (candidate.length >= 3 && !looksLikePhone(candidate) &&
+                !(looksLikeAddress(candidate) && /\d/.test(candidate)) &&
+                !PAYMENT_WORD_RE.test(candidate) && !looksLikeQuestion(candidate)) {
+                value = candidate;
+            }
+        }
+    }
+
+    const action = value !== null ? 'change' : (hasRemoveIntent ? 'remove' : null);
+    if (!action) return { changed: false, field: null, value: null };
+
+    if (!userSession.order) userSession.order = {};
+    const fieldLabel = { address: 'dirección', name: 'nombre', telefono: 'teléfono', paymentMethod: 'método de pago' }[field];
+
+    if (action === 'change') {
+        userSession.order[field] = value;
+        await say(sock, jid, `✅ Listo, tu *${fieldLabel}* quedó: *${value}*.`, ctx);
+    } else {
+        // Quitar: dejar el campo vacío para que askNextMissingCheckoutField lo
+        // vuelva a pedir naturalmente. Si el campo no estaba guardado, no hay
+        // nada que corregir — no consumir el mensaje.
+        const current = userSession.order[field];
+        if (current === undefined || current === null || current === '') {
+            return { changed: false, field: null, value: null };
+        }
+        userSession.order[field] = null;
+        await say(sock, jid, `🗑️ Listo, quité tu *${fieldLabel}*.`, ctx);
+    }
+
+    // Seguir el proceso normal: en fases de checkout, pedir el siguiente campo
+    // que falte (o mostrar el resumen si ya están todos) — nunca reiniciar el
+    // pedido ni perder lo demás ya armado. En fases de pedido (mitad de
+    // flujo), solo se confirma el cambio y el cliente continúa donde iba.
+    const CHECKOUT_CONTINUE_PHASES = new Set([
+        PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO, PHASE.FINALIZE_ORDER
+    ]);
+    if (CHECKOUT_CONTINUE_PHASES.has(userSession.phase)) {
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+    }
+
+    return { changed: true, field, value: action === 'change' ? value : null };
 }
 
 /**
@@ -590,9 +985,11 @@ async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
     const summary = generateCartSummary(userSession);
     userSession.order.deliveryCost = userSession.order.deliveryCost || 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
-    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
-        ? money(userSession.order.deliveryCost)
-        : 'Por confirmar';
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+            ? money(userSession.order.deliveryCost)
+            : 'Por confirmar';
 
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
@@ -614,6 +1011,31 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     logger.info(`[${jid}] -> Entrando a handleEnterAddress. Dirección: "${address}", Inicio: ${isInitialCall}`);
 
     if (isInitialCall) {
+        // Bug real de producción (Johan probando en vivo, 28/9): al confirmar
+        // el pedido ("1" en CONFIRM_ORDER) SIEMPRE se llega acá con
+        // isInitialCall=true, y esta rama SIEMPRE mostraba el prompt "escribe
+        // tu dirección de entrega" - incluso cuando el cliente YA había
+        // avisado que recogía en el local (detectado antes, a mitad del
+        // flujo guiado, ver classifyOrderInput en heladeria.flow.js). El
+        // pedido quedaba con order.pickup=true y order.address="Recoge en el
+        // local", pero se le pedía la dirección de todas formas,
+        // contradiciendo lo que el cliente ya había dicho.
+        //
+        // A propósito esto SOLO se salta para recogida (order.pickup), NO
+        // para cualquier order.address ya conocido: si el cliente corrigió
+        // su dirección de ENTREGA real a mitad del pedido (ver
+        // test_heladeria_correccion_campo_mid_order.js -
+        // handleFieldCorrection), el flujo de checkout SIGUE mostrando este
+        // primer prompt de todas formas - es información real que vale la
+        // pena reconfirmar explícitamente en el paso de checkout, a
+        // diferencia de "Recoge en el local", que no es un dato que el
+        // cliente deba revisar. askNextMissingCheckoutField ya sabe saltarse
+        // los campos que ya están y seguir con el siguiente que falte - se
+        // usa acá solo para el caso de recogida.
+        if (userSession.order && userSession.order.pickup) {
+            await askNextMissingCheckoutField(sock, jid, userSession, ctx);
+            return;
+        }
         userSession.phase = PHASE.CHECK_DIR;
         await say(sock, jid, '🏠 ¡Perfecto! Para continuar, por favor escribe tu *dirección de entrega*.' +
             '\n\nSi prefieres, puedes enviar todos los datos en UN SOLO MENSAJE, separados por comas (en cualquier orden funciona, pero recomendamos): *Dirección, Nombre, Teléfono, Método de pago*.' +
@@ -624,6 +1046,30 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     if (!address || typeof address !== 'string') {
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección válida.', ctx);
+        return;
+    }
+
+    // Auditoría 23/9: validateInput('address') solo exige ≥8 caracteres, así
+    // que una pregunta real ("¿por qué necesitan mi dirección?") la pasaba
+    // igual y quedaba GUARDADA TAL CUAL como la dirección de entrega. Antes
+    // de tratar el texto como dato, si tiene pinta de pregunta se intenta
+    // resolver con la IA primero.
+    if (looksLikeQuestion(address) && await delegateToAI(sock, jid, address, userSession, ctx)) return;
+
+    // Recogida en tienda (sin domicilio) - ver looksLikePickup. Caso real:
+    // "Me avisas cuando esté listo, yo mando a recogerlo" - el resto de la
+    // frase es puro relleno conversacional, no un nombre ni ningún otro dato
+    // real, así que NO se intenta extraer más de ese mismo mensaje (evita
+    // terminar guardando ese relleno como si fuera el nombre del cliente,
+    // como pasó al probar esto). Si el cliente además dio otro dato real en
+    // el mismo mensaje, se lo vuelve a pedir en el siguiente paso - más
+    // simple y más seguro que adivinar qué parte de la frase es relleno.
+    if (looksLikePickup(address)) {
+        userSession.order.pickup = true;
+        userSession.order.address = 'Recoge en el local';
+        userSession.order.deliveryCost = 0;
+        userSession.errorCount = 0;
+        await askNextMissingCheckoutField(sock, jid, userSession, ctx);
         return;
     }
 
@@ -669,6 +1115,12 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
     }
 
     if (!validateInput(raw, 'address')) {
+        // Modo híbrido (regla fija, auditoría 23/9): antes de rendirse con el
+        // mensaje generico, intentar la IA - un cliente puede estar
+        // preguntando algo ("¿por qué necesitan mi dirección?") en vez de
+        // responder con una dirección corta o invalida.
+        if (await delegateToAI(sock, jid, address, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, proporciona una dirección más detallada (mínimo 8 caracteres).', ctx);
         return;
@@ -680,12 +1132,22 @@ async function handleEnterAddress(sock, jid, address, userSession, ctx, isInitia
 
 async function handleEnterName(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterName. Nombre recibido: "${input}"`);
+    // Auditoría 23/9: validateInput('string', {minLength:3}) solo exige ≥3
+    // caracteres - una pregunta real ("¿el nombre es obligatorio?") la pasa
+    // igual y quedaba GUARDADA TAL CUAL como el nombre del cliente. Antes de
+    // tratarlo como dato, si tiene pinta de pregunta se intenta la IA primero.
+    if (looksLikeQuestion(input) && await delegateToAI(sock, jid, input, userSession, ctx)) return;
     const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?nombre(?:\s+completo)?\s*(?:es|:)\s*(.+)$/i) || input;
     if (validateInput(cleanInput, 'string', { minLength: 3 })) {
         userSession.order.name = cleanInput.trim();
         userSession.errorCount = 0;
         await askNextMissingCheckoutField(sock, jid, userSession, ctx);
     } else {
+        // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
+        // tiene handleEnterPaymentMethod - antes de "nombre inválido", que la
+        // IA intente entender (ej. una pregunta a mitad del checkout).
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount++;
         await say(sock, jid, '❌ Por favor, escribe un nombre válido (mínimo 3 caracteres).', ctx);
     }
@@ -696,6 +1158,11 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     const cleanInput = extractAfterLabel(input, /^(?:mi\s+)?(?:tel[eé]fono|celular|n[uú]mero)\s*(?:es|:)\s*(.+)$/i) || input;
     const telefono = cleanInput.replace(/[^0-9]/g, '').trim();
     if (!validateInput(telefono, 'string', { minLength: 7 })) {
+        // Modo híbrido (regla fija, auditoría 23/9): mismo respaldo que ya
+        // tiene handleEnterPaymentMethod - antes de "teléfono inválido", que
+        // la IA intente entender (ej. una pregunta o un dato mal formado).
+        if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid, '❌ Por favor, escribe un número de teléfono válido (mínimo 7 dígitos).', ctx);
         return;
@@ -713,9 +1180,10 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     const wordMatch = /transferencia|efectivo/i.exec(cleanInput);
     const paymentMethod = wordMatch ? wordMatch[0].toLowerCase() : normalizePaymentMethod(cleanInput);
     if (!paymentMethod) {
-        userSession.errorCount++;
-        // Modo híbrido: intentar IA antes del mensaje genérico
+        // Modo híbrido: intentar IA antes del mensaje genérico.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
+        userSession.errorCount++;
         await say(sock, jid, '❌ Opción no válida. Por favor, escribe *Transferencia* o *Efectivo*.', ctx);
         return;
     }
@@ -742,9 +1210,11 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     userSession.order.deliveryCost = 0;
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
 
-    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) 
-        ? money(userSession.order.deliveryCost) 
-        : 'Por confirmar';
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+            ? money(userSession.order.deliveryCost)
+            : 'Por confirmar';
 
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
@@ -893,6 +1363,10 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
             await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
+            // Solo envía algo si el negocio configuró un link de reseña de
+            // Google — ver services/reviewRequestService.js. Nunca bloquea
+            // ni rompe el flujo de checkout si falla.
+            await reviewRequestService.maybeSendReviewRequest(sock, jid, ctx);
 
             resetChat(jid, ctx);
             userSession.phase = PHASE.SELECCION_OPCION;} catch (error) {
@@ -911,7 +1385,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
                     fs.mkdirSync(tmpDir, { recursive: true });
                 }
                 
-                fallbackPath = path.join(tmpDir, `failed_order_${Date.now()}.json`);
+                fallbackPath = path.join(tmpDir, `failed_order_${process.env.BUSINESS_KEY || "sin-negocio"}_${Date.now()}.json`);
                 fs.writeFileSync(fallbackPath, JSON.stringify({ payload, error: error.message }, null, 2));
                 logger.info(`[${jid}] -> Pedido guardado en fallback: ${fallbackPath}`);
             } catch (fsErr) {
@@ -959,16 +1433,13 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             return;
         }
 
-        // Sube errorCount ANTES de intentar la IA: cuenta como intento fallido
-        // sin importar si la IA resuelve el mensaje o no (mismo patrón que
-        // handleEnterPaymentMethod) - así el chequeo global de frustración se
-        // entera aunque la IA "se haga cargo" del mensaje.
-        userSession.errorCount = (userSession.errorCount || 0) + 1;
-        // Modo híbrido: intentar IA antes del mensaje genérico
-        // Pasa el texto ORIGINAL (no el ya minusculizado finalAction) para que
-        // una corrección en lenguaje natural ("La dirección es CRA 23...")
+        // Modo híbrido: intentar IA antes del mensaje genérico. Pasa el texto
+        // ORIGINAL (no el ya minusculizado finalAction) para que una
+        // corrección en lenguaje natural ("La dirección es CRA 23...")
         // conserve las mayúsculas tal como las escribió el cliente.
         if (await delegateToAI(sock, jid, input, userSession, ctx)) return;
+        if (hasTenantCheckoutFallback()) return; // ya respondió + contó el error - ver nota en hasTenantCheckoutFallback
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
         const invalidHint = (cfg && cfg.numericConfirm)
             ? 'escribe *1* para confirmar o *2* para editar'
             : 'escribe *confirmar* o *editar*';
@@ -1123,5 +1594,10 @@ module.exports = {
     startEditCart,
     validateInput,
     sendOrderNotification,
-    handleCheckoutPhase
+    handleCheckoutPhase,
+    askNextMissingCheckoutField,
+    looksLikePickup,
+    looksLikeQuestion,
+    captureSideChannelFields,
+    handleFieldCorrection
 };

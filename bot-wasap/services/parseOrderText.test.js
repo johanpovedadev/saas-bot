@@ -1,3 +1,9 @@
+// Fija el tenant a heladería: los datos de esta prueba son de heladería
+// ("helado vainilla", "sin toppings"), pero sin esto el env.loader.js carga
+// el BUSINESS_KEY del .env compartido (pescadería) y su nomenclatura
+// (item_secondary_plural="bebidas"), rompiendo el nombre del campo esperado.
+process.env.BUSINESS_KEY = 'heladeria';
+
 const { parseOrderText } = require('./parseOrderText');
 const assert = require('assert');
 

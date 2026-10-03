@@ -34,6 +34,7 @@ const reservationsHandler = require('../modules/reservations.handler');
 const heladeriaAi = require('../../services/heladeriaAi');
 const editableConfig = require('../../services/editableConfig');
 const { money } = require('../../utils/util');
+const { similarityScore, resolveTextReferenceToCartItems } = require('../../utils/fuzzySearch');
 
 const FLOW_TYPE = 'ICE_CREAM';
 
@@ -302,6 +303,49 @@ const TOPPING_STOPWORDS = new Set([
     'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más'
 ]);
 
+// Bug real (replay 29-30 sep 2026): el paso de toppings trataba CUALQUIER
+// mensaje con "todo/todos/todas" como "agregar todos los toppings del
+// catálogo" - "Todos de chocolate" o "Todos iguales" (el cliente quiere lo
+// MISMO para todas las unidades, no los ~21 toppings que existen) terminaba
+// cobrando $44.000 en vez de $13.000 y $84.000 en vez de $22.000. Solo es
+// "de todo" cuando el mensaje no dice NADA más que eso ("todos", "de todo",
+// "con todo", "todos los toppings"). Si "todos" viene calificado ("todos de
+// chocolate", "todas con oreo"), el cuantificador se quita y lo que queda se
+// procesa como nombres de topping normales. Si lo único que queda es "iguales"
+// / "lo mismo", no nombró ningún topping - se pregunta cuál, nunca se adivina.
+const TOPPING_ALL_WORDS = new Set(['todo', 'toda', 'todos', 'todas']);
+const TOPPING_ALL_FILLERS = new Set([
+    'topping', 'toppings', 'adicion', 'adiciones', 'adicional', 'adicionales',
+    'pones', 'ponga', 'pongale', 'ponemos', 'ponerle', 'echale', 'echele', 'lleva', 'llevan', 'poco', 'poquito', 'x', 'xfa', 'xfavor', 'plis', 'please'
+]);
+const TOPPING_SAME_WORDS = new Set([
+    'igual', 'iguales', 'igualitos', 'igualitas', 'mismo', 'misma', 'mismos', 'mismas', 'lo',
+    'cada', 'uno', 'unidad', 'unidades', 'helado', 'helados', 'copa', 'copas', 'ellos', 'ellas'
+]);
+const TOPPING_DONE_REGEX = /^(eso (es|seria) todo|es todo|seria todo|eso seria todo|nada mas|asi esta bien)$/;
+
+/**
+ * Interpreta "todo(s)" en el paso de toppings (ver TOPPING_ALL_WORDS arriba).
+ * @param {string} input - texto ya en minúsculas y sin acentos.
+ * @returns {{kind: 'none'|'all'|'qualified', rest: string}}
+ *   - none: el mensaje no usa "todo(s)" - flujo normal sin cambios.
+ *   - all: pidió explícitamente todos los toppings del catálogo.
+ *   - qualified: "todos" + algo más; `rest` es ese algo más sin el
+ *     cuantificador (vacío si solo dijo "todos iguales" o pidió una
+ *     exclusión como "de todo menos queso" - en ambos casos se pregunta).
+ */
+function interpretToppingAllKeyword(input) {
+    const tokens = String(input || '').split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    if (!tokens.some(t => TOPPING_ALL_WORDS.has(t))) return { kind: 'none', rest: input };
+    // "de todo menos queso" / "todos excepto maní": exclusión - no se adivina
+    // cuáles quedan (ni todos, ni solo el nombrado), se pregunta.
+    if (tokens.some(t => /^(menos|excepto|salvo|quitando|sin)$/.test(t))) return { kind: 'qualified', rest: '' };
+    const remaining = tokens.filter(t => !TOPPING_ALL_WORDS.has(t) && !TOPPING_STOPWORDS.has(t) && !TOPPING_ALL_FILLERS.has(t));
+    if (remaining.length === 0) return { kind: 'all', rest: '' };
+    const rest = remaining.filter(t => !TOPPING_SAME_WORDS.has(t));
+    return { kind: 'qualified', rest: rest.join(' ') };
+}
+
 const SABOR_STOPWORDS = new Set([
     'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
     'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'dame',
@@ -319,6 +363,43 @@ function normSaborName(sabor, dbFields) {
 }
 
 /**
+ * Expande cuantificadores numéricos pegados a un sabor real ("3 de fresa",
+ * "2 mango") en N repeticiones de ese sabor, en vez de dejar que el número
+ * se interprete como código de posición (S<n>).
+ *
+ * Bug real (pedido explícito de Johan, revisando chats reales): "3 sabores"
+ * significa HASTA 3 - pueden ser 3 iguales (ej. "3 de fresa" = 3 bolas de
+ * fresa) o 3 distintos (ej. "lulo mango fresa"). Antes, "3 de fresa" (con
+ * "de" ya filtrado por SABOR_STOPWORDS, tokens=["3","fresa"]) se leía como
+ * "código 3" (el sabor que esté en esa posición) + "fresa" - dos sabores
+ * DISTINTOS, ninguno el que el cliente pidió, y sin ningún error visible
+ * que disparara el respaldo de IA (el "3" sí resuelve, solo que a lo que NO
+ * es). Un número pegado DIRECTAMENTE a un nombre de sabor real casi nunca es
+ * un código (nadie dice "código 3 fresa" sin conector) - se preserva el
+ * comportamiento de código de posición para números sueltos o seguidos de
+ * otro código/número (ej: "3 5" para elegir los sabores S3 y S5).
+ */
+function expandSaborQuantifiers(tokens, saboresList, dbFields) {
+    const out = [];
+    for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        const next = tokens[i + 1];
+        const isBareNumber = /^\d+$/.test(tok);
+        if (isBareNumber && next && !/^\d+$/.test(next) && !/^s\d+$/i.test(next)) {
+            const nextResolves = saboresList.some(s => normSaborName(s, dbFields).includes(next));
+            if (nextResolves) {
+                const n = Math.max(1, Math.min(parseInt(tok, 10), 10));
+                for (let k = 0; k < n; k++) out.push(next);
+                i++; // el token del sabor ya quedó consumido (repetido arriba)
+                continue;
+            }
+        }
+        out.push(tok);
+    }
+    return out;
+}
+
+/**
  * Lista de toppings agrupada por categoría, con código T<n> — el mismo n que
  * usa handleToppings/handlePerUnitToppings para resolver "t1"/"t2" (posición
  * en la lista PLANA, no en el grupo) — para que se pueda responder por
@@ -329,8 +410,14 @@ function formatToppingsGrouped(ctx) {
     const list = buildOptionLists(ctx).toppings;
     const codeByItem = new Map(list.map((p, i) => [p[dbFields.productCode] || p, i + 1]));
     const blocks = [];
+    // Cada topping va SOLO en el primer grupo que lo reconoce. Bug real en
+    // producción (encontrado al validar el agente, 3 oct 2026): "✨ Otros"
+    // coincide con todo (/.+/), así que la lista que veía el cliente repetía
+    // TODOS los toppings dos veces (una en su grupo y otra en "Otros").
+    const placed = new Set();
     for (const g of TOPPING_GROUPS) {
-        const items = list.filter(p => g.match.test(String(p[dbFields.productName] || '')));
+        const items = list.filter(p => !placed.has(p) && g.match.test(String(p[dbFields.productName] || '')));
+        items.forEach(p => placed.add(p));
         if (!items.length) continue;
         const itemLines = items.map(p => {
             const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
@@ -410,6 +497,11 @@ async function handleProductOptions(sock, jid, producto, userSession, ctx) {
 async function handle(sock, jid, text, userSession, ctx) {
     const normalized = stripAccents(text.toLowerCase().trim());
 
+    // REGLA DE SEGURIDAD: datos sensibles (tarjeta/cédula/clave) → humano de
+    // inmediato, sin procesar como pedido ni guardar. Antes de cualquier otra
+    // cosa (incluida la petición humana normal).
+    if (await escalateIfSensitive(sock, jid, text, userSession, ctx)) return;
+
     if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
 
     if (/^(menu|volver|atras|inicio|salir|cancelar|terminar|finalizar)$/.test(normalized)) {
@@ -488,7 +580,20 @@ async function handlePostAdd(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
 
-    if (/^(2|pagar|carrito|checkout|confirmar|ir a pagar|finalizar)$/.test(normalized)) {
+    // Bug real (conversaciones reales, jid 573138777115@c.us y otros): la
+    // intención de pagar casi nunca llega como el texto exacto "pagar" - llega
+    // envuelta en frase natural ("Quiero pagar", "Ya quiero pagar") o con un
+    // typo de espacio muy común en móvil ("Ir apagar" por "Ir a pagar"), y el
+    // match exacto de arriba (^...$) las rechazaba todas, cayendo al fallback
+    // genérico "❌ No entendí" pese a que la intención era inequívoca. Se
+    // agrega un match por PALABRA (\b) para las señales fuertes e inequívocas
+    // (pagar/apagar/checkout/confirmar/finalizar) que no dependen de que el
+    // cliente escriba SOLO esa palabra - sin tocar la lista de confirmaciones
+    // cortas (ya, dale, listo...) que sí necesitan ser exactas para no
+    // disparar con cualquier mensaje que las contenga de pasada.
+    const wantsToPayLoose = /\b(pagar|apagar|checkout|confirmar|finalizar)\b/i.test(normalized)
+        && !/\bno\b[\s\S]{0,15}\b(pagar|apagar)\b/i.test(normalized);
+    if (wantsToPayLoose || /^(2|pagar|carrito|checkout|confirmar|ir a pagar|finalizar|listo|ya|dale|eso es todo|nada mas|nada más)$/.test(normalized)) {
         logger.info(`[${jid}] -> HELADO_POST_ADD: ir a pagar ("${text}")`);
         userSession.pendingVoiceGuided = null;
         resetGuidedState(userSession);
@@ -560,8 +665,9 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
     // Regla fija: la seleccion acepta numero, codigo (S<n>) o nombre - un
     // numero "pelado" (ej. "1" en vez de "S1") es tan valido como el codigo
     // en este paso (no hay ambiguedad con cantidad aca, esa fase es distinta).
-    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+    const tokensRaw = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
         .filter(t => !SABOR_STOPWORDS.has(t) && (t.length >= 2 || /^\d+$/.test(t)));
+    const tokens = expandSaborQuantifiers(tokensRaw, saboresList, dbFields);
     // Repetición deliberada del MISMO token ("lulo lulo" = 2 bolas de lulo) se
     // cuenta como 2 sabores. Dos tokens DISTINTOS que resuelven al mismo sabor
     // ("lulo" + "maracuya" → "Lulo Maracuya") son el mismo sabor nombrado de
@@ -646,6 +752,124 @@ function findBestTopping(target, list, dbFields) {
     return list.find(p => target.includes(norm(p))) || null;
 }
 
+// Umbral MÁS ALTO que el 0.6 que ya se usa en tryRemoveOrderAddition/
+// updateProductPrice, a propósito: acá una coincidencia equivocada
+// INTERRUMPE el flujo con una pregunta (costoso), no solo deja de quitar
+// algo en silencio (barato). Auditoría (27 sep 2026): con 0.6, "fruta" vs
+// "fresa" da exactamente 0.6 - dispararía una sugerencia para el caso que
+// Johan pidió explícitamente que siguiera siendo nota ("no quiero una
+// fruta"). Probado contra typos reales (birbujet/burbujet=0.875, queso/
+// quezo=0.8, brownie/browny=0.714, sparkies/esparkis=0.75): 0.7 los deja
+// pasar a todos y excluye limpiamente el falso positivo de "fruta".
+const TOPPING_FUZZY_THRESHOLD = 0.7;
+
+/**
+ * Candidatos por similitud (no exacta, no substring - eso ya lo intenta
+ * findBestTopping antes de llegar acá) para un token que no calzó con
+ * ningún topping real. Hasta 3, ordenados de más a menos parecido.
+ */
+function findFuzzyToppingCandidates(target, list, dbFields) {
+    const t = stripAccents(String(target || '').toLowerCase());
+    if (t.length < 3) return [];
+    return list
+        .map(p => ({ product: p, score: similarityScore(t, stripAccents(String(p[dbFields.productName] || '').toLowerCase())) }))
+        .filter(c => c.score >= TOPPING_FUZZY_THRESHOLD)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map(c => c.product);
+}
+
+function buildToppingGuessQuestion(guess, dbFields) {
+    const names = guess.candidates
+        .map((c, i) => `*${i + 1})* ${c[dbFields.productName] || c}`)
+        .join(guess.candidates.length > 1 ? '\no ' : '');
+    return `🤔 No encontré *"${guess.raw}"* en el menú, ¿tal vez quisiste decir esto?\n\n${names}\n\n` +
+        `Responde el número o el nombre, o *"no"* si no es ninguno.`;
+}
+
+/**
+ * Cierre común del paso de toppings (producto normal o unidad de una
+ * personalización "cada una diferente") - factorizado para que tanto el
+ * camino feliz como la resolución de una sugerencia pendiente (ver
+ * resolveToppingGuess) terminen exactamente igual.
+ */
+async function finishToppingsStep(sock, jid, userSession, ctx, isPerUnit) {
+    if (isPerUnit) {
+        await pushPerUnit(sock, jid, userSession, ctx);
+        return;
+    }
+    const flow = userSession.heladoFlow;
+    const dbFields = getDbFields();
+    userSession.phase = HELADO_QUANTITY;
+    const obs = flow.observaciones ? `\nObservaciones: ${flow.observaciones}` : '';
+    const lines = flow.toppingsSeleccionados.length
+        ? flow.toppingsSeleccionados.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
+        }).join('\n')
+        : 'sin toppings';
+    await say(sock, jid, `✅ Toppings:\n${lines}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
+}
+
+/**
+ * Resuelve la sugerencia de topping pendiente (ver findFuzzyToppingCandidates):
+ * el cliente responde confirmando uno de los candidatos (por número o
+ * nombre) o descartándolos ("no"/"ninguno") - en ese caso, y SOLO en ese
+ * caso, el texto original queda como nota, igual que antes de este arreglo.
+ *
+ * Bug real (27 sep 2026, reporte de Johan en vivo probando con una clienta
+ * real): escribió "Birbujet" (typo de "Burbujet", topping real T4) y quedó
+ * anotado como nota sin más, en vez de intentar reconocerlo. Notas debe
+ * seguir siendo para lo que de verdad no es un topping (ej. "no quiero
+ * fruta", "no quiero queso" en una ensalada) - no para un nombre real mal
+ * escrito que el catálogo sí puede resolver con confianza.
+ */
+async function resolveToppingGuess(sock, jid, text, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const guess = flow.pendingToppingGuess;
+    flow.pendingToppingGuess = null;
+    const dbFields = getDbFields();
+    const input = stripAccents(text.toLowerCase().trim());
+
+    if (/^(no|ninguno?|ninguna?|nada)$/i.test(input)) {
+        // La nota queda en el ámbito correcto: si era de una unidad
+        // puntual ("cada una diferente"), en las observaciones de ESA
+        // unidad (customization.currentObs) - no en las del flow completo,
+        // que aplicarían a todo el pedido.
+        if (guess.isPerUnit) {
+            flow.customization.currentObs = [flow.customization.currentObs, guess.raw].filter(Boolean).join(', ');
+        } else {
+            flow.observaciones = flow.observaciones ? `${flow.observaciones}, ${guess.raw}` : guess.raw;
+        }
+        await say(sock, jid, `👍 Anotado como nota: *${guess.raw}*.`, ctx);
+        await finishToppingsStep(sock, jid, userSession, ctx, guess.isPerUnit);
+        return;
+    }
+
+    const numMatch = input.match(/^(\d+)$/);
+    let chosen = numMatch ? (guess.candidates[parseInt(numMatch[1], 10) - 1] || null) : null;
+    if (!chosen) {
+        chosen = guess.candidates.find(c => {
+            const name = stripAccents(String(c[dbFields.productName] || '').toLowerCase());
+            return name === input || (input.length >= 3 && (input.includes(name) || name.includes(input)));
+        });
+    }
+    if (!chosen) {
+        // Ni confirmó un candidato ni descartó con claridad - reintenta.
+        flow.pendingToppingGuess = guess;
+        await say(sock, jid, buildToppingGuessQuestion(guess, dbFields), ctx);
+        return;
+    }
+
+    const list = guess.isPerUnit ? flow.customization.currentToppings : flow.toppingsSeleccionados;
+    if (!list.find(x => (x.CodigoProducto || x) === (chosen.CodigoProducto || chosen))) {
+        list.push(chosen);
+    }
+    const precio = parseFloat(String(chosen[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+    await say(sock, jid, `✅ Anotado: *${chosen[dbFields.productName] || chosen}*${precio ? ` (+${money(precio)})` : ''}.`, ctx);
+    await finishToppingsStep(sock, jid, userSession, ctx, guess.isPerUnit);
+}
+
 /**
  * Paso 2: toppings opcionales. El cliente responde por NOMBRE (sin códigos):
  *  - "no/sin/nada" → avanza.
@@ -656,12 +880,13 @@ function findBestTopping(target, list, dbFields) {
  */
 async function handleToppings(sock, jid, text, userSession, ctx) {
     const flow = userSession.heladoFlow;
+    if (flow.pendingToppingGuess) { await resolveToppingGuess(sock, jid, text, userSession, ctx); return; }
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
-    const input = stripAccents(text.toLowerCase().trim());
+    let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input)) {
+    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
         userSession.phase = HELADO_QUANTITY;
         await say(sock, jid, `✅ Sin toppings.\n\n¿Cuántas unidades deseas?`, ctx);
         return;
@@ -678,8 +903,18 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    // "todos" / "de todo" → agregar todos. Se ignora si pide la LISTA de todos.
-    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+    // "todos" / "de todo" → agregar todos, SOLO si no dice nada más (ver
+    // interpretToppingAllKeyword). Se ignora si pide la LISTA de todos.
+    const allKeyword = interpretToppingAllKeyword(input);
+    if (allKeyword.kind === 'qualified') {
+        if (!allKeyword.rest) {
+            await say(sock, jid,
+                `👍 ¿Cuál topping quieres? Escribe el nombre de cada uno (ej: "oreo y queso") o *"no"* para continuar sin toppings.`, ctx);
+            return;
+        }
+        input = allKeyword.rest;
+    }
+    if (allKeyword.kind === 'all') {
         for (const t of toppingsList) {
             if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
                 flow.toppingsSeleccionados.push(t);
@@ -740,6 +975,17 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
                     added.push(top);
                 }
             } else if (!/^\d+$/.test(tok)) {
+                // Bug real (27 sep 2026): antes de archivarlo como nota,
+                // intentar reconocerlo como un nombre real mal escrito (ej.
+                // "Birbujet" -> "Burbujet") - solo si de verdad no hay
+                // ningún candidato parecido se guarda como nota (ese caso
+                // sigue igual, ej: "no quiero fruta").
+                const candidates = findFuzzyToppingCandidates(tok, toppingsList, dbFields);
+                if (candidates.length > 0) {
+                    flow.pendingToppingGuess = { raw: tok, candidates, isPerUnit: false };
+                    await say(sock, jid, buildToppingGuessQuestion(flow.pendingToppingGuess, dbFields), ctx);
+                    return;
+                }
                 observaciones.push(tok);
             }
         }
@@ -752,21 +998,17 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    userSession.phase = HELADO_QUANTITY;
     if (observaciones.length) {
         flow.observaciones = flow.observaciones
             ? `${flow.observaciones}, ${observaciones.join(', ')}`
             : observaciones.join(', ');
     }
-    const obs = flow.observaciones ? `\nObservaciones: ${flow.observaciones}` : '';
-    const lines = added.length
-        ? added.map(t => {
-            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
-            return `• ${t[dbFields.productName] || t}${precio ? ` - ${money(precio)}` : ''}`;
-        }).join('\n')
-        : 'sin toppings';
-    await say(sock, jid,
-        `✅ Toppings:\n${lines}${obs}\n\n¿Cuántas unidades deseas?`, ctx);
+    // Cierre factorizado (finishToppingsStep) para que también lo use
+    // resolveToppingGuess al terminar de resolver una sugerencia pendiente -
+    // muestra siempre la lista COMPLETA acumulada, no solo lo nuevo de este
+    // mensaje (bug real ya corregido antes: un topping anotado en un mensaje
+    // previo no debía "desaparecer" del resumen).
+    await finishToppingsStep(sock, jid, userSession, ctx, false);
 }
 
 /**
@@ -898,6 +1140,39 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
  *  - "2" (cada una diferente) → se recorre unidad por unidad (sabores →
  *    toppings) y se crea un ítem de carrito por unidad.
  */
+/**
+ * Modo "cada una diferente": arranca la personalización por unidad.
+ *
+ * Bug real (26 sep 2026): antes esto reseteaba todo a cero y le volvía a
+ * pedir al cliente los sabores/toppings de la unidad 1 desde el inicio -
+ * pero el cliente YA los había elegido, ANTES de que se le preguntara la
+ * cantidad (ej: eligió Arequipe x3 + queso para "Volcán de Gomitas", y
+ * DESPUÉS dijo que quería 2 unidades). Esa elección ya hecha es, en la
+ * práctica, la personalización de la unidad 1 - pedirla otra vez es
+ * redundante y confunde ("ya había pedido la del primero, solo debía pedir
+ * las del segundo"). Se usa lo ya elegido como unidad 1 y se salta directo
+ * a pedir la unidad 2 (o a finalizar de una si qty era 2 y ya se completó).
+ */
+async function startEachCustomization(sock, jid, userSession, ctx) {
+    const flow = userSession.heladoFlow;
+    const customization = flow.customization;
+    customization.mode = 'each';
+    customization.units = [{
+        sabores: [...flow.saboresSeleccionados],
+        toppings: [...flow.toppingsSeleccionados],
+        observaciones: flow.observaciones || ''
+    }];
+    customization.currentUnit = 1;
+    customization.currentSabores = [];
+    customization.currentToppings = [];
+    customization.currentObs = '';
+    if (customization.currentUnit < customization.qty) {
+        await askPerUnitSabores(sock, jid, userSession, ctx);
+    } else {
+        await finalizeEachCustomization(sock, jid, userSession, ctx);
+    }
+}
+
 async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
     const flow = userSession.heladoFlow;
     const customization = flow.customization;
@@ -907,15 +1182,29 @@ async function handleUnitsMode(sock, jid, text, normalized, userSession, ctx) {
         return;
     }
     if (/^(2|diferente|diferentes|cada una|cada unidad|cada uno|distintos|distintas|variados|variadas)$/.test(normalized)) {
-        customization.mode = 'each';
-        customization.units = [];
-        customization.currentUnit = 0;
-        customization.currentSabores = [];
-        customization.currentToppings = [];
-        customization.currentObs = '';
-        await askPerUnitSabores(sock, jid, userSession, ctx);
+        await startEachCustomization(sock, jid, userSession, ctx);
         return;
     }
+
+    // Regla fija: si ninguna regex exacta calzó (ej. "Es 1 no dos", una
+    // corrección en lenguaje natural), antes de repetir la pregunta se le
+    // pregunta a la IA cuál de las 2 opciones quiso decir el cliente - caso
+    // real: esto dejaba al cliente pegado repitiendo la pregunta hasta que
+    // pedía hablar con un humano.
+    const choice = await heladeriaAi.classifyChoice(text, [
+        { id: 'same', label: 'Todas iguales (mismos sabores y toppings)' },
+        { id: 'each', label: 'Cada una diferente' }
+    ], `¿Quieres que las ${customization.qty} unidades lleven los mismos sabores y toppings o diferentes para cada una?`);
+    if (choice === 'same') {
+        customization.mode = 'same';
+        await finalizeSameCustomization(sock, jid, userSession, ctx);
+        return;
+    }
+    if (choice === 'each') {
+        await startEachCustomization(sock, jid, userSession, ctx);
+        return;
+    }
+
     await say(sock, jid,
         `🔄 ¿Quieres que las *${customization.qty} unidades* lleven los *mismos sabores y toppings* o *diferentes* para cada una?\n\n` +
         `*1)* Todas iguales\n*2)* Cada una diferente\n\n_Escribe el número de la opción._`, ctx);
@@ -965,8 +1254,9 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
     // Regla fija: la seleccion acepta numero, codigo (S<n>) o nombre - un
     // numero "pelado" (ej. "1" en vez de "S1") es tan valido como el codigo
     // en este paso (no hay ambiguedad con cantidad aca, esa fase es distinta).
-    const tokens = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+    const tokensRaw = input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
         .filter(t => !SABOR_STOPWORDS.has(t) && (t.length >= 2 || /^\d+$/.test(t)));
+    const tokens = expandSaborQuantifiers(tokensRaw, saboresList, dbFields);
     // Misma lógica que handleSabores: repetición deliberada del mismo token se
     // cuenta; dos tokens distintos que resuelven al mismo sabor se cuentan una vez.
     const pushedThisMessage = new Set();
@@ -1029,13 +1319,14 @@ async function handlePerUnitSabores(sock, jid, text, userSession, ctx) {
  */
 async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
     const flow = userSession.heladoFlow;
+    if (flow.pendingToppingGuess) { await resolveToppingGuess(sock, jid, text, userSession, ctx); return; }
     const customization = flow.customization;
     const dbFields = getDbFields();
     const toppingsList = buildOptionLists(ctx).toppings;
-    const input = stripAccents(text.toLowerCase().trim());
+    let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input)) {
+    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
         await pushPerUnit(sock, jid, userSession, ctx);
         return;
     }
@@ -1048,7 +1339,18 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
         return;
     }
 
-    if (!/lista|opciones|cuales/.test(input) && /\btod(o|a|os|as)\b|\bde todo\b/.test(input)) {
+    // Mismo criterio que handleToppings (interpretToppingAllKeyword): "todos
+    // de chocolate" / "todos iguales" NUNCA agregan el catálogo completo.
+    const allKeyword = interpretToppingAllKeyword(input);
+    if (allKeyword.kind === 'qualified') {
+        if (!allKeyword.rest) {
+            await say(sock, jid,
+                `👍 ¿Cuál topping quieres para la *unidad ${customization.currentUnit + 1}*? Escribe el nombre de cada uno (ej: "oreo y queso") o *"no"* para continuar sin toppings.`, ctx);
+            return;
+        }
+        input = allKeyword.rest;
+    }
+    if (allKeyword.kind === 'all') {
         for (const t of toppingsList) {
             if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (t.CodigoProducto || t))) {
                 customization.currentToppings.push(t);
@@ -1099,6 +1401,14 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
                     added.push(top);
                 }
             } else if (!/^\d+$/.test(tok)) {
+                // Mismo arreglo que handleToppings: intentar reconocer un
+                // nombre real mal escrito antes de archivarlo como nota.
+                const candidates = findFuzzyToppingCandidates(tok, toppingsList, dbFields);
+                if (candidates.length > 0) {
+                    flow.pendingToppingGuess = { raw: tok, candidates, isPerUnit: true };
+                    await say(sock, jid, buildToppingGuessQuestion(flow.pendingToppingGuess, dbFields), ctx);
+                    return;
+                }
                 observaciones.push(tok);
             }
         }
@@ -1294,6 +1604,123 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
 }
 
 /**
+ * Intenta resolver el texto como un pedido normal del menú (ej: "2 copa
+ * gusanito") ANTES de tratarlo como un encargo real por texto libre.
+ *
+ * Bug real (26 sep 2026): "2 de esas y una limonada" (refiriéndose a
+ * productos ya mencionados en la conversación) se clasificó como
+ * custom_order porque la IA no pudo resolver "esas" contra nada concreto -
+ * pasó a fase ENCARGO. Desde ahí, CUALQUIER mensaje siguiente - incluso uno
+ * tan claro como "2 copa gusanito" - iba directo a
+ * reservationsHandler.handleEncargo, que solo sabe parsear el formato
+ * "Nombre, dirección, tipo, pago, teléfono". Al no calzar, repetía las
+ * instrucciones de encargo PARA SIEMPRE, sin ninguna salida, hasta escalar
+ * por "mensaje repetido" - un cliente con un pedido normal y explícito
+ * quedaba atrapado sin remedio.
+ *
+ * Match DETERMINÍSTICO contra el catálogo real (sin IA, así que no hay
+ * riesgo de reclasificar mal otra vez) - si el texto trae uno o más
+ * nombres de producto reales del menú, se procesa como pedido normal
+ * (inicia el flujo guiado del primero que lo necesite, o agrega directo
+ * los que no) y NUNCA se le vuelve a mostrar el formato de encargo para
+ * ese mensaje. Soporta varios productos en un mismo mensaje (separados por
+ * coma, "y" o "+"), igual que el camino normal de pedidos - un cliente
+ * atrapado en encargo puede seguir pidiendo varias cosas a la vez, no solo
+ * una.
+ *
+ * Auditoría (26 sep 2026): si interpretar el inicio de un segmento como
+ * "<cantidad> <producto>" no resuelve nada real, también se prueba el
+ * segmento completo tal cual - un nombre de producto que empezara con un
+ * número (ej. un futuro "3 Leches") no debe perderse solo por asumir que
+ * ese número es una cantidad.
+ *
+ * @returns {Promise<boolean>} true si se resolvió como pedido normal.
+ */
+async function tryHandleAsMenuOrder(sock, jid, text, userSession, ctx) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+
+    const segments = t.split(/\s*(?:,|\by\b|\+)\s*/i).map(s => s.trim()).filter(Boolean);
+    const withQtyPrefix = [];
+    for (const seg of segments) {
+        const m = seg.match(/^(\d{1,3})\s*(?:x|de)?\s*(.+)$/i);
+        const cantidad = m ? parseInt(m[1], 10) : 1;
+        const nombre = (m ? m[2] : seg).trim();
+        if (nombre.length >= 3) withQtyPrefix.push({ nombre, cantidad });
+    }
+    // resolveProducts busca contra TODO productsCache, que también incluye
+    // sabores y toppings (componentes, no productos que se pidan solos) -
+    // sin filtrarlos, un texto que solo MENCIONE una palabra que coincide
+    // con un sabor/topping (ej. "chocolate", "queso", "fresa" en una frase
+    // cualquiera) se resolvía como si el cliente hubiera pedido ese sabor
+    // suelto como si fuera un producto. Se descartan esas categorías - acá
+    // solo interesa si el mensaje nombra un producto real del menú.
+    const dropSaborOTopping = (list) => list.filter(r => {
+        const cat = String(r.product.Categoria || '');
+        return cat !== CATEGORIA_SABORES && cat !== CATEGORIA_TOPPINGS;
+    });
+
+    let resolved = withQtyPrefix.length > 0 ? dropSaborOTopping(resolveProducts(withQtyPrefix, ctx)) : [];
+    if (resolved.length === 0) {
+        const asIs = segments.filter(s => s.length >= 3).map(nombre => ({ nombre, cantidad: 1 }));
+        resolved = asIs.length > 0 ? dropSaborOTopping(resolveProducts(asIs, ctx)) : [];
+    }
+    if (resolved.length === 0) return false;
+
+    const guided = [];
+    const plain = [];
+    for (const r of resolved) {
+        const c = getCounts(r.product);
+        (c.sabores > 0 || c.toppings > 0) ? guided.push(r) : plain.push(r);
+    }
+    if (plain.length > 0) {
+        if (guided.length > 0) {
+            const lineas = plain.map(r => `• ${r.cantidad}x ${getProductName(r.product)} - *${money(r.precio * r.cantidad)}*`).join('\n');
+            await say(sock, jid, `🍦 Ya agregué a tu pedido:\n\n${lineas}\n\nAhora personalizamos los productos que lo requieren...`, ctx);
+            for (const r of plain) addPlainToCarrito(userSession, r);
+        } else {
+            await addResolvedProducts(sock, jid, plain, userSession, ctx);
+            return true;
+        }
+    }
+    if (guided.length > 0) {
+        userSession.pendingVoiceGuided = guided;
+        const first = userSession.pendingVoiceGuided.shift();
+        await handleProductOptions(sock, jid, first.product, userSession, ctx);
+    }
+    return true;
+}
+
+/**
+ * Fase ENCARGO de heladería (handler.js la delega acá vía la capacidad
+ * handleEncargoPhase). Envuelve reservationsHandler.handleEncargo SIN cambiar
+ * lo que hace - solo cuenta los turnos en que no entendió nada.
+ *
+ * Bug real (replay 29-30 sep 2026): el sub-flujo de encargo repitió el MISMO
+ * mensaje de instrucciones ("Para hacer un pedido especial... envía un
+ * mensaje con el siguiente formato: Nombre, dirección, tipo, pago,
+ * teléfono") hasta 14 veces seguidas sin escalar a humano. handleEncargo
+ * nunca subía errorCount cuando no lograba parsear el mensaje, así que el
+ * chequeo global de frustración de handler.js (paso 10, umbral 2) no se
+ * enteraba nunca; y el detector de loop tampoco saltaba porque el cliente
+ * escribía cosas DISTINTAS cada vez (es el bot el que se repetía, no él).
+ * Ahora cada turno que termina en "repetir instrucciones" cuenta como
+ * error (al 2do consecutivo el chequeo global escala, como en cualquier
+ * otra fase); una reserva parseada o un pedido normal resuelto lo resetean.
+ * La PRIMERA vez que se muestran las instrucciones (al entrar a ENCARGO por
+ * routeIntent/custom_order o por la opción 2 del menú) no pasa por acá -
+ * solo cuentan los mensajes que el cliente manda ya estando en ENCARGO.
+ */
+async function handleEncargoPhase(sock, jid, text, userSession, ctx) {
+    const outcome = await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+    if (outcome === 'instructions') {
+        userSession.errorCount = (userSession.errorCount || 0) + 1;
+    } else if (outcome) {
+        userSession.errorCount = 0;
+    }
+}
+
+/**
  * Enruta el resultado de intención de IA (audio) a la acción correspondiente.
  * Si el producto requiere sabores/toppings, inicia el flujo guiado en lugar
  * de agregarlo directo al carrito.
@@ -1301,6 +1728,12 @@ async function addResolvedProducts(sock, jid, resolved, userSession, ctx) {
 async function routeIntent(sock, jid, result, text, userSession, ctx) {
     const intent = result?.intent || 'not_understood';
     logger.info(`[${jid}] -> Flow heladería (IA): intent=${intent}`);
+
+    // REGLA DE SEGURIDAD: datos sensibles (tarjeta/cédula/clave) → humano de
+    // inmediato, sin procesar como pedido ni guardar. Cubre la ruta de AUDIO
+    // libre (la transcripción puede contenerlos aunque la IA los haya
+    // clasificado como pedido).
+    if (await escalateIfSensitive(sock, jid, text, userSession, ctx)) return;
 
     switch (intent) {
         case 'order': {
@@ -1448,8 +1881,8 @@ async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSessi
  * Lectura de imagen (usado por handler.js en el bloque de media).
  * Devuelve una descripción corta que luego se enruta por el flujo.
  */
-async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg') {
-    const text = await heladeriaAi.interpretImage(imageBase64, userSession, mimeType);
+async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
+    const text = await heladeriaAi.interpretImage(imageBase64, userSession, mimeType, caption);
     if (!text) return null;
     logger.info(`heladeria.flow transcribeImage: "${text.substring(0, 80)}"`);
     return text;
@@ -1587,11 +2020,18 @@ function buildClassifierContext(userSession, ctx) {
         const nombre = p[dbFields.productName] || '';
         return codigo ? `${codigo} | ${nombre}` : nombre;
     });
+    // Bug real (chat real de una clienta): "una de 18 y una de 16" (refiriéndose
+    // al PRECIO, $18.000 y $16.000, no al nombre) no se podía resolver porque
+    // esta lista nunca incluía el precio - la IA no tenía con qué comparar y
+    // terminaba inventando una respuesta sin relación. Se agrega el precio
+    // para que el clasificador también pueda resolver por precio, no solo
+    // por nombre/código.
     const mapProducts = (arr) => arr.map(p => {
         const codigo = p[dbFields.productCode] || '';
         const nombre = p[dbFields.productName] || '';
+        const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
         const desc = p.Descripcion || p.descripcion || '';
-        return `${codigo} | ${nombre}${desc ? ` | ${desc}` : ''}`;
+        return `${codigo} | ${nombre} | $${precio}${desc ? ` | ${desc}` : ''}`;
     });
 
     let step = 'esperando_producto';
@@ -1651,6 +2091,50 @@ function extractMentionedProducts(text, ctx) {
         }
     }
     return found.slice(0, 6);
+}
+
+/**
+ * Busca productos BASE (no sabores/toppings del catálogo de personalización)
+ * cuya descripción de ingredientes (columna "Descripcion" del Sheet)
+ * menciona el término dado. Requisito real de Johan (24/9): si un cliente
+ * pregunta "con gomas" / "qué tiene gomitas trululu", el bot debe validar
+ * contra los ingredientes reales del Sheet y decir QUÉ PRODUCTOS ya la
+ * traen (ej: "Copa Gusanito" y "Volcán de Gomitas" sí la mencionan en su
+ * descripción) en vez de solo remitir a "eso es una adición" - una
+ * respuesta genérica cuando en realidad SÍ hay un producto que ya la trae.
+ */
+function findProductsByIngredient(term, ctx) {
+    const target = stripAccents(String(term || '').toLowerCase()).trim();
+    if (target.length < 3) return [];
+    const excluidas = new Set([CATEGORIA_SABORES, CATEGORIA_TOPPINGS]);
+    return getProducts(ctx).filter(p => {
+        if (excluidas.has(p.Categoria)) return false;
+        const desc = stripAccents(String(p.Descripcion || p.descripcion || '').toLowerCase());
+        return desc.includes(target);
+    });
+}
+
+/**
+ * Extrae precios en pesos colombianos mencionados en un mensaje ("$18.000",
+ * "18000", "de 16 mil", "una de 18"). Se usa como red de seguridad para
+ * validar que un producto resuelto por la IA por precio de verdad cuesta lo
+ * que el cliente dijo (ver bloque "2" de classifyOrderInput).
+ */
+function extractMentionedPrices(text) {
+    const t = String(text || '').toLowerCase();
+    const prices = new Set();
+    const fullRe = /\$?\s*(\d{1,3}(?:\.\d{3})+|\d{4,6})\b/g;
+    let m;
+    while ((m = fullRe.exec(t))) {
+        const n = parseInt(m[1].replace(/\./g, ''), 10);
+        if (n >= 1000) prices.add(n);
+    }
+    const shortRe = /\bde\s+(\d{1,3})(?:\s*mil)?\b|\b(\d{1,3})\s*mil\b/g;
+    while ((m = shortRe.exec(t))) {
+        const n = parseInt(m[1] || m[2], 10);
+        if (n >= 3 && n <= 200) prices.add(n * 1000);
+    }
+    return Array.from(prices);
 }
 
 /**
@@ -1817,14 +2301,55 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         return true;
     }
 
+    // Bug real de producción (Johan probando en vivo, 24/9): "paso a
+    // recogerlo" mencionado a mitad del flujo guiado (ej: "Todos de fresa,
+    // paso a recogerlo cuanto se demora?") o en HELADO_POST_ADD ("Que lo
+    // mando a recoger") nunca se entendía - la detección de recogida SOLO
+    // vivía dentro de checkoutHandler.js#handleEnterAddress (fase CHECK_DIR),
+    // pero en la vida real los clientes avisan que van a recoger MUCHO antes
+    // de llegar ahí. Se detecta acá, de forma determinista (sin depender de
+    // la IA) y sin importar la fase, para que nunca se pierda sin importar
+    // en qué parte del pedido lo mencionen.
+    let pickupJustDetected = false;
+    if (checkoutHandler.looksLikePickup(text) && !(userSession.order && userSession.order.pickup)) {
+        userSession.order = userSession.order || {};
+        userSession.order.pickup = true;
+        userSession.order.address = 'Recoge en el local';
+        userSession.order.deliveryCost = 0;
+        pickupJustDetected = true;
+        logger.info(`[${jid}] -> Recogida en tienda detectada anticipadamente (fase ${userSession.phase}): "${text}"`);
+        await say(sock, jid, '👍 Anotado — cuando termines tu pedido lo recoges en el local, sin domicilio.', ctx);
+    }
+
     const contextInfo = buildClassifierContext(userSession, ctx);
     const result = await heladeriaAi.interpretOrderText(text, contextInfo);
-    if (!result) return false;
+    // Si la recogida YA se detectó y confirmó arriba (mensaje que habla SOLO
+    // de recogida/pago, sin nada más que la IA pueda clasificar como pedido),
+    // la falta de respuesta de la IA no puede deshacer ese "handled": el
+    // caller (ej. handlePostAdd) trataría este mensaje como no entendido y
+    // mandaría "❌ No entendí..." justo después del "👍 Anotado..." que ya se
+    // envió, contradiciéndolo. pickupJustDetected ya cuenta como "el mensaje
+    // sí se manejó".
+    if (!result) return pickupJustDetected;
+
+    // Bug real (auditoría 23/9, foto real de una clienta): cuando el cliente
+    // manda una FOTO de un producto sin nombrarlo, la descripción que genera
+    // la IA de la imagen suele terminar con una invitación tipo pregunta
+    // ("¿se te antoja una hoy?") - el clasificador de texto entonces detecta
+    // ESO como "duda" (además de identificar bien el producto). Como el
+    // bloque de duda respondía y retornaba de una, el producto YA
+    // identificado se perdía en silencio - el cliente decía "3 de esta" a
+    // continuación y la IA, sin ningún producto registrado como
+    // "mencionado", terminaba INVENTANDO uno que nadie pidió. Si el
+    // "producto" SÍ resuelve contra el catálogo real, no se trata como una
+    // pregunta bloqueante - se deja caer al bloque 2 de abajo para que se
+    // aplique de verdad (empieza su flujo / se guarda como mencionado).
+    const dudaEsRealmenteProducto = !!(result.duda && result.producto && resolveProducts([{ nombre: result.producto }], ctx).length > 0);
 
     // 1) Duda → responder (FAQ editable o Gemini) y re-mostrar el paso SIN
     //    perder progreso. Si la IA NO supo responder ("no tengo el dato" o
     //    falló), escalar al admin para que continúe la conversación.
-    if (result.duda) {
+    if (result.duda && !dudaEsRealmenteProducto) {
         // Caso especial: preguntar el valor del domicilio NUNCA lo sabe la
         // IA/FAQ (varía por dirección/zona) - en vez de escalar a
         // WAITING_HUMAN (lo que frena todo el pedido), se pide la dirección,
@@ -1856,8 +2381,22 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         userSession.lastMentionedProducts = extractMentionedProducts(reply, ctx);
         userSession.lastBotReply = reply.slice(0, 300);
         await say(sock, jid, `😊 ${reply}`, ctx);
-        await reshowCurrentStep(sock, jid, userSession, ctx);
-        return true;
+
+        // Bug real de producción (24/9): "Todos de fresa, paso a recogerlo
+        // ¿cuánto se demora?" - la duda ("cuánto se demora") se respondía
+        // bien, pero los sabores YA extraídos en el MISMO mensaje ("Todos de
+        // fresa") se perdían porque acá se retornaba de una con
+        // reshowCurrentStep (que vuelve a mostrar el paso desde cero, sin
+        // aplicar nada). Si el mismo mensaje trae sabores/toppings que sí se
+        // pueden aplicar, NO se reshowea el paso - se deja caer a los
+        // bloques de abajo para que los apliquen de verdad; esos bloques ya
+        // mandan su propio mensaje de confirmación, así que no hace falta
+        // el reshow genérico.
+        const hayOtroDatoAplicable = !!((result.sabores && result.sabores.length > 0) || (result.toppings && result.toppings.length > 0));
+        if (!hayOtroDatoAplicable) {
+            await reshowCurrentStep(sock, jid, userSession, ctx);
+            return true;
+        }
     }
 
     const dbFields = getDbFields();
@@ -1866,7 +2405,7 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     const toppingsList = lists.toppings;
     const currentFlowProduct = userSession.heladoFlow ? userSession.heladoFlow.product : null;
 
-    let acted = false;
+    let acted = pickupJustDetected;
 
     // 2) ¿Producto pedido distinto al actual (o no hay flujo)? Iniciar su flujo
     let targetProduct = null;
@@ -1874,6 +2413,34 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         const resolved = resolveProducts([{ nombre: result.producto }], ctx);
         if (resolved.length > 0) targetProduct = resolved[0].product;
     }
+
+    // Red de seguridad (auditoría 24/9, pedido explícito de Johan): la IA
+    // resolviendo por PRECIO a veces "alucina" el producto equivocado (ej:
+    // dijo que "Copa Gusanito" costaba $16.000 cuando en realidad cuesta
+    // $14.000, para un cliente que pidió "la de 16 mil"). Si el cliente
+    // mencionó un precio concreto y ni el nombre del producto resuelto
+    // aparece en su mensaje (descarta que vino de un match por NOMBRE, que
+    // sí es confiable) ni el precio real del producto coincide con lo que
+    // dijo, no se confía en la IA: se busca el producto real a ese precio
+    // deterministicamente en el catálogo (100% exacto, sin adivinar) en vez
+    // de agregar algo que el cliente no pidió.
+    if (targetProduct) {
+        const preciosMencionados = extractMentionedPrices(text);
+        if (preciosMencionados.length > 0) {
+            const precioReal = parseFloat(String(targetProduct[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            const textoNorm = stripAccents(String(text || '')).toLowerCase();
+            const nombreVieneDelTexto = stripAccents(String(targetProduct[dbFields.productName] || '')).toLowerCase()
+                .split(/\s+/).some(palabra => palabra.length >= 4 && textoNorm.includes(palabra));
+            if (!preciosMencionados.includes(precioReal) && !nombreVieneDelTexto) {
+                const candidatos = getProducts(ctx).filter(p => {
+                    const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                    return preciosMencionados.includes(precio);
+                });
+                targetProduct = candidatos.length === 1 ? candidatos[0] : null;
+            }
+        }
+    }
+
     const targetIsCurrent = targetProduct && currentFlowProduct &&
         (targetProduct[dbFields.productCode] || '') === (currentFlowProduct[dbFields.productCode] || '');
     if (targetProduct && !targetIsCurrent) {
@@ -1961,11 +2528,77 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         }
     }
 
+    // 3b) Bug real: cliente mencionó un topping/adición ("Y adición de
+    //    queso") ANTES de terminar de elegir los sabores obligatorios - el
+    //    dato se perdía en silencio porque el paso "4" de abajo solo mira
+    //    las fases de TOPPINGS/QUANTITY, nunca SABORES. Se guarda de una vez
+    //    (sin avanzar de fase, los sabores siguen pendientes) para no
+    //    perderlo ni obligar al cliente a repetirlo después.
+    //
+    // NOTA (auditoría 23/9): a propósito NO se condiciona a "!acted" - si el
+    // bloque 3 de arriba ya aplicó un sabor PARCIAL en este mismo mensaje
+    // (ej. "fresa, con adición de queso" cuando faltan 2 sabores), la fase
+    // sigue siendo HELADO_SABORES/HELADO_PER_UNIT_SABORES (no se completó
+    // aún) y el topping mencionado en el MISMO mensaje se perdía en silencio
+    // porque este bloque nunca llegaba a evaluarse. Si el bloque 3 SÍ
+    // completó los sabores (la fase ya cambió a TOPPINGS), esta condición de
+    // fase falla sola y el topping lo recoge el bloque "4" de abajo, sin
+    // duplicar.
+    if (userSession.heladoFlow && (userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES) && result.toppings && result.toppings.length > 0) {
+        const flow = userSession.heladoFlow;
+        const isPerUnit = userSession.phase === HELADO_PER_UNIT_SABORES;
+        const targetList = isPerUnit ? flow.customization.currentToppings : flow.toppingsSeleccionados;
+        const added = [];
+        let mentionedSomethingReal = false;
+        for (const name of result.toppings) {
+            const target = stripAccents(String(name || '')).toLowerCase();
+            const top = toppingsList.find(s => stripAccents(String(s[dbFields.productName] || '')).toLowerCase() === target
+                || (target.length >= 3 && stripAccents(String(s[dbFields.productName] || '')).toLowerCase().includes(target)));
+            if (top) {
+                mentionedSomethingReal = true;
+                if (!targetList.find(x => (x.CodigoProducto || x) === (top.CodigoProducto || top))) {
+                    targetList.push(top);
+                    added.push(top);
+                }
+            }
+        }
+        const seleccionados = isPerUnit ? flow.customization.currentSabores : flow.saboresSeleccionados;
+        const faltan = flow.counts.sabores - seleccionados.length;
+        if (added.length > 0) {
+            // Pedido real de Johan (25/9): que al anotar una adición se vea
+            // de una que tiene costo, no solo enterarse hasta el resumen
+            // final - mismo formato "(+$X)" que ya usa el resumen del carrito.
+            const nombresAgregados = added.map(t => {
+                const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                const nombre = t[dbFields.productName] || t;
+                return precio > 0 ? `${nombre} (+${money(precio)})` : nombre;
+            }).join(', ');
+            await say(sock, jid,
+                `✅ Anotado: *${nombresAgregados}* como adición.\n\n` +
+                `Todavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`, ctx);
+            acted = true;
+        } else if (mentionedSomethingReal) {
+            // Bug real (encontrado con la suite de demo contra la IA real):
+            // el cliente repite una adición YA anotada antes (ej. vuelve a
+            // decir "con adición de queso") - sin este "else if", esto no
+            // hacia nada (nada NUEVO que agregar) y el token sin resolver
+            // ("adicion") de handleSabores caía en "No reconocí", como si de
+            // verdad no se hubiera entendido nada.
+            await say(sock, jid,
+                `👌 Ya tenía anotado eso.\n\nTodavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`, ctx);
+            acted = true;
+        }
+    }
+
     // 4) Aplicar toppings si es el turno (o si el cliente sigue agregando
     //    toppings estando en la fase de cantidad). Si el cliente dijo "sin
     //    toppings" explícitamente (en un pedido completo), avanzar con "sin"
     //    para no bloquear la cascada sabores → toppings → cantidad → dirección.
     const sinToppings = /sin\s+(toppings?|acompa[ñn]a?mientos?|nada|ningun)/i.test(String(text || ''));
+    // NOTA: la detección de "quitar una adición ya puesta" YA NO vive acá -
+    // se movió a tryRemoveOrderAddition() (más abajo en este archivo),
+    // llamada desde handler.js ANTES de cualquier despacho por fase. Ver el
+    // comentario en esa función para la historia completa de por qué.
     if (userSession.heladoFlow && (userSession.phase === HELADO_TOPPINGS || userSession.phase === HELADO_QUANTITY || userSession.phase === HELADO_PER_UNIT_TOPPINGS)) {
         if (result.toppings && result.toppings.length > 0) {
             const codes = mapNamesToCodes(result.toppings, toppingsList, 'T');
@@ -1998,6 +2631,35 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         acted = true;
     }
 
+    // 4c) Bug real de producción (Johan probando en vivo, 24/9): preguntó
+    //    "Y con gomas" / "Gomas trululu" navegando el menú, SIN haber elegido
+    //    todavía ningún producto (sin heladoFlow activo). El clasificador SÍ
+    //    reconocía "gomitas trululu" como topping (toppings=1), pero como
+    //    los bloques 3b/4 de arriba solo aplican DENTRO de un flujo guiado ya
+    //    en curso, esto no hacía nada - "No entendí" dos veces seguidas y
+    //    escalada a humano por un simple mensaje de exploración del menú.
+    //
+    //    Requisito real de Johan (mismo día): antes de remitir genéricamente
+    //    a "eso es una adición", validar contra la columna de ingredientes
+    //    del Sheet (Descripcion) si algún producto YA la trae de por sí (ej:
+    //    "Copa Gusanito" y "Volcán de Gomitas" mencionan "gomitas trululu"
+    //    en su descripción) - si hay coincidencia, ofrecerla directo (más
+    //    cerca de cerrar la venta); si no, sí es solo una adición.
+    if (!acted && !userSession.heladoFlow && !targetProduct && result.toppings && result.toppings.length > 0) {
+        const nombresToppings = result.toppings.join(', ');
+        const productosConIngrediente = result.toppings.flatMap(t => findProductsByIngredient(t, ctx));
+        const unicos = [...new Map(productosConIngrediente.map(p => [p[dbFields.productCode] || p.NombreProducto, p])).values()];
+        if (unicos.length > 0) {
+            const lista = unicos.map(p => `*${getProductName(p)}*`).join(' y ');
+            await say(sock, jid,
+                `😋 ¡Sí! ${lista} ya ${unicos.length > 1 ? 'vienen' : 'viene'} con *${nombresToppings}* 🍬 ¿te provoca? También te la puedo agregar como adición a cualquier otra copa.`, ctx);
+        } else {
+            await say(sock, jid,
+                `😋 *${nombresToppings}* es una adición — se agrega después de elegir tu helado o copa base. ¿Cuál te gustaría pedir? Escribe *menú* para ver las opciones 🍦`, ctx);
+        }
+        acted = true;
+    }
+
     // 5) Aplicar cantidad si es el turno (flujo guiado). Si hay más de una
     //    unidad con opciones de personalización, se pregunta 1) iguales /
     //    2) cada una diferente (no se asume la misma personalización).
@@ -2013,12 +2675,26 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
         acted = true;
     }
 
-    // 6) Dirección detectada al terminar el flujo → ir directo al checkout
-    if (result.direccion && userSession.phase === HELADO_POST_ADD) {
+    // 6) Dirección detectada → se guarda en CUALQUIER fase (RF-01/RF-02: el
+    //    pedido es un conjunto de campos independientes, no un paso fijo).
+    //    Antes solo se aplicaba en HELADO_POST_ADD y se perdía en silencio si
+    //    el cliente la mencionaba a mitad del flujo guiado (ej: "2 de fresa,
+    //    para la cra 23" durante la elección de sabores). Ahora se guarda
+    //    apenas el cliente la dice; el checkout la usará cuando llegue.
+    if (result.direccion) {
         if (!userSession.order) userSession.order = {};
         userSession.order.address = result.direccion;
-        await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-        acted = true;
+        logger.info(`[${jid}] -> Dirección guardada anticipadamente (fase ${userSession.phase}): "${result.direccion}"`);
+        if (userSession.phase === HELADO_POST_ADD) {
+            await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+            acted = true;
+        } else if (!acted) {
+            // Solo venía la dirección en el mensaje: confirmar y re-mostrar el
+            // paso actual SIN perder el progreso ya armado.
+            await say(sock, jid, `📍 Anoté tu dirección: *${result.direccion}*. Seguimos con tu pedido 😊`, ctx);
+            await reshowCurrentStep(sock, jid, userSession, ctx);
+            acted = true;
+        }
     }
 
     // 7) Parte del pedido que la IA NO pudo emparejar contra el catálogo (ej:
@@ -2027,11 +2703,111 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     //    coincidía y el cliente terminaba pensando que pidió las dos cosas.
     //    Solo avisa si YA se hizo algo más (si no, el mensaje de "no entendí"
     //    del flujo ya cubre el caso de "no encontré nada").
-    if (result.no_reconocido && acted) {
+    //
+    // Bug real (jid 573138777115@c.us, "Que lo mando a recoger"): cuando lo
+    // único que trae el mensaje es el aviso de recogida (pickupJustDetected),
+    // la IA de todos modos intenta emparejar ESA MISMA frase como si fuera un
+    // producto/topping y, al no encontrar nada (no hay ningún producto en
+    // "que lo mando a recoger"), devuelve no_reconocido con el texto
+    // completo. El resultado era un combo contradictorio: "👍 Anotado, recoges
+    // en el local" seguido de "😅 no encontré 'Que lo mando a recoger' en el
+    // menú" - confunde más de lo que ayuda. Si la recogida fue lo ÚNICO que
+    // se detectó de verdad (nada más aplicable en el resultado), se omite
+    // este segundo aviso.
+    const soloEraAvisoDeRecogida = pickupJustDetected && !targetProduct
+        && !(result.sabores && result.sabores.length > 0)
+        && !(result.toppings && result.toppings.length > 0)
+        && !result.cantidad
+        && !(Array.isArray(result.bebidas) && result.bebidas.length > 0)
+        && !result.direccion;
+    if (result.no_reconocido && acted && !soloEraAvisoDeRecogida) {
         await say(sock, jid, `😅 Ojo: no encontré *"${result.no_reconocido}"* en el menú, así que no lo agregué. ¿Quieres que te muestre el menú para revisar el nombre exacto?`, ctx);
     }
 
     return acted;
+}
+
+/**
+ * Detecta y ejecuta "quitar una adición/topping ya agregado al pedido en
+ * curso" (ej. "quítale las gomitas", "no pedí esa adición, sácamela",
+ * "elimina el queso"), SIN IMPORTAR EN QUÉ FASE esté el cliente dentro del
+ * flujo guiado de personalización (sabores, toppings, cantidad, por
+ * unidad...).
+ *
+ * Historia real (25-26 sep 2026, Johan probando en vivo): esto empezó
+ * viviendo DENTRO de classifyOrderInput(), condicionado a una lista
+ * explícita de fases (HELADO_TOPPINGS, HELADO_QUANTITY...). Cada vez que
+ * Johan encontraba el mismo bug en una fase nueva (primero HELADO_QUANTITY,
+ * después HELADO_SABORES) había que agregar esa fase a la lista a mano -
+ * un parche por fase, sin fin a la vista. La causa real nunca fue la fase:
+ * es que classifyOrderInput() solo se llama como RESPALDO desde dentro de
+ * cada handler determinístico (handleSabores, handleToppings...), cada uno
+ * con su propio criterio de cuándo rendirse y probar el respaldo - así que
+ * cualquier fase nueva necesitaba su propio cableado.
+ *
+ * La solución fue sacar esto de adentro del despacho por fase por completo:
+ * ahora es una capability que handler.js llama SIEMPRE, para TODO mensaje
+ * del cliente, ANTES de decidir a qué handler de fase despachar - mismo
+ * patrón que ya usa captureSideChannelFields en checkoutHandler.js. Así
+ * cubre cualquier fase, incluidas las que no existen todavía.
+ *
+ * @returns {Promise<boolean>} true si se quitó algo (el caller no debe
+ *   seguir procesando este mensaje con el flujo normal).
+ */
+async function tryRemoveOrderAddition(sock, jid, text, userSession, ctx) {
+    if (!userSession.heladoFlow) return false; // nada que quitar sin un pedido en construcción
+
+    // "quítamela"/"sácamela" (verbo + pronombre pegado) no calzan con un
+    // \b...\b de palabra completa - se compara la raíz como prefijo sobre
+    // el texto sin acentos, cubre cualquier conjugación.
+    const textNoAccents = stripAccents(String(text || '')).toLowerCase();
+    const wantsToRemove = /\b(quita|saca|elimina|borra)/i.test(textNoAccents) || /\bsin\b/i.test(textNoAccents);
+    if (!wantsToRemove) return false;
+
+    const flow = userSession.heladoFlow;
+    const isPerUnit = userSession.phase === HELADO_PER_UNIT_TOPPINGS || userSession.phase === HELADO_PER_UNIT_SABORES;
+    const targetList = isPerUnit ? (flow.customization && flow.customization.currentToppings) : flow.toppingsSeleccionados;
+    if (!targetList || targetList.length === 0) return false; // no hay toppings puestos, nada que hacer
+
+    const dbFields = getDbFields();
+    // El matching (nombre exacto, difuso, o referencia genérica del tipo
+    // "sin adición" cuando hay un solo ítem puesto) vive en
+    // resolveTextReferenceToCartItems (utils/fuzzySearch.js) - genérico,
+    // reusable por cualquier negocio con carrito, no solo heladería. Ver el
+    // docblock de esa función para la historia completa (incluido el bug
+    // real del 29/9 que la motivó: "Sin adición" sin nombrar el topping).
+    const removed = resolveTextReferenceToCartItems(targetList, text, dbFields.productName, /\badici[oó]n(es)?\b/i);
+    if (removed.length === 0) return false;
+    for (const item of removed) {
+        const idx = targetList.indexOf(item);
+        if (idx !== -1) targetList.splice(idx, 1);
+    }
+
+    const nombresQuitados = removed.map(t => t[dbFields.productName] || t).join(', ');
+    const restantes = targetList.length
+        ? targetList.map(t => {
+            const precio = parseFloat(String(t[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+            return `• ${t[dbFields.productName] || t}${precio ? ` (+${money(precio)})` : ''}`;
+        }).join('\n')
+        : '_(ninguno)_';
+    // Si el cliente quita un topping ANTES de terminar de elegir sabores,
+    // no se debe forzar a la fase de cantidad (se saltaría los sabores que
+    // aún faltan) - solo avanza a cantidad si YA estaba en toppings/
+    // cantidad; en sabores, se queda ahí y recuerda cuántos faltan.
+    const stillChoosingSabores = userSession.phase === HELADO_SABORES || userSession.phase === HELADO_PER_UNIT_SABORES;
+    let nextStepText = '';
+    if (isPerUnit || stillChoosingSabores) {
+        if (stillChoosingSabores) {
+            const seleccionados = isPerUnit ? flow.customization.currentSabores : flow.saboresSeleccionados;
+            const faltan = flow.counts.sabores - (seleccionados ? seleccionados.length : 0);
+            if (faltan > 0) nextStepText = `\n\nTodavía necesito que elijas *${faltan}* ${faltan > 1 ? 'sabores' : 'sabor'} (código o nombre) para continuar.`;
+        }
+    } else {
+        nextStepText = '\n\n¿Cuántas unidades deseas?';
+    }
+    await say(sock, jid, `✅ Quitado: *${nombresQuitados}*.\n\nToppings actuales:\n${restantes}${nextStepText}`, ctx);
+    if (!isPerUnit && !stillChoosingSabores) userSession.phase = HELADO_QUANTITY;
+    return true;
 }
 
 /**
@@ -2107,9 +2883,11 @@ function buildLocalSummary(order) {
 async function sendLocalFinalSummary(sock, jid, userSession, ctx) {
     const summary = buildLocalSummary(userSession.order);
     const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
-    const deliveryText = (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
-        ? money(userSession.order.deliveryCost)
-        : 'Por confirmar';
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0)
+            ? money(userSession.order.deliveryCost)
+            : 'Por confirmar';
     const summaryText = `📝 *Resumen final del pedido*\n\n` +
         `*Productos:*\n${summary.text}\n\n` +
         `Subtotal: ${money(summary.total)}\n` +
@@ -2134,6 +2912,27 @@ function hasWord(input, words) {
 }
 
 /**
+ * Cancela el pedido vaciando productos Y datos de entrega (auditoría 23/9:
+ * antes solo se vaciaban los productos - la dirección/nombre/teléfono/pago
+ * del pedido cancelado quedaban guardados, y como askNextMissingCheckoutField
+ * solo pregunta por lo que falta, el SIGUIENTE pedido los reusaba en
+ * silencio sin volver a confirmarlos, riesgoso si es para otra dirección).
+ */
+function cancelOrderAndClearDelivery(userSession) {
+    if (userSession.order) {
+        userSession.order.items = [];
+        delete userSession.order.address;
+        delete userSession.order.name;
+        delete userSession.order.telefono;
+        delete userSession.order.paymentMethod;
+        delete userSession.order.deliveryCost;
+        delete userSession.order.pickup;
+    }
+    if (Array.isArray(userSession.carrito)) userSession.carrito = [];
+    userSession.phase = PHASE.MENU_PRINCIPAL;
+}
+
+/**
  * Respaldo DETERMINISTA para las fases de checkout (CONFIRM_ORDER, CHECK_PAGO,
  * FINALIZE_ORDER): cubre sinónimos de confirmar/editar y métodos de pago que el
  * validador genérico no acepta (nequi, daviplata, tarjeta). Retorna true si
@@ -2151,7 +2950,28 @@ function hasWord(input, words) {
 async function tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, reshow) {
     const contextInfo = buildClassifierContext(userSession, ctx);
     const result = await heladeriaAi.interpretOrderText(text, contextInfo);
-    if (!result || !result.duda) return false;
+    if (!result) return false;
+
+    // Bug real: en CONFIRM_ORDER (pregunta "1/2/3"), un cliente adelantó su
+    // dirección directamente ("Ala dirección calle 51...") en vez de
+    // responder con un número - antes eso caía en "Opción no válida" porque
+    // ni matchea 1/2/3 ni es una pregunta (duda). Si la IA reconoce una
+    // dirección acá, se interpreta como "confirmar el pedido y ya tengo la
+    // dirección" - mismo camino que responder "1", pero sin volver a
+    // pedirla.
+    if (result.direccion && userSession.phase === PHASE.CONFIRM_ORDER) {
+        userSession.errorCount = 0;
+        // Se pasa el TEXTO ORIGINAL completo (no solo result.direccion) porque
+        // handleEnterAddress ya sabe parsear un solo mensaje con los 4 datos
+        // juntos separados por comas (dirección, nombre, teléfono, pago) - si
+        // se pasa solo la dirección extraída, el resto del mensaje (nombre,
+        // teléfono, pago que el cliente ya dio) se descarta y el cliente
+        // termina teniendo que repetir uno por uno lo que ya había mandado.
+        await checkoutHandler.handleEnterAddress(sock, jid, text, userSession, ctx, false);
+        return true;
+    }
+
+    if (!result.duda) return false;
     const answer = await heladeriaAi.answerDoubt(result.duda, contextInfo);
     if (!answer || heladeriaAi.isUnknownAnswer(answer)) return false;
     userSession.errorCount = 0;
@@ -2187,13 +3007,60 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
         }
         if (hasWord(t, ['cancelar', 'cancelar pedido', 'vaciar', 'borrar'])) {
             userSession.errorCount = 0;
-            if (userSession.order) userSession.order.items = [];
-            if (Array.isArray(userSession.carrito)) userSession.carrito = [];
-            userSession.phase = PHASE.MENU_PRINCIPAL;
+            cancelOrderAndClearDelivery(userSession);
             await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
             return true;
         }
         if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, checkoutHandler.handleCartSummary)) return true;
+
+        // Último respaldo (regla fija: "en toda parte del flujo, si no
+        // entiende debe llegar a la IA"): ni las palabras clave ni la
+        // pregunta/dirección calzaron - antes de "Opción no válida", que la
+        // IA decida cuál de las 4 opciones quiso decir el cliente.
+        {
+            const choice = await heladeriaAi.classifyChoice(text, [
+                { id: 'confirmar', label: 'Confirmar el pedido' },
+                { id: 'seguir', label: 'Seguir comprando / agregar más productos' },
+                { id: 'editar', label: 'Editar el pedido' },
+                { id: 'cancelar', label: 'Cancelar el pedido' }
+            ], '¿Qué deseas hacer? 1) Confirmar 2) Seguir comprando 3) Editar el pedido');
+            if (choice === 'confirmar') {
+                userSession.errorCount = 0;
+                await checkoutHandler.handleEnterAddress(sock, jid, '', userSession, ctx, true);
+                return true;
+            }
+            if (choice === 'seguir') {
+                userSession.errorCount = 0;
+                userSession.phase = PHASE.SELECCION_OPCION;
+                await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
+                return true;
+            }
+            if (choice === 'editar') {
+                userSession.errorCount = 0;
+                await checkoutHandler.startEditCart(sock, jid, userSession, ctx);
+                return true;
+            }
+            if (choice === 'cancelar') {
+                userSession.errorCount = 0;
+                cancelOrderAndClearDelivery(userSession);
+                await say(sock, jid, '❌ Pedido cancelado. Tu carrito ha sido vaciado.\n\nEscribe *menú* para ver las opciones.', ctx);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // CHECK_DIR / CHECK_NAME / CHECK_TELEFONO (auditoría 23/9): antes NO
+    // tenían ningún caso acá, así que delegateToAI (llamado desde
+    // checkoutHandler.js#handleEnterAddress/handleEnterName/handleEnterTelefono)
+    // caía derecho en checkoutFallbackPrompt sin intentar responder ninguna
+    // duda real del cliente - el respaldo de IA que se agregó en
+    // checkoutHandler.js nunca llegaba a ejecutarse de verdad. Solo se
+    // intenta resolver una PREGUNTA (result.duda); el guardado del dato en sí
+    // sigue siendo responsabilidad exclusiva de checkoutHandler.js.
+    if (phase === PHASE.CHECK_DIR || phase === PHASE.CHECK_NAME || phase === PHASE.CHECK_TELEFONO) {
+        const reask = (s, j, u, c) => checkoutHandler.askNextMissingCheckoutField(s, j, u, c);
+        if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, reask)) return true;
         return false;
     }
 
@@ -2210,6 +3077,18 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
         }
         const reaskPago = (s, j, u, c) => say(s, j, '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.', c);
         if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, reaskPago)) return true;
+
+        const payChoice = await heladeriaAi.classifyChoice(text, [
+            { id: 'transferencia', label: 'Transferencia (Nequi, Daviplata, Bancolombia, etc.)' },
+            { id: 'efectivo', label: 'Efectivo, pago contra entrega' }
+        ], '¿Cómo vas a pagar? Transferencia o Efectivo');
+        if (payChoice) {
+            if (!userSession.order) userSession.order = {};
+            userSession.order.paymentMethod = payChoice;
+            userSession.errorCount = 0;
+            await sendLocalFinalSummary(sock, jid, userSession, ctx);
+            return true;
+        }
         return false;
     }
 
@@ -2229,6 +3108,16 @@ async function handleCheckoutFallback(sock, jid, text, userSession, ctx) {
         // handlers/checkoutHandler.js#handleFinalizeOrder (se prueba ANTES de
         // llegar aquí).
         if (await tryAnswerCheckoutQuestion(sock, jid, text, userSession, ctx, sendLocalFinalSummary)) return true;
+
+        const finalChoice = await heladeriaAi.classifyChoice(text, [
+            { id: '1', label: 'Confirmar el pedido final' },
+            { id: '2', label: 'Editar el pedido' }
+        ], '¿Confirmas el pedido final? 1) Confirmar 2) Editar');
+        if (finalChoice) {
+            userSession.errorCount = 0;
+            await checkoutHandler.handleFinalizeOrder(sock, jid, finalChoice, userSession, ctx);
+            return true;
+        }
         return false;
     }
 
@@ -2289,17 +3178,49 @@ function isHumanRequest(text) {
  * Retorna true si el mensaje era una petición humana y ya se respondió.
  * Reutilizado por routeIntent (audio), handle (flujo guiado) y
  * handleNotUnderstood (texto en cualquier fase, incluido checkout).
+ *
+ * @param {boolean} [sensitive=false] - true cuando el motivo es DATOS
+ *   SENSIBLES detectados (tarjeta/cédula/clave): el contenido del mensaje NO
+ *   se muestra en el log ni en la notificación al equipo, y la respuesta al
+ *   cliente es de seguridad. Regla: nunca procesar ni guardar esos datos.
  */
-async function handleHumanRequest(sock, jid, text, userSession, ctx, force = false) {
+async function handleHumanRequest(sock, jid, text, userSession, ctx, force = false, sensitive = false) {
     if (!force && !isHumanRequest(text)) return false;
-    logger.info(`[${jid}] -> Cliente pide atención humana: "${text}"`);
+    if (sensitive) {
+        logger.warn(`[${jid}] -> DATOS SENSIBLES detectados — escalando a humano (contenido NO se muestra ni se guarda)`);
+    } else {
+        logger.info(`[${jid}] -> Cliente pide atención humana: "${text}"`);
+    }
     userSession.phase = PHASE.WAITING_HUMAN;
     const notificationService = require('../../services/notificationService');
     try {
-        await notificationService.notifySystemAlert(sock, ctx, '💬', 'CLIENTE PIDE ATENCIÓN HUMANA',
-            `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
+        await notificationService.notifySystemAlert(sock, ctx, sensitive ? '🔒' : '💬',
+            sensitive ? 'DATOS SENSIBLES DETECTADOS' : 'CLIENTE PIDE ATENCIÓN HUMANA',
+            sensitive
+                ? `Cliente: ${jid}\nEl cliente intentó compartir datos sensibles (tarjeta/cédula/clave). NO se muestran ni se guardan.\nHora: ${new Date().toLocaleString('es-CO')}`
+                : `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
     } catch (e) { /* ignore */ }
-    await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🍦', ctx);
+    await say(sock, jid, sensitive
+        ? '🔒 Por tu seguridad, no compartas datos sensibles (números de tarjeta, claves, documentos) por este chat. Ya avisé a un asesor para que te atienda con seguridad. 🍦'
+        : '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🍦', ctx);
+    return true;
+}
+
+/**
+ * REGLA DE SEGURIDAD (pedido de Johan): si el mensaje del cliente contiene
+ * datos sensibles (número de tarjeta, cédula, clave/contraseña), se escala a
+ * un humano de inmediato vía handleHumanRequest(sensitive=true) — SIN
+ * intentar procesarlo como pedido ni guardarlo en ningún lado. Se llama en
+ * TODOS los puntos de entrada de texto/audio del flow (handle,
+ * handleNotUnderstood, routeIntent) ANTES de que el clasificador o el flujo
+ * guiado puedan tocar el mensaje.
+ *
+ * @returns {Promise<boolean>} true si se detectaron datos sensibles y ya se
+ *   escaló (el caller debe retornar sin procesar el mensaje).
+ */
+async function escalateIfSensitive(sock, jid, text, userSession, ctx) {
+    if (!heladeriaAi.detectSensitiveData(text)) return false;
+    await handleHumanRequest(sock, jid, text, userSession, ctx, true, true);
     return true;
 }
 
@@ -2310,10 +3231,38 @@ async function handleHumanRequest(sock, jid, text, userSession, ctx, force = fal
  * avanza el flujo (producto/sabores/toppings/cantidad/dirección) o responde
  * una duda sin perder progreso. SIEMPRE envía una respuesta.
  */
+/**
+ * @returns {Promise<boolean>} true si el mensaje quedó realmente resuelto
+ *   (no hace falta que el caller muestre su propio mensaje de "inválido"/
+ *   "no entendí"), false si se llegó al respaldo genérico y NO se entendió
+ *   nada. Bug real (25 sep 2026): delegateToAI() en checkoutHandler.js
+ *   asumía que CUALQUIER llamada a esta función significaba "la IA se hizo
+ *   cargo" (siempre devolvía true), así que un dato de checkout inválido que
+ *   ni siquiera era una pregunta (ej. "no" como dirección) terminaba en el
+ *   respaldo genérico de acá SIN que errorCount subiera nunca en
+ *   handleEnterAddress/Name/Telefono/PaymentMethod - se perdía el conteo de
+ *   errores real en todo el checkout. Ver test_cart_checkout_shared_escalation.js.
+ */
 async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
 
-    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return;
+    // REGLA DE SEGURIDAD: datos sensibles (tarjeta/cédula/clave) → humano de
+    // inmediato, sin procesar como pedido ni guardar. Se evalúa ANTES del
+    // clasificador híbrido para que el contenido nunca llegue a la IA ni al
+    // estado del pedido.
+    if (await escalateIfSensitive(sock, jid, text, userSession, ctx)) return true;
+
+    // Caso real: un mensaje masivo/publicitario de un tercero (ej. promo de
+    // un evento) le llegó al bot y este le respondió como si fuera un
+    // cliente real. Antes de cualquier otra cosa, si el mensaje es largo y
+    // la IA confirma que es un broadcast/spam no relacionado con el
+    // negocio, no se responde nada - ni "no entendí", ni se escala.
+    if (await heladeriaAi.isAutomatedBroadcast(text)) {
+        logger.info(`[${jid}] -> Mensaje automático/publicitario detectado, no se responde: "${String(text).slice(0, 80)}..."`);
+        return true;
+    }
+
+    if (await handleHumanRequest(sock, jid, text, userSession, ctx)) return true;
 
     // Usuario con ítems en el pedido puede volver a verlo desde cualquier fase
     // (incluido el menú tras "seguir comprando") escribiendo "carrito"/"mi pedido".
@@ -2321,13 +3270,18 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     if (hasCartItems(userSession) && CART_VIEW_REGEX.test(cartIntent)) {
         logger.info(`[${jid}] -> Ver carrito/pedido ("${text}")`);
         await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
-        return;
+        return true;
     }
 
     if (CHECKOUT_PHASES.includes(userSession.phase)) {
-        if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return;
+        if (await handleCheckoutFallback(sock, jid, text, userSession, ctx)) return true;
+        // Solo cuenta como "resuelto" si el mensaje de verdad parecía una
+        // pregunta - si no, es un dato inválido de checkout y el caller
+        // (handleEnterAddress/Name/Telefono/PaymentMethod) debe seguir su
+        // propio conteo de errores normal, no el genérico de acá.
+        const wasQuestion = checkoutHandler.looksLikeQuestion(text);
         await checkoutFallbackPrompt(sock, jid, userSession, ctx);
-        return;
+        return wasQuestion;
     }
 
     if (shouldSendMenuImages(text)) {
@@ -2347,10 +3301,11 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     const handled = await classifyOrderInput(sock, jid, text, userSession, ctx);
     if (handled) {
         userSession.errorCount = 0;
-        return;
+        return true;
     }
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     await genericGuidedError(sock, jid, userSession, ctx);
+    return false;
 }
 
 module.exports = {
@@ -2376,6 +3331,10 @@ module.exports = {
     transcribeImage,
     showWelcome,
     handleNotUnderstood,
+    escalateIfSensitive,
+    tryRemoveOrderAddition,
+    tryHandleAsMenuOrder,
+    handleEncargoPhase,
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => HELADERIA_PHASES.includes(phase),
     getPhases: () => HELADERIA_PHASES,
@@ -2388,7 +3347,53 @@ module.exports = {
         numericConfirm: true
     }),
     isWithinBusinessHours: businessHours.isWithinBusinessHours,
-    // Solo para tests: acceso directo a funciones internas sin pasar por
-    // todo el flujo guiado de sabores/toppings.
-    _internal: { afterAddToCarrito, isOutOfHoursOrderable }
+    // Acceso directo a funciones internas, sin pasar por todo el flujo guiado
+    // de sabores/toppings. Lo usan los tests y el agente IA paralelo
+    // (heladeria.agent.js, apagado por defecto): el agente decide QUÉ llamar,
+    // pero el trabajo real (precios, armado del ítem, carrito, mensajes) lo
+    // siguen haciendo estas mismas funciones - por eso se exponen en vez de
+    // reimplementarlas. Solo se agregan referencias; ningún comportamiento
+    // de este flow cambia.
+    _internal: {
+        interpretToppingAllKeyword,
+        afterAddToCarrito,
+        isOutOfHoursOrderable,
+        resolveProducts,
+        addPlainToCarrito,
+        addResolvedProducts,
+        sendPostAddOptions,
+        formatCarritoSummary,
+        handlePostAdd,
+        handleSabores,
+        handleToppings,
+        handleQuantity,
+        handleUnitsMode,
+        handlePerUnitSabores,
+        handlePerUnitToppings,
+        finishToppingsStep,
+        reshowCurrentStep,
+        buildOptionLists,
+        buildClassifierContext,
+        extractMentionedProducts,
+        findProductsByIngredient,
+        formatToppingsGrouped,
+        getCounts,
+        getProductName,
+        sendMenuImages,
+        notifyDomicilioQuery,
+        cancelOrderAndClearDelivery,
+        resetGuidedState,
+        ensureCarrito,
+        hasCartItems,
+        CATEGORIA_SABORES,
+        CATEGORIA_TOPPINGS,
+        CATEGORIA_FRESAS_CREMA,
+        FRESAS_CREMA_GENERIC_RE,
+        FRESAS_CREMA_ESPECIFICO_RE,
+        getFresasConCremaCategoria,
+        PHASES: {
+            HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY, HELADO_POST_ADD,
+            HELADO_UNITS_MODE, HELADO_PER_UNIT_SABORES, HELADO_PER_UNIT_TOPPINGS
+        }
+    }
 };
