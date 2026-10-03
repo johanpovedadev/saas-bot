@@ -1050,7 +1050,12 @@ const hooks = {
     sendPostAddOptions: (T) => I.sendPostAddOptions(T.sock, T.jid, T.ctx, T.userSession),
     sendMenu: (T) => I.sendMenuImages(T.sock, T.jid, T.ctx),
     addPlainItem: (userSession, r) => I.addPlainToCarrito(userSession, r),
-    answerQuestion: (pregunta, T) => heladeriaAi.answerDoubt(pregunta, I.buildClassifierContext(T.userSession, T.ctx)),
+    // Temperatura 0 en las llamadas de IA del agente (no solo en decideTurn):
+    // el filtro de spam decide si el bot responde, y el texto de answerDoubt
+    // vuelve al historial del turno siguiente - con la temperatura por
+    // defecto, el mismo mensaje podía tomar caminos distintos entre corridas.
+    // El flujo de reglas las sigue llamando sin opts (sin cambio).
+    answerQuestion: (pregunta, T) => heladeriaAi.answerDoubt(pregunta, I.buildClassifierContext(T.userSession, T.ctx), { deterministic: true }),
     // Fuente de verdad para las cifras de las respuestas libres: el catálogo
     // (con precios y cuántos sabores lleva cada producto) + las FAQs reales.
     answerSources(T) {
@@ -1061,7 +1066,7 @@ const hooks = {
     extractMentionedProducts: (answer, ctx) => I.extractMentionedProducts(answer, ctx),
     detectSensitive: (text) => heladeriaAi.detectSensitiveData(text),
     escalateSensitive: (sock, jid, text, userSession, ctx) => heladeriaFlow.escalateIfSensitive(sock, jid, text, userSession, ctx),
-    isBroadcast: (text) => heladeriaAi.isAutomatedBroadcast(text)
+    isBroadcast: (text) => heladeriaAi.isAutomatedBroadcast(text, { deterministic: true })
 };
 
 const texts = {

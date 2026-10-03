@@ -324,10 +324,16 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
 
 /**
  * Genera contenido con reintentos y backoff (2 intentos), estilo interpretAudioIntent.
+ * @param {Object} [opts]
+ * @param {boolean} [opts.deterministic] - temperatura 0 (la usa SOLO el agente
+ *   IA: misma entrada -> misma salida). Sin opts, la temperatura por defecto
+ *   de siempre - el flujo de reglas en producción no cambia.
  */
-async function generateWithRetry(prompt, modelName, systemInstruction) {
+async function generateWithRetry(prompt, modelName, systemInstruction, opts = {}) {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: modelName });
+    const model = genAI.getGenerativeModel(opts.deterministic
+        ? { model: modelName, generationConfig: { temperature: 0 } }
+        : { model: modelName });
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
             const parts = [];
@@ -481,7 +487,7 @@ const AUTOMATED_BROADCAST_LENGTH_THRESHOLD = 280;
  * @returns {Promise<boolean>} true si es un mensaje automatico/publicitario
  *   que no deberia recibir respuesta.
  */
-async function isAutomatedBroadcast(text) {
+async function isAutomatedBroadcast(text, opts = {}) {
     const trimmed = String(text || '').trim();
     if (trimmed.length < AUTOMATED_BROADCAST_LENGTH_THRESHOLD) return false;
     if (!hasValidKey()) return false;
@@ -489,7 +495,7 @@ async function isAutomatedBroadcast(text) {
     const systemInstruction = `Eres un clasificador. Tu unica tarea es decidir si un mensaje de WhatsApp es (a) un mensaje AUTOMATICO/MASIVO/PUBLICITARIO de un tercero no relacionado con una heladeria (ej: promocion de un evento, cadena reenviada, spam, broadcast de otro negocio), o (b) un mensaje real de un cliente (aunque sea largo, ej. describiendo un pedido grande para un evento). NO converses, NO respondas nada mas.`;
     const prompt = `Mensaje recibido:\n"""${trimmed.slice(0, 2000)}"""\n\nDevuelve EXCLUSIVAMENTE este JSON: { "esAutomatico": boolean }`;
 
-    const raw = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    const raw = await generateWithRetry(prompt, MODELS.intent, systemInstruction, opts);
     if (!raw) return false;
     try {
         const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -593,7 +599,7 @@ function matchFaq(doubt, faqs) {
  * natural. Llama a Gemini de nuevo SOLO cuando el clasificador detectó una duda,
  * para no quemar cuota en el flujo feliz.
  */
-async function answerDoubt(doubt, contextInfo = {}) {
+async function answerDoubt(doubt, contextInfo = {}, opts = {}) {
     if (!doubt) return null;
 
     // 1) Prioridad: respuesta EXACTA desde las FAQs editables del Sheet.
@@ -627,7 +633,7 @@ Duda del cliente: "${doubt}"
 
 Responde SOLO con el texto de la respuesta, sin comillas ni prefijos.`;
 
-    const answer = await generateWithRetry(prompt, MODELS.intent, systemInstruction);
+    const answer = await generateWithRetry(prompt, MODELS.intent, systemInstruction, opts);
     return answer;
 }
 
