@@ -58,6 +58,18 @@ Johan preguntó si esto debería ser "un agente" para que el pedido llegue de in
 
 **Decisión:** empezar por la opción 1 (ya especificada arriba) porque resuelve el problema real de HOY sin el costo de latencia ni la complejidad extra de un loop de herramientas. La opción 2 queda como la evolución natural una vez que la 1 esté probada y estable — ahí sí tiene sentido migrar la búsqueda/desambiguación de productos a herramientas reales de la IA. No saltar directo a la opción 2 sin haber probado la 1 primero — sería repetir el patrón de "arreglarlo todo de una" que ya lleva casi un año sin funcionar.
 
+### 🧭 REGLA (Johan, 3 oct 2026): agente inteligente, multitenant y que atienda como una persona
+
+Esta regla manda sobre cualquier decisión de implementación del agente. Origen: la dueña de Mundo Helados rechazó el bot de reglas ("si la persona tiene que leer y seguir instrucciones, no pega") y cada arreglo de una frase dejaba pasar la siguiente.
+
+1. **Entender, no parchear.** Un mensaje que el bot no entendió se resuelve mejorando la capa que ENTIENDE (el agente: prompt, herramientas, datos del catálogo), nunca agregando un regex / lista de frases / `if texto es X` para esa frase. Prohibido el ciclo "falla una frase -> parche -> falla la siguiente".
+2. **Un solo agente para todos los nichos con carrito.** El núcleo (`handlers/agent/`) sirve a cualquier negocio que venda con carrito (heladería, restaurante, panadería, comidas, tiendas...). Lo propio de un nicho (opciones del producto: sabores, toppings, tamaños, término, acompañamientos...) se describe con DATOS (catálogo + config del tenant), no con código nuevo por nicho. Un nicho nuevo no debería requerir un plugin de cientos de líneas.
+3. **Que parezca una persona atendiendo.** Respuestas naturales, cortas, cálidas, en el tono del negocio: responde lo que preguntaron "de una", confirma lo que entendió y pregunta SOLO lo que falta. Nunca menús numerados, códigos (S1/T1), "escribe el número", ni pasos que el cliente ya respondió.
+4. **Natural pero verdadero.** Lo que el cliente lee lo puede redactar la IA, pero toda cifra, precio, producto, disponibilidad o estado del pedido sale de datos reales (catálogo/carrito/resultado de herramientas) y lo verifica el núcleo antes de enviarse (grounding). Si no se puede verificar, se pregunta o se pasa a una persona.
+5. **Regresión con conversaciones reales.** Antes de entregar un cambio del agente se corre el replay de conversaciones reales (`scripts/heladeria-agent/`) con la IA real; el conteo de "no entendí", escalamientos innecesarios y pedidos mal armados no puede subir. Cada conversación mala que reporte un cliente se agrega al corpus del replay.
+
+Estado al 3 oct 2026: el núcleo y los candados (punto 4) están; `heladeria.agent.presenter.js` (reescritura por regex de textos del flujo de reglas) es TRANSITORIO para el piloto y contradice los puntos 1-3 - se reemplaza cuando la redacción de la respuesta pase a la IA con grounding y las opciones del producto pasen a configuración (ver `bot-wasap/docs/agente_carrito_nucleo_y_plugins.md`).
+
 ## 📋 Antes de tocar código compartido
 
 Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegistry.js`, `services/sessionService.js` o cualquier archivo bajo `handlers/modules/`:
