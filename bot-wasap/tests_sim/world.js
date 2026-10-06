@@ -125,10 +125,17 @@ async function createWorld({ ai = 'sim', agent = false } = {}) {
             jid, label, transcript,
             get session() { return ctx.sessions[jid]; },
             /** El cliente escribe; devuelve lo que el bot le respondió en ese turno. */
-            async say(text) {
+            async say(text, { voice = false } = {}) {
                 const before = (outbox[jid] || []).length;
-                transcript.push({ from: 'cliente', text });
-                await handler.processIncomingMessage(sock, { from: jid, text }, ctx);
+                transcript.push({ from: 'cliente', text: voice ? `🎙️ (nota de voz) ${text === null ? '[ininteligible]' : text}` : text });
+                if (voice) {
+                    // Una nota de voz entra por el camino real de media; la transcripción la simula simAi (cero tokens).
+                    if (simAi) simAi.nextTranscript = text;
+                    const msg = { downloadMedia: async () => ({ data: 'AUDIO-SIMULADO', mimetype: 'audio/ogg; codecs=opus' }) };
+                    await handler.processSocketMessage(sock, msg, { from: jid, text: '', mediaType: 'audio' }, ctx);
+                } else {
+                    await handler.processIncomingMessage(sock, { from: jid, text }, ctx);
+                }
                 const replies = (outbox[jid] || []).slice(before).map(m => (typeof m === 'string' ? m : '[imagen]'));
                 for (const r of replies) transcript.push({ from: 'bot', text: r });
                 return replies;

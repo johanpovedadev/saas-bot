@@ -31,13 +31,14 @@ class Checker {
 
     /**
      * El cliente escribe `text`; se verifica lo que el bot respondió.
-     * exp: { has: [..], hasNot: [..], phase, errorCount, min (mínimo de mensajes), silent (no debe responder) }
+     * exp: { has: [..], hasNot: [..], phase, errorCount, min (mínimo de mensajes), silent (no debe responder),
+     *        voice (el cliente manda una nota de voz que dice `text`; null = ininteligible) }
      */
     async say(c, text, exp = {}) {
         this.steps++;
-        const replies = await c.say(text);
+        const replies = await c.say(text, { voice: !!exp.voice });
         const all = replies.join('\n');
-        const where = `turno ${this.steps} ("${text}")`;
+        const where = `turno ${this.steps} (${exp.voice ? '🎙️ ' : ''}"${text}")`;
         const detail = () => `respuesta: ${all.slice(0, 400).replace(/\n/g, ' / ') || '(silencio)'}`;
         if (exp.silent) this.ok(replies.length === 0, `${where}: el bot debía quedarse callado`, detail());
         else this.ok(replies.length >= (exp.min || 1), `${where}: el bot no respondió nada`, detail());

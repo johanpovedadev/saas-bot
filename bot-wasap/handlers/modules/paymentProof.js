@@ -1,18 +1,19 @@
 'use strict';
 
 /**
- * @fileoverview Política de multimedia de un negocio que NO interpreta audios ni fotos con IA.
+ * @fileoverview Política de multimedia de un negocio que atiende por voz pero NO interpreta fotos.
  *
- * Decisión de Johan (6 oct 2026): el bot de la heladería no entiende audios ni imágenes. Lo único que importa de
- * una imagen es el COMPROBANTE DE PAGO, y un bot no puede validarlo (una captura es falsificable): lo verifica
- * la dueña en la app de su banco. Por eso:
+ * Decisión de Johan (6 oct 2026): de una imagen solo importa el COMPROBANTE DE PAGO, y un bot no puede validarlo
+ * (una captura es falsificable): lo verifica la dueña en la app de su banco. Los audios SÍ se atienden (7 oct):
+ * se transcriben y el texto sigue el camino normal, igual que si el cliente lo hubiera escrito.
  *
- *   - audio  → se ignora en silencio (ni IA, ni respuesta).
+ *   - audio  → se transcribe con el modelo más barato y el texto entra al flujo/agente como un mensaje escrito.
+ *              Si no se entiende, se le pide al cliente que lo escriba.
  *   - imagen → una sola llamada barata de IA decide si es un comprobante de pago. Si lo es, se reenvía a la dueña
  *              (y a quien atiende los pedidos) con los datos del pedido y al cliente se le avisa que se está
  *              verificando. Si no lo es, no se responde nada.
  *
- * Costo en IA: 0 llamadas con audios, 1 llamada (modelo económico) por imagen.
+ * Costo en IA: 1 llamada económica por audio (transcripción) y 1 por imagen (¿es un comprobante?).
  */
 
 const { logger } = require('../../utils/logger');
@@ -78,6 +79,22 @@ function buildCaption(jid, userSession, context, customerCaption, monto) {
     return lines.join('\n');
 }
 
+/** Cuando no se entiende el audio no se adivina: se le pide al cliente que lo escriba. */
+const VOICE_NOT_UNDERSTOOD = '🎙️ No pude entender tu audio. ¿Me lo escribes por favor? 🙏';
+
+async function handleVoiceNote(sock, jid, media, ctx, deps) {
+    const transcribe = deps.transcribe || require('../../services/heladeriaAi').transcribeAudio;
+    let file = null;
+    try { file = await media.download(); } catch (e) { logger.warn(`[${jid}] No se pudo descargar el audio: ${e.message}`); }
+    const text = file && file.data ? await transcribe(file.data, file.mimetype || 'audio/ogg; codecs=opus') : null;
+    if (!text || !String(text).trim()) {
+        await say(sock, jid, VOICE_NOT_UNDERSTOOD, ctx);
+        return undefined;
+    }
+    logger.info(`[${jid}] 🎙️ Audio transcrito: "${String(text).slice(0, 80)}"`);
+    return { text: String(text).trim() };
+}
+
 /**
  * Punto de entrada que el handler invoca para audio/imagen cuando el flow del negocio expone `handleMedia`.
  * @param {Object} media
@@ -86,12 +103,12 @@ function buildCaption(jid, userSession, context, customerCaption, monto) {
  * @param {string} [media.caption] pie de foto
  * @param {Object} [deps] inyectable para pruebas
  * @param {(data:string, mime:string) => Promise<{isPaymentProof:boolean, monto:number|null}|null>} [deps.classify]
+ * @param {(data:string, mime:string) => Promise<string|null>} [deps.transcribe]
+ * @returns {Promise<{text: string}|undefined>} con un audio entendido devuelve el texto para que el handler lo
+ *   procese como mensaje escrito; en cualquier otro caso no devuelve nada.
  */
 async function handleMedia(sock, jid, media, userSession, ctx, deps = {}) {
-    if (media.type === 'audio') {
-        logger.info(`[${jid}] 🎙️ Audio ignorado (este negocio no interpreta audios)`);
-        return;
-    }
+    if (media.type === 'audio') return handleVoiceNote(sock, jid, media, ctx, deps);
 
     const classify = deps.classify || require('../../services/heladeriaAi').classifyPaymentProof;
     const context = describeOrderContext(userSession, ctx, jid);
@@ -136,4 +153,4 @@ async function handleMedia(sock, jid, media, userSession, ctx, deps = {}) {
     if (delivered > 0) await say(sock, jid, CUSTOMER_ACK, ctx);
 }
 
-module.exports = { handleMedia, describeOrderContext, proofRecipients, buildCaption, CUSTOMER_ACK, RECENT_ORDER_WINDOW_MS };
+module.exports = { handleMedia, VOICE_NOT_UNDERSTOOD, describeOrderContext, proofRecipients, buildCaption, CUSTOMER_ACK, RECENT_ORDER_WINDOW_MS };

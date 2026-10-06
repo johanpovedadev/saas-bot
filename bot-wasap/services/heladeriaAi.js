@@ -239,7 +239,8 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
         `\n\nCONTEXTO DE LA CONVERSACIÓN (lo último que el bot le dijo al usuario): "${lastBotReply}" (fase actual del pedido: ${currentPhase}). El usuario envió un mensaje de voz JUSTO DESPUÉS de eso. Primero transcríbelo EXACTAMENTE al español (incluye cantidades y nombres de productos tal cual) en el campo "transcription". Luego clasifica la intención con las reglas de intents indicadas arriba, teniendo en cuenta que el audio es una RESPUESTA a lo que el bot preguntó. Devuelve EXCLUSIVAMENTE un JSON válido con: intent, products (códigos y nombres exactos del menú si aplica), transcription y response. No agregues texto antes ni después del JSON.`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
-    const candidateModels = [MODELS.audio, MODELS.audioFallback];
+    // Primero el modelo más barato (una transcripción no necesita más); el de audio solo si el primero falla.
+    const candidateModels = [MODELS.audioFallback, MODELS.audio];
 
     for (let attempt = 1; attempt <= AUDIO_MAX_ATTEMPTS; attempt++) {
         const modelName = candidateModels[attempt === 1 ? 0 : 1];

@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Multimedia de la heladería: los audios se ignoran y de las imágenes solo importa el comprobante de pago, que se
+ * Multimedia de la heladería: los audios se transcriben (y siguen como texto) y de las imágenes solo importa el comprobante de pago, que se
  * reenvía a la dueña para que lo verifique en la app del banco (el bot no valida pagos). Sin IA real: el
  * clasificador se inyecta.
  */
@@ -43,10 +43,23 @@ const notProof = async () => ({ isPaymentProof: false, monto: null });
 (async () => {
     setAdmins([DUENA], [PEDIDOS]);
 
-    // 1) Audio: silencio total, ni siquiera se consulta la IA.
-    let sock = fakeSock(); let aiCalls = 0;
-    await paymentProof.handleMedia(sock, CLIENTE, { type: 'audio', download: async () => { aiCalls++; return null; } }, conPedido(), {}, { classify: async () => { aiCalls++; return null; } });
-    check(sock.sent.length === 0 && aiCalls === 0, 'audio: no responde nada y no gasta IA ni descarga');
+    // 1) Audio: se transcribe y el texto vuelve al handler para seguir como un mensaje escrito.
+    let sock = fakeSock(); let calls = { classify: 0, transcribe: 0 };
+    const audio = (over = {}) => ({ type: 'audio', download: async () => ({ data: 'OGG', mimetype: 'audio/ogg; codecs=opus' }), ...over });
+    let out = await paymentProof.handleMedia(sock, CLIENTE, audio(), conPedido(), {}, {
+        transcribe: async (data, mime) => { calls.transcribe++; return data === 'OGG' && /ogg/.test(mime) ? 'quiero un cono de fresa' : null; },
+        classify: async () => { calls.classify++; return null; }
+    });
+    check(out && out.text === 'quiero un cono de fresa' && sock.sent.length === 0, 'audio: devuelve el texto transcrito (el handler lo procesa como escrito) y no responde por su cuenta');
+    check(calls.transcribe === 1 && calls.classify === 0, 'audio: una sola llamada de transcripción y nada de clasificación de comprobantes');
+
+    // 1b) Audio que no se entiende (o sin descarga): se pide escribirlo, sin adivinar.
+    sock = fakeSock();
+    out = await paymentProof.handleMedia(sock, CLIENTE, audio(), conPedido(), {}, { transcribe: async () => null });
+    check(out === undefined && sock.sent.length === 1 && sock.sent[0].content === paymentProof.VOICE_NOT_UNDERSTOOD, 'audio ininteligible: se le pide al cliente que lo escriba');
+    sock = fakeSock();
+    out = await paymentProof.handleMedia(sock, CLIENTE, audio({ download: async () => null }), conPedido(), {}, { transcribe: async () => { throw new Error('no debía llamarse'); } });
+    check(out === undefined && sock.sent.length === 1, 'audio sin descarga: se le pide escribirlo y no se llama a la IA');
 
     // 2) Comprobante con pedido en curso: se reenvía a la dueña Y a quien atiende pedidos, y el cliente recibe aviso.
     sock = fakeSock();

@@ -1345,11 +1345,15 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
         // imágenes sin pasar por la transcripción general (heladería: audio ignorado, imagen solo si es comprobante).
         if (currentFlow && typeof currentFlow.handleMedia === 'function') {
             try {
-                await currentFlow.handleMedia(sock, messageData.from, {
+                const outcome = await currentFlow.handleMedia(sock, messageData.from, {
                     type: messageData.mediaType,
                     caption: messageData.text || '',
                     download: () => downloadMediaWithRetry(msg, messageData.from)
                 }, userSession, ctx);
+                // Un audio entendido sigue como si el cliente lo hubiera escrito (seguridad, agente, flujo...).
+                if (outcome && outcome.text) {
+                    return processSocketMessage(sock, msg, { ...messageData, text: outcome.text, mediaType: null }, ctx);
+                }
             } catch (mediaPolicyErr) {
                 logger.error(`[${messageData.from}] Error en la política de multimedia: ${mediaPolicyErr.message}`);
             }
@@ -1515,6 +1519,7 @@ const unmuteChat = handlerUtils.unmuteChat;
 module.exports = {
     // Main processors
     processIncomingMessage,
+    processSocketMessage,
     setupSocketHandlers,
     
     // Session management

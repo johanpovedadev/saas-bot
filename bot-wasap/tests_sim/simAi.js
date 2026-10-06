@@ -219,7 +219,9 @@ function create(catalog, faqs = []) {
 
         async isAutomatedBroadcast() { return false; },
         async interpretAudioIntent() { return null; },
-        async transcribeAudio() { return null; },
+        /** Lo que "dice" el próximo audio del cliente (null = ininteligible); lo fija world.customer().say(texto, { voice: true }). */
+        nextTranscript: null,
+        async transcribeAudio() { return api.nextTranscript; },
         async interpretImage() { return null; }
     };
     return api;
