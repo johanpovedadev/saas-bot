@@ -1,5 +1,8 @@
 'use strict';
 /**
+ * @usa-ia-real: depende de Gemini de verdad (no de simulaciones). No corre en el set por defecto para no gastar cuota;
+ * se corre a propósito con: node scripts/run-tests.js --with-ai
+ *
  * Bug real (26 sep 2026, reporte de Johan en vivo): pidió "Volcán de
  * Gomitas", eligió 3 sabores (Arequipe x3) y una adición (queso), y LUEGO
  * dijo que quería 2 unidades. Al elegir "cada una diferente", el bot le

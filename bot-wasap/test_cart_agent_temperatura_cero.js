@@ -21,6 +21,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'agente-temp0-'));
 Object.assign(process.env, {
     BUSINESS_KEY: 'heladeria',
     GEMINI_API_KEY: 'clave-de-prueba-solo-para-este-test-1234567890',
+    // El SDK de Gemini está simulado en este test (no sale nada a la red): se
+    // levanta el interruptor global que pone scripts/run-tests.js para que los
+    // clientes de IA lleguen hasta el SDK simulado y se pueda medir la temperatura.
+    LION_DISABLE_AI: '0',
     CONVERSATION_LOG_PATH: path.join(TMP, 'conv.log'),
     WAITING_HUMAN_STORE_PATH: path.join(TMP, 'wh.json'),
     DAILY_ACTIVITY_STORE_PATH: path.join(TMP, 'da.json'),

@@ -19,6 +19,8 @@
  * Uso: node test_heladeria_recogida_mid_flow_y_duda_no_pierde_datos.js
  */
 process.env.BUSINESS_KEY = 'heladeria';
+// La IA está SIMULADA en este test (nada sale a la red): se levanta el interruptor global que pone scripts/run-tests.js.
+process.env.LION_DISABLE_AI = '0';
 
 const botCore = require('./services/bot_core');
 const handler = require('./handlers/handler.js');

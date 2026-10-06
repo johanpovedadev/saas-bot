@@ -1,5 +1,8 @@
 'use strict';
 /**
+ * @usa-ia-real: depende de Gemini de verdad (no de simulaciones). No corre en el set por defecto para no gastar cuota;
+ * se corre a propósito con: node scripts/run-tests.js --with-ai
+ *
  * Bug real (chat en vivo de Johan, 23/9): pidió "Copa Car Toyota con adición
  * de queso" - el bot anotó el queso correctamente (fix anterior). Al terminar
  * de elegir los 3 sabores, el bot pregunta de nuevo por toppings; Johan

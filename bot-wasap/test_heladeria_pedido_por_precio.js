@@ -1,5 +1,8 @@
 'use strict';
 /**
+ * @usa-ia-real: depende de Gemini de verdad (no de simulaciones). No corre en el set por defecto para no gastar cuota;
+ * se corre a propósito con: node scripts/run-tests.js --with-ai
+ *
  * Bug real (chat real de una clienta, mayo 2026): pidió "Una de 18 y una de
  * 16" refiriéndose al PRECIO de dos productos del menú, no al nombre. El
  * clasificador (heladeriaAi.interpretOrderText) nunca recibía el precio de

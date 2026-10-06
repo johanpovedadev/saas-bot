@@ -1,5 +1,8 @@
 'use strict';
 /**
+ * @usa-ia-real: depende de Gemini de verdad (no de simulaciones). No corre en el set por defecto para no gastar cuota;
+ * se corre a propósito con: node scripts/run-tests.js --with-ai
+ *
  * Corrección 2026-09-02 (Johan): la regla vieja bloqueaba POR COMPLETO pedir
  * cualquier producto fuera de horario salvo cajas/litros de helado — un
  * cliente real se quedó sin poder pedir la ensalada de frutas aunque

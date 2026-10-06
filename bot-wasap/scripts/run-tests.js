@@ -17,6 +17,10 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const SKIP_MARKER = 'no es para correr';
+const AI_MARKER = '@usa-ia-real';
+// --with-ai: corre SOLO los tests que dependen de Gemini de verdad (con la clave real y gastando cuota).
+// Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
+const WITH_AI = process.argv.includes('--with-ai');
 
 function findTestFiles() {
     const rootFiles = fs.readdirSync(ROOT)
@@ -45,7 +49,8 @@ function isSkipped(file) {
 }
 
 const allFiles = findTestFiles();
-const toRun = allFiles.filter(f => !isSkipped(f));
+const usesRealAi = (f) => { try { return fs.readFileSync(f, 'utf8').includes(AI_MARKER); } catch (e) { return false; } };
+const toRun = allFiles.filter(f => !isSkipped(f) && (WITH_AI ? usesRealAi(f) : !usesRealAi(f)));
 const skipped = allFiles.filter(isSkipped);
 
 console.log(`Encontrados ${allFiles.length} archivos de test (${skipped.length} excluidos por marcador "${SKIP_MARKER}")\n`);
@@ -59,7 +64,13 @@ for (const file of toRun) {
     const result = spawnSync(process.execPath, [file], {
         cwd: ROOT,
         timeout: 120000,
-        encoding: 'utf8'
+        encoding: 'utf8',
+        // Las pruebas NUNCA gastan cuota real de Gemini (3 oct 2026: se agotó la
+        // cuota de pruebas de Johan). LION_DISABLE_AI=1 corta toda llamada en
+        // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
+        // existe en el entorno) hace que cualquier otro cliente de IA que se
+        // salte la guarda falle con "clave inválida" en vez de consumir cuota.
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0' }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');

@@ -1,5 +1,8 @@
 'use strict';
 /**
+ * @usa-ia-real: depende de Gemini de verdad (no de simulaciones). No corre en el set por defecto para no gastar cuota;
+ * se corre a propósito con: node scripts/run-tests.js --with-ai
+ *
  * Auditoría profunda pedida por Johan ("pruebas unitarias y generales de
  * esta parte") sobre los 2 últimos arreglos reales:
  *  1) startEachCustomization (heladeria.flow.js): la unidad 1 hereda lo ya

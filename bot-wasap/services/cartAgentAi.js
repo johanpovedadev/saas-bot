@@ -22,6 +22,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
+const geminiGuard = require('./geminiGuard');
 
 // Misma familia/modelo que heladeriaAi.MODELS.intent (clasificador de texto).
 // CART_AGENT_* es el nombre genérico; HELADERIA_AGENT_* se sigue aceptando
@@ -31,6 +32,8 @@ const AGENT_TIMEOUT_MS = Number(process.env.CART_AGENT_TIMEOUT_MS || process.env
 const AGENT_MAX_ATTEMPTS = 2;
 
 function hasValidKey() {
+    // Pruebas (LION_DISABLE_AI=1) o cuota diaria agotada: no se llama a Gemini (ver geminiGuard).
+    if (geminiGuard.isBlocked()) return false;
     const key = process.env.GEMINI_API_KEY;
     return !!key && !key.includes('TU_') && !key.includes('AQUI') && key.length > 20;
 }
@@ -73,6 +76,7 @@ async function decideTurn({ systemInstruction, userContent, tools }) {
         const t0 = Date.now();
         let timer = null;
         try {
+            geminiGuard.noteCall();
             const result = await Promise.race([
                 model.generateContent(userContent),
                 new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timeout')), AGENT_TIMEOUT_MS); })
@@ -93,6 +97,7 @@ async function decideTurn({ systemInstruction, userContent, tools }) {
         } catch (e) {
             clearTimeout(timer);
             logger.warn(`cartAgentAi intento ${attempt}: ${e.message}`);
+            geminiGuard.noteError(e);
             if (attempt < AGENT_MAX_ATTEMPTS && !isDailyQuotaError(e) && isTransient(e)) {
                 await new Promise(r => setTimeout(r, 1500));
                 continue;

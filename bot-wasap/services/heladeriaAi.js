@@ -19,6 +19,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const envConfig = require('../config/env.loader');
 const editableConfig = require('./editableConfig');
+const geminiGuard = require('./geminiGuard');
 
 const MODELS = {
     intent: 'models/gemini-3.1-flash-lite',
@@ -37,6 +38,8 @@ const AUDIO_MAX_ATTEMPTS = 2;
 const AUDIO_RETRY_DELAY_CAP_MS = 8000;
 
 function hasValidKey() {
+    // Pruebas (LION_DISABLE_AI=1) o cuota diaria agotada: no se llama a Gemini (ver geminiGuard).
+    if (geminiGuard.isBlocked()) return false;
     const key = process.env.GEMINI_API_KEY;
     return !!key && !key.includes('TU_') && !key.includes('AQUI') && key.length > 20;
 }
@@ -262,6 +265,7 @@ async function interpretAudioIntent(audioBase64, userSession, mimeType = 'audio/
             logger.info(`heladeriaAi interpretAudioIntent (${modelName}): intent=${parsed.intent}, transcripción="${(parsed.transcription || '').substring(0, 120)}"`);
             return parsed;
         } catch (e) {
+            geminiGuard.noteError(e);
             const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
             logger.warn(`heladeriaAi interpretAudioIntent intento ${attempt} (${modelName}): ${e.message}`);
             if (attempt < AUDIO_MAX_ATTEMPTS && !isDailyQuotaError(e) && saturated) {
@@ -309,6 +313,7 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
             logger.info(`heladeriaAi transcribeAudio (${modelName}): "${text.substring(0, 80)}"`);
             return text;
         } catch (e) {
+            geminiGuard.noteError(e);
             const saturated = /503|Timeout|429|high demand|Service Unavailable/i.test(String(e.message || ''));
             logger.warn(`heladeriaAi transcribeAudio intento ${attempt} (${modelName}): ${e.message}`);
             if (attempt < AUDIO_MAX_ATTEMPTS && !isDailyQuotaError(e) && saturated) {
@@ -339,6 +344,7 @@ async function generateWithRetry(prompt, modelName, systemInstruction, opts = {}
             const parts = [];
             if (systemInstruction) parts.push(systemInstruction);
             parts.push(prompt);
+            geminiGuard.noteCall();
             const result = await Promise.race([
                 model.generateContent(parts),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
@@ -349,6 +355,7 @@ async function generateWithRetry(prompt, modelName, systemInstruction, opts = {}
             return text;
         } catch (e) {
             logger.warn(`heladeriaAi generateWithRetry intento ${attempt}: ${e.message}`);
+            geminiGuard.noteError(e);
             if (attempt < 2 && !isDailyQuotaError(e)) {
                 const delay = Math.min(get429DelayMs(e) || 1000, 15000);
                 await new Promise(r => setTimeout(r, delay));
