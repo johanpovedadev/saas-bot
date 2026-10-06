@@ -1,10 +1,12 @@
 name: CI
 
+# Gitflow: todo PR corre la CI (sea contra develop, release/*, main o apilado sobre otra rama feature/*), y las
+# ramas de integración la corren también al recibir un push. Las ramas de trabajo se validan por su PR (así no
+# se ejecuta dos veces el mismo commit).
 on:
   pull_request:
-    branches: [ main, master ]
   push:
-    branches: [ feature/**, main, master ]
+    branches: [ main, develop, 'release/**', 'hotfix/**' ]
 
 jobs:
   test-and-scan:
