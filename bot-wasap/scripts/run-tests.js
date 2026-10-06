@@ -11,7 +11,8 @@
  * pensado para correr a mano antes de una demo) escribiendo literalmente la
  * frase "no es para correr en cada commit" en su comentario de cabecera.
  */
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
@@ -65,6 +66,18 @@ const skipped = allFiles.filter(isSkipped);
 
 console.log(`Encontrados ${allFiles.length} archivos de test (${skipped.length} excluidos por marcador "${SKIP_MARKER}")\n`);
 
+// Backend falso (scripts/fake-backend.js): las pruebas no dependen de que haya un Django en localhost:8000. Se levanta
+// como proceso aparte porque spawnSync bloquea este (no podría atender las peticiones de las pruebas).
+function startFakeBackend() {
+    const portFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fake-backend-')), 'port');
+    const child = spawn(process.execPath, [path.join(__dirname, 'fake-backend.js'), portFile], { stdio: 'ignore' });
+    const sleeper = new Int32Array(new SharedArrayBuffer(4));
+    for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) Atomics.wait(sleeper, 0, 0, 50);
+    if (!fs.existsSync(portFile)) { child.kill(); throw new Error('El backend falso de pruebas no arrancó'); }
+    return { child, apiBase: `http://127.0.0.1:${fs.readFileSync(portFile, 'utf8')}/api` };
+}
+const fakeBackend = WITH_AI ? null : startFakeBackend();
+
 let passed = 0;
 const failedFiles = [];
 
@@ -80,7 +93,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');
@@ -102,4 +115,5 @@ if (failedFiles.length > 0) {
 }
 console.log('='.repeat(60));
 
+if (fakeBackend) fakeBackend.child.kill();
 process.exit(failedFiles.length > 0 ? 1 : 0);
