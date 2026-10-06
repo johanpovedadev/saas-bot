@@ -4,7 +4,7 @@
  *
  * Antecedentes: el 3 oct 2026 las pruebas agotaron la cuota diaria y el 30 sept 2026 una sola corrida gastó ~7.500
  * llamadas (≈85 % del gasto de 28 días). Esta prueba demuestra, con procesos hijos reales y un `fetch` espía, que:
- *   A) un script de prueba NO llega a la red aunque tenga una clave real-looking,
+ *   A) un script de prueba (test_*.js, *.test.js, tests_sim/) NO llega a la red aunque tenga una clave real-looking,
  *   B) solo ALLOW_REAL_AI=1 lo habilita (decisión explícita),
  *   C) un proceso que entra en bucle se corta solo en el tope diario (AI_DAILY_MAX),
  *   D) NODE_ENV=test también bloquea,
@@ -44,6 +44,7 @@ let childSeq = 0;
 
 function runChild(fileName, env = {}) {
     const file = path.join(tmp, fileName);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, CHILD);
     // Un negocio distinto por hijo: el contador del día se guarda en logs/ai-usage-<negocio>.json y no debe pasar de uno a otro.
     const cleanEnv = { ...process.env, LOG_LEVEL: 'fatal', BUSINESS_KEY: `${BUSINESS_PREFIX}_${childSeq++}` };
@@ -60,6 +61,10 @@ try {
 
     r = runChild('algo.test.js');
     check(r.out.every((o) => o === 'GEMINI_BLOQUEADO') && r.fetchCalls === 0, 'A) igual para los archivos *.test.js');
+
+    // A) El simulador de conversaciones (tests_sim/) también cuenta como prueba aunque su script no se llame test_*.
+    r = runChild(path.join('tests_sim', 'run.js'));
+    check(r.out.every((o) => o === 'GEMINI_BLOQUEADO') && r.fetchCalls === 0, 'A) igual para los scripts del simulador (tests_sim/)');
 
     // B) Con ALLOW_REAL_AI=1 sí pasa: es la forma de gastar tokens a propósito.
     r = runChild('test_hijo_b.js', { ALLOW_REAL_AI: '1' });

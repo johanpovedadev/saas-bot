@@ -58,7 +58,7 @@ function isDisabledByEnv() {
 /** ¿Este proceso es una prueba? Por el script principal o por NODE_ENV, no por una bandera que se pueda olvidar. */
 function isTestProcess() {
     const main = (require.main && require.main.filename) || '';
-    return process.env.NODE_ENV === 'test' || /(^|[\\/])test_[^\\/]*\.js$|\.test\.js$/.test(main);
+    return process.env.NODE_ENV === 'test' || /(^|[\\/])test_[^\\/]*\.js$|\.test\.js$|[\\/]tests_sim[\\/]/.test(main);
 }
 
 function realAiAllowedInTests() {
