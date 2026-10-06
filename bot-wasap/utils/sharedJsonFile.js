@@ -33,8 +33,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const LOCK_RETRY_MS = 10;
-const LOCK_TIMEOUT_MS = 3000;
+const LOCK_RETRY_MS = 3;
+const LOCK_TIMEOUT_MS = 8000;
 const LOCK_STALE_MS = 10000;
 const RENAME_RETRIES = 20;
 
@@ -111,6 +111,19 @@ function isPidAlive(pid) {
     try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// Windows no deja borrar un archivo que otro proceso tiene abierto (por ejemplo
+// uno que lo está leyendo para ver quién es el dueño): unlink da EPERM/EBUSY.
+// Si ese error se tragara, el candado quedaría puesto hasta vencer (LOCK_STALE_MS)
+// y los demás procesos acabarían escribiendo sin candado. Se reintenta.
+function releaseLock(lockPath) {
+    for (let i = 0; i < RENAME_RETRIES * 5; i++) {
+        try { fs.unlinkSync(lockPath); return; } catch (e) {
+            if (e.code === 'ENOENT') return;
+            sleepSync(5);
+        }
+    }
+}
+
 // Reentrante por proceso: una operación con candado que llama a otra del mismo
 // store no se bloquea a sí misma.
 const heldLocks = new Map(); // lockPath -> depth
@@ -124,17 +137,33 @@ function acquire(lockPath) {
             fs.closeSync(fd);
             return true;
         } catch (e) {
-            if (e.code !== 'EEXIST') throw e;
+            // Windows: abrir con 'wx' un candado que otro proceso está borrando
+            // en ese instante da EPERM/EACCES/EBUSY, no EEXIST - es lo mismo:
+            // el candado está tomado, se reintenta.
+            if (!['EEXIST', 'EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e;
             try {
                 // Dueño muerto (proceso que se cayó con el candado tomado): se
                 // libera de una, sin hacer esperar a todos los demás bots.
-                const holderPid = parseInt(String(fs.readFileSync(lockPath, 'utf-8')).split(' ')[0], 10);
-                if (holderPid && holderPid !== process.pid && !isPidAlive(holderPid)) { fs.unlinkSync(lockPath); continue; }
+                const seen = String(fs.readFileSync(lockPath, 'utf-8'));
+                const holderPid = parseInt(seen.split(' ')[0], 10);
+                if (holderPid && holderPid !== process.pid && !isPidAlive(holderPid)) {
+                    // Releer antes de borrar: si el dueño que vimos ya soltó el
+                    // candado y otro proceso tomó uno nuevo, ese NO se borra
+                    // (borrarlo dejaría a dos procesos escribiendo a la vez).
+                    if (String(fs.readFileSync(lockPath, 'utf-8')) === seen) { fs.unlinkSync(lockPath); }
+                    continue;
+                }
                 const age = Date.now() - fs.statSync(lockPath).mtimeMs;
                 if (age > LOCK_STALE_MS) { fs.unlinkSync(lockPath); continue; }
-            } catch (_) { continue; } // lo soltaron justo ahora
+            } catch (_) {
+                // Lo soltaron justo ahora (o Windows aún no deja leerlo): reintento
+                // casi inmediato, pero sin girar en vacío ni saltarse el plazo.
+                if (Date.now() > deadline) return false;
+                sleepSync(1);
+                continue;
+            }
             if (Date.now() > deadline) return false;
-            sleepSync(LOCK_RETRY_MS);
+            sleepSync(LOCK_RETRY_MS + Math.floor(Math.random() * LOCK_RETRY_MS));
         }
     }
 }
@@ -159,7 +188,13 @@ function withFileLock(filePath, fn) {
         return fn();
     } finally {
         heldLocks.delete(lockPath);
-        if (got) { try { fs.unlinkSync(lockPath); } catch (_) { /* ignore */ } }
+        if (got) {
+            releaseLock(lockPath);
+            // Cede el turno: sin esto el proceso que acaba de soltar vuelve a tomar el
+            // candado antes que los que esperan (inanición: esperas de varios segundos
+            // que acaban en LOCK_TIMEOUT_MS y escritura sin candado).
+            sleepSync(1);
+        }
     }
 }
 
