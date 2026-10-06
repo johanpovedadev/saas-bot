@@ -43,6 +43,7 @@ const parserHandler = require('./modules/parser.handler');
 const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
+const cartInfoQuestions = require('./modules/cartInfoQuestions');
 const { say } = require('./modules/handler.utils');
 const { sendTypingIndicator, loadAllProductsCache } = require('../services/bot_core');
 const axios = require('axios');
@@ -557,6 +558,17 @@ async function processIncomingMessage(sock, messageData, ctx) {
                 await checkGlobalFrustration(sock, jid, text, userSession, ctx);
                 return;
             }
+        }
+
+        // Preguntas informativas EN CUALQUIER fase ("¿qué llevo?", "¿cuánto va?",
+        // "¿cuánto cuesta el cono?", "¿qué opciones hay?"): se responden con los
+        // datos reales (carrito y catálogo) y se retoma la pregunta pendiente.
+        // Va ANTES de la captura de entrega para que una pregunta nunca se
+        // guarde como si fuera la dirección (regla de Johan, 3 oct 2026).
+        // Solo actúa en tenants que implementan getInfoCatalog; si el mensaje
+        // no es solo una pregunta de este tipo devuelve false y todo sigue igual.
+        if (await cartInfoQuestions.tryAnswerInfoQuestion(sock, jid, text, userSession, ctx, say)) {
+            return;
         }
 
         // Captura de campos de entrega (dirección/teléfono/pago) EN CUALQUIER

@@ -457,6 +457,12 @@ async function handleEncargo(sock, jid, text, userSession, ctx) {
             return 'menu_order';
         }
 
+        // Descripción libre de un encargo ("helado para una fiesta de 20 personas"): a una persona, sin repetir el formato.
+        const freeTextFlow = flowRegistry.getTenantFlowWithCapability('handleEncargoFreeText');
+        if (freeTextFlow && await freeTextFlow.handleEncargoFreeText(sock, jid, text, userSession, ctx)) {
+            return 'human';
+        }
+
         // No se pudo parsear ni resolver como pedido normal, mostrar instrucciones
         await say(sock, jid,
             `📦 *Pedidos por Encargo*\n\n` +

@@ -1692,6 +1692,22 @@ async function tryHandleAsMenuOrder(sock, jid, text, userSession, ctx) {
 }
 
 /**
+ * El bot mismo invita, en la opción de encargos, a "simplemente dinos qué necesitas". Una descripción con
+ * sustancia (varias palabras y algún dato: cantidad, evento, fecha) es un encargo real: pasa DE INMEDIATO a una
+ * persona con el detalle y el enlace al chat, en vez de repetirle un formato rígido y escalar recién al segundo
+ * intento. Lo llama reservations.handler antes de mostrar las instrucciones. Devuelve true si lo atendió.
+ */
+async function handleEncargoFreeText(sock, jid, text, userSession, ctx) {
+    const palabras = String(text || '').trim().split(/\s+/).filter(Boolean);
+    const parecePedido = palabras.length >= 4 && /\d|ni[ñn]os|personas|evento|fiesta|cumplea|litro|caja|bautizo|boda|reuni[oó]n|s[aá]bado|domingo|viernes|ma[ñn]ana|semana/i.test(text);
+    if (!parecePedido) return false;
+    userSession.errorCount = 0;
+    await say(sock, jid, '💛 ¡Anotado! Le pasé tu solicitud a una persona del equipo para que te confirme disponibilidad y precio. Te escribe en un momento.', ctx);
+    await handleHumanRequest(sock, jid, text, userSession, ctx, true);
+    return true;
+}
+
+/**
  * Fase ENCARGO de heladería (handler.js la delega acá vía la capacidad
  * handleEncargoPhase). Envuelve reservationsHandler.handleEncargo SIN cambiar
  * lo que hace - solo cuenta los turnos en que no entendió nada.
@@ -3303,9 +3319,92 @@ async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
         userSession.errorCount = 0;
         return true;
     }
+    // Respaldo SIN IA: el menú principal dice "también puedes escribir el nombre de un producto". Si la IA no
+    // está disponible (cuota agotada, caída) o no lo entendió, un nombre del menú ("Cono Sencillo", "2 copa
+    // gusanito") se resuelve igual contra el catálogo real, en vez de "No entendí" y, al segundo intento, una persona.
+    if (!userSession.heladoFlow && [PHASE.SELECCION_OPCION, PHASE.MENU_PRINCIPAL, PHASE.HELADO_POST_ADD].includes(userSession.phase)
+        && await tryHandleAsMenuOrder(sock, jid, text, userSession, ctx)) {
+        userSession.errorCount = 0;
+        return true;
+    }
     userSession.errorCount = (userSession.errorCount || 0) + 1;
     await genericGuidedError(sock, jid, userSession, ctx);
     return false;
+}
+
+/** Productos que se muestran en el menú de texto: todo menos sabores y toppings (no se venden sueltos). */
+function getMenuProducts(ctx) {
+    const cat = (p) => String(p.Categoria || '').toLowerCase();
+    return getProducts(ctx).filter(p => cat(p) !== CATEGORIA_SABORES.toLowerCase() && cat(p) !== CATEGORIA_TOPPINGS.toLowerCase());
+}
+
+/**
+ * Dirección y horario REALES del negocio, tomados de las preguntas frecuentes que edita la dueña.
+ * Devuelve null si no están (entonces se usa la configuración técnica, sin valores de relleno).
+ */
+function getLocationInfo(ctx) {
+    const faqs = editableConfig.getEditableFaqs(ctx) || [];
+    const norm = (s) => stripAccents(String(s || '')).toLowerCase();
+    const find = (re) => faqs.find(f => re.test(norm(f.Pregunta || f.pregunta)) && String(f.Respuesta || f.respuesta || '').trim());
+    const ubic = find(/ubicad|direccion|donde estan/);
+    const hora = find(/horario/);
+    if (!ubic && !hora) return null;
+    let text = '🍦 *Nuestra Ubicación* 🍦';
+    if (ubic) text += `\n\n🏠 *Dirección:*\n${String(ubic.Respuesta || ubic.respuesta).trim()}`;
+    if (hora) text += `\n\n🕐 *Horarios:*\n${String(hora.Respuesta || hora.respuesta).trim()}`;
+    return text;
+}
+
+/**
+ * Datos para pagar por transferencia, de la configuración que edita la dueña (Cuenta Nequi/Daviplata, Titular,
+ * Cuenta Bancolombia...). Devuelve null si no hay ninguno configurado: nunca se inventa una cuenta.
+ */
+function getPaymentInstructions(ctx) {
+    const cfg = (ctx && ctx.editableConfig) || {};
+    const get = (k) => (typeof cfg[k] === 'string' && cfg[k].trim()) ? cfg[k].trim() : '';
+    const nequi = get('Cuenta Nequi/Daviplata');
+    const nequiTitular = get('Titular Nequi');
+    const banco = get('Cuenta Bancolombia');
+    const bancoTitular = get('Titular Bancolombia');
+    if (!nequi && !banco) return null;
+    const lineas = ['💳 *Datos para tu transferencia:*'];
+    if (nequi) lineas.push(`• Nequi / Daviplata: *${nequi}*${nequiTitular ? ` (${nequiTitular})` : ''}`);
+    if (banco) lineas.push(`• Bancolombia: *${banco}*${bancoTitular ? ` (${bancoTitular})` : ''}`);
+    lineas.push('Cuando pagues, envíanos el comprobante por aquí 📝');
+    return lineas.join('\n');
+}
+
+/**
+ * Capacidad opcional para handlers/modules/cartInfoQuestions.js: datos reales
+ * del catálogo para responder preguntas informativas (qué cuesta, qué trae,
+ * qué opciones hay) sin inventar nada. Los sabores no tienen precio propio, así
+ * que no entran a la búsqueda de precios; solo se listan cuando se pregunta.
+ */
+function getInfoCatalog(ctx) {
+    const items = getProducts(ctx);
+    const opts = buildOptionLists(ctx);
+    const isOption = (p) => {
+        const c = String(p.Categoria || '').toLowerCase();
+        return c === CATEGORIA_SABORES.toLowerCase();
+    };
+    const toppingCat = CATEGORIA_TOPPINGS.toLowerCase();
+    const products = items.filter(p => !isOption(p));
+    const mainProducts = products.filter(p => String(p.Categoria || '').toLowerCase() !== toppingCat);
+    const nameField = getDbFields().productName;
+    return {
+        fields: getDbFields(),
+        products,
+        mainProducts,
+        faqs: editableConfig.getEditableFaqs(ctx),
+        fiadoReply: (() => {
+            const regla = String((ctx && ctx.editableConfig && ctx.editableConfig['Regla — no fiamos']) || 'sí').trim().toLowerCase();
+            return /^no\b/.test(regla) ? undefined : 'No fiamos 🙏 Pero con gusto te tomo el pedido ahora mismo.';
+        })(),
+        optionLists: {
+            sabores: opts.sabores.map(s => s[nameField]).filter(Boolean),
+            toppings: opts.toppings.map(s => s[nameField]).filter(Boolean)
+        }
+    };
 }
 
 module.exports = {
@@ -3333,6 +3432,11 @@ module.exports = {
     handleNotUnderstood,
     escalateIfSensitive,
     tryRemoveOrderAddition,
+    getInfoCatalog,
+    handleEncargoFreeText,
+    getMenuProducts,
+    getLocationInfo,
+    getPaymentInstructions,
     tryHandleAsMenuOrder,
     handleEncargoPhase,
     getInitialPhase: () => PHASE.SELECCION_OPCION,

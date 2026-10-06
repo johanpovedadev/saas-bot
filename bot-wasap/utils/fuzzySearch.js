@@ -356,14 +356,19 @@ function resolveTextReferenceToCartItems(items, text, nameField, genericTermRege
     const textNorm = normalizeForComparison(text);
     const textWords = textNorm.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !CART_REFERENCE_STOPWORDS.has(w));
     const matched = [];
+    const fuzzyOnly = [];
     for (const item of (items || [])) {
         const nombre = normalizeForComparison(String((item && item[nameField]) || ''));
         if (nombre.length < 3) continue;
         const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
         const exactMatch = textNorm.includes(nombre) || nombreWords.some(w => textWords.includes(w));
         const fuzzyMatch = !exactMatch && textWords.some(w => nombreWords.some(nw => similarityScore(w, nw) >= fuzzyThreshold));
-        if (exactMatch || fuzzyMatch) matched.push(item);
+        if (exactMatch) matched.push(item);
+        else if (fuzzyMatch) fuzzyOnly.push(item);
     }
+    // El parecido por letras solo sirve para errores de ortografía cuando NADA coincide por nombre: si ya hay
+    // coincidencias exactas, los parecidos son ruido (un verbo mal escrito no debe arrastrar a otros ítems).
+    if (matched.length === 0) matched.push(...fuzzyOnly);
     // Referencia genérica ("la adición", "ese topping"): solo se resuelve
     // sola cuando hay EXACTAMENTE un ítem - con 2+ sería adivinar cuál.
     if (matched.length === 0 && items && items.length === 1 && genericTermRegex && genericTermRegex.test(textNorm)) {

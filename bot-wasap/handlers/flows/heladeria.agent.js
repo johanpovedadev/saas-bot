@@ -52,6 +52,7 @@ const heladeriaAi = require('../../services/heladeriaAi');
 const heladeriaFlow = require('./heladeria.flow');
 const businessHours = require('../../utils/businessHours');
 const core = require('../agent/cartAgent.core');
+const cartInfoQuestions = require('../modules/cartInfoQuestions');
 const presenter = require('./heladeria.agent.presenter');
 const G = require('../agent/grounding');
 
@@ -1072,7 +1073,9 @@ const hooks = {
     // vuelve al historial del turno siguiente - con la temperatura por
     // defecto, el mismo mensaje podía tomar caminos distintos entre corridas.
     // El flujo de reglas las sigue llamando sin opts (sin cambio).
-    answerQuestion: (pregunta, T) => heladeriaAi.answerDoubt(pregunta, I.buildClassifierContext(T.userSession, T.ctx), { deterministic: true }),
+    // "¿Me fían?" es una regla fija de la casa (no fiamos): se responde sin IA ni escalamiento.
+    answerQuestion: async (pregunta, T) => cartInfoQuestions.fiadoReplyFor(pregunta, I.getInfoCatalog ? I.getInfoCatalog(T.ctx) : heladeriaFlow.getInfoCatalog(T.ctx)) ||
+        await heladeriaAi.answerDoubt(pregunta, I.buildClassifierContext(T.userSession, T.ctx), { deterministic: true }),
     // Fuente de verdad para las cifras de las respuestas libres: el catálogo
     // (con precios y cuántos sabores lleva cada producto) + las FAQs reales.
     answerSources(T) {

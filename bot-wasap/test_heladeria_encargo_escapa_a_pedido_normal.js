@@ -88,7 +88,7 @@ async function send(sock, ctx, jid, text) {
         const sent4 = []; const sock4 = makeSock(sent4); sock4.__sent = sent4;
         const JID4 = '573900000963@c.us';
         ctx4.sessions[JID4] = { phase: PHASE.ENCARGO, errorCount: 0, carrito: [], order: {} };
-        const out4 = await send(sock4, ctx4, JID4, 'necesito algo para un evento grande');
+        const out4 = await send(sock4, ctx4, JID4, 'algo especial por favor');
         check(/Pedidos por Encargo/i.test(out4), `5) texto genuinamente ambiguo sigue mostrando las instrucciones (real: ${out4.slice(0, 150)})`);
 
         console.log(failures === 0 ? '\n✅ TODOS LOS CHECKS PASARON' : `\n❌ ${failures} fallos`);

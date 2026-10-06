@@ -77,6 +77,9 @@ const MENSAJES = [
     const originalNotify = notificationService.notifyAdminsAboutCustomerIssue;
     let notified = 0;
     notificationService.notifyAdminsAboutCustomerIssue = async () => { notified++; };
+    // El pase directo a una persona (descripción libre del evento) avisa por notifySystemAlert, con el enlace al chat
+    const originalAlert = notificationService.notifySystemAlert;
+    notificationService.notifySystemAlert = async () => { notified++; };
     try {
         // ==== 1) Caso real: mensajes libres en ENCARGO → escala, no repite 14 veces ====
         {
@@ -122,13 +125,14 @@ const MENSAJES = [
             check(s.errorCount === 0, `3) pedido resuelto resetea errorCount (real: ${s.errorCount})`);
         }
 
-        // ==== 4) El primer mensaje no entendido NO escala (solo el 2do consecutivo) ====
+        // ==== 4) El primer mensaje no entendido (y que NO describe un evento) NO escala (solo el 2do consecutivo).
+        //      Si describe el evento ("fiesta el sabado", "20 personas") pasa a una persona de una vez: ver test 1 ====
         {
             const ctx = makeCtx();
             const sent = []; const sock = makeSock(sent); sock.__sent = sent;
             const JID = '573900005104@c.us';
             ctx.sessions[JID] = { phase: PHASE.ENCARGO, errorCount: 0, carrito: [], order: {}, userName: 'Cliente' };
-            const out = await send(sock, ctx, JID, MENSAJES[0]);
+            const out = await send(sock, ctx, JID, 'algo especial por favor');
             const s = ctx.sessions[JID];
             check(/Pedidos por Encargo/.test(out) && s.phase === PHASE.ENCARGO, `4) al 1er mensaje no entendido aún se re-explica el formato sin escalar (fase=${s.phase})`);
             check(s.errorCount === 1, `4) errorCount sube a 1 (real: ${s.errorCount})`);
@@ -141,6 +145,7 @@ const MENSAJES = [
         process.exitCode = 1;
     } finally {
         notificationService.notifyAdminsAboutCustomerIssue = originalNotify;
+        notificationService.notifySystemAlert = originalAlert;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();
