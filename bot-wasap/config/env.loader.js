@@ -93,7 +93,9 @@ try {
                 jids: raw.business_admin_jids || []
             },
             backend: {
-                apiBase: raw.api_base || process.env.API_BASE || 'http://127.0.0.1:8001/api',
+                // API_BASE_OVERRIDE manda sobre el JSON del negocio: así las pruebas apuntan a un backend falso
+                // (scripts/fake-backend.js) en vez del api_base real del tenant. En producción no se define.
+                apiBase: process.env.API_BASE_OVERRIDE || raw.api_base || process.env.API_BASE || 'http://127.0.0.1:8001/api',
                 timeout: raw.api_timeout || 8000,
                 endpoints: {
                     products: raw.endpoint_products || '/obtener_todos_los_productos/',

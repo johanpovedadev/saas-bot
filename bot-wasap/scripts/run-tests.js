@@ -67,7 +67,7 @@ const skipped = allFiles.filter(isSkipped);
 console.log(`Encontrados ${allFiles.length} archivos de test (${skipped.length} excluidos por marcador "${SKIP_MARKER}")\n`);
 
 // Backend falso (scripts/fake-backend.js): las pruebas no dependen de que haya un Django en localhost:8000. Se levanta
-// como proceso aparte porque spawnSync bloquea este (no podría atender las peticiones de las pruebas).
+// como proceso aparte (API_BASE_OVERRIDE le gana al api_base del JSON de cada negocio) porque spawnSync bloquea este (no podría atender las peticiones de las pruebas).
 function startFakeBackend() {
     const portFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fake-backend-')), 'port');
     const child = spawn(process.execPath, [path.join(__dirname, 'fake-backend.js'), portFile], { stdio: 'ignore' });
@@ -93,7 +93,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase, API_BASE_OVERRIDE: fakeBackend.apiBase }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');
