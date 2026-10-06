@@ -31,6 +31,7 @@ const { textAfterGreeting } = require('../../utils/textAfterGreeting');
 const menuHandler = require('../modules/menu.handler');
 const checkoutHandler = require('../checkoutHandler');
 const reservationsHandler = require('../modules/reservations.handler');
+const paymentProof = require('../modules/paymentProof');
 const heladeriaAi = require('../../services/heladeriaAi');
 const editableConfig = require('../../services/editableConfig');
 const { money } = require('../../utils/util');
@@ -1901,49 +1902,6 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
 }
 
 /**
- * Procesa un mensaje de audio (handler.js → currentFlow.processAudio, 7 args).
- * - En fases guiadas (sabores/toppings/cantidad) solo transcribe y continúa el
- *   flujo determinista (el usuario responde "s1 s2", "sin", "2", etc.).
- * - En el resto, interpreta la intención en UNA llamada IA y la enruta.
- */
-async function processAudio(sock, jid, audioBase64, mimeType, isAudio, userSession, ctx) {
-    userSession.productsCache = getProducts(ctx);
-    if (ctx.lastSent && ctx.lastSent[jid]) {
-        userSession.lastBotReply = String(ctx.lastSent[jid]).slice(0, 300);
-    }
-
-    const guidedPhases = [HELADO_SABORES, HELADO_TOPPINGS, HELADO_QUANTITY, HELADO_UNITS_MODE, HELADO_PER_UNIT_SABORES, HELADO_PER_UNIT_TOPPINGS];
-    if (userSession.heladoFlow && guidedPhases.includes(userSession.phase)) {
-        const transcript = await heladeriaAi.transcribeAudio(audioBase64, mimeType || 'audio/ogg; codecs=opus');
-        if (!transcript) {
-            await say(sock, jid, '🎙️ No pude entender el audio. Inténtalo de nuevo o escríbelo como texto.', ctx);
-            return;
-        }
-        await handle(sock, jid, transcript, userSession, ctx);
-        return;
-    }
-
-    const result = await heladeriaAi.interpretAudioIntent(audioBase64, userSession, mimeType || 'audio/ogg; codecs=opus', ctx);
-    if (!result) {
-        await say(sock, jid, '🎙️ No pude entender el contenido del audio. Inténtalo de nuevo o escríbelo como texto. 😊', ctx);
-        return;
-    }
-    const text = result.transcription || result.response || '';
-    await routeIntent(sock, jid, result, text, userSession, ctx);
-}
-
-/**
- * Lectura de imagen (usado por handler.js en el bloque de media).
- * Devuelve una descripción corta que luego se enruta por el flujo.
- */
-async function transcribeImage(imageBase64, userSession, mimeType = 'image/jpeg', caption = '') {
-    const text = await heladeriaAi.interpretImage(imageBase64, userSession, mimeType, caption);
-    if (!text) return null;
-    logger.info(`heladeria.flow transcribeImage: "${text.substring(0, 80)}"`);
-    return text;
-}
-
-/**
  * Cuántas palabras "gasta" el saludo detectado al inicio del mensaje (ej.
  * "hola" = 1, "buenos dias" = 2) - para saber si sobra texto después del
  * saludo (un pedido real venía pegado al saludo).
@@ -3521,8 +3479,7 @@ module.exports = {
     handleProductOptions,
     handle,
     routeIntent,
-    processAudio,
-    transcribeImage,
+    handleMedia: paymentProof.handleMedia,
     showWelcome,
     handleNotUnderstood,
     escalateIfSensitive,

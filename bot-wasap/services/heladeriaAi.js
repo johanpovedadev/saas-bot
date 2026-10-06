@@ -696,6 +696,44 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg',
 }
 
 /**
+ * ¿La imagen es un comprobante de pago (captura de transferencia/depósito/recibo)? Es la ÚNICA lectura de imágenes
+ * que hace el bot: no interpreta fotos de productos. Una sola llamada barata (modelo `intent`, no el de audio).
+ *
+ * El resultado NO valida el pago: solo decide si se le avisa a la dueña, que lo verifica en la app del banco.
+ * Ante la duda (sin IA, error, respuesta ilegible) devuelve `null` y quien llama debe tratarlo como "posible
+ * comprobante": reenviar de más cuesta un mensaje, ignorar de menos pierde un pago.
+ *
+ * @param {string} imageBase64
+ * @param {string} [mimeType]
+ * @returns {Promise<{isPaymentProof: boolean, monto: number|null}|null>}
+ */
+async function classifyPaymentProof(imageBase64, mimeType = 'image/jpeg') {
+    if (!hasValidKey()) return null;
+
+    const model = new GoogleGenerativeAI(process.env.GEMINI_API_KEY).getGenerativeModel({
+        model: MODELS.intent,
+        generationConfig: { responseMimeType: 'application/json', temperature: 0 }
+    });
+    const prompt = 'Mira la imagen. ¿Es un comprobante de pago (captura de una transferencia, depósito o recibo bancario / Nequi / ' +
+        'Daviplata / Bancolombia)? Responde SOLO JSON: {"comprobante": true|false, "monto": <número en pesos o null>}. ' +
+        'Una foto de comida, una persona, un sticker o una captura de otra cosa es false.';
+    try {
+        geminiGuard.noteCall();
+        const result = await Promise.race([
+            model.generateContent([prompt, { inlineData: { mimeType, data: imageBase64 } }]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 20000))
+        ]);
+        const parsed = JSON.parse((await result.response).text());
+        const monto = Number(parsed.monto);
+        return { isPaymentProof: parsed.comprobante === true, monto: Number.isFinite(monto) && monto > 0 ? monto : null };
+    } catch (e) {
+        geminiGuard.noteError(e);
+        logger.error(`heladeriaAi classifyPaymentProof: ${e.message}`);
+        return null;
+    }
+}
+
+/**
  * Detecta si el mensaje del cliente contiene DATOS SENSIBLES (número de
  * tarjeta, cédula/documento, claves/contraseñas, CVV). Regla de seguridad
  * (pedido de Johan): si el cliente intenta compartir esto, el bot NO debe
@@ -734,4 +772,4 @@ function detectSensitiveData(text) {
     return false;
 }
 
-module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage, isUnknownAnswer, classifyChoice, isAutomatedBroadcast, detectSensitiveData };
+module.exports = { interpretAudioIntent, transcribeAudio, interpretOrderText, answerDoubt, interpretImage, classifyPaymentProof, isUnknownAnswer, classifyChoice, isAutomatedBroadcast, detectSensitiveData };

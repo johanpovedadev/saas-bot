@@ -39,8 +39,8 @@
  *     siempre - el cliente nunca queda sin respuesta por culpa del agente.
  *   - Fases que el agente no maneja (WAITING_HUMAN, ENCARGO...) y los mensajes
  *     que son puro protocolo numérico ("1", "2", "S1 S3") siguen por reglas.
- *   - Audio e imágenes siguen por el camino de siempre (processAudio /
- *     transcribeImage); este agente solo cubre texto.
+ *   - Audio e imágenes no pasan por aquí: el flow las resuelve con `handleMedia`
+ *     (modules/paymentProof.js); este agente solo cubre texto.
  */
 
 const PHASE = require('../../utils/phases');

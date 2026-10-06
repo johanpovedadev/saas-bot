@@ -1341,6 +1341,21 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
         const currentFlow = getCurrentFlow();
 
+        // Política propia de multimedia (capability opcional del flow): el negocio decide qué hacer con audios e
+        // imágenes sin pasar por la transcripción general (heladería: audio ignorado, imagen solo si es comprobante).
+        if (currentFlow && typeof currentFlow.handleMedia === 'function') {
+            try {
+                await currentFlow.handleMedia(sock, messageData.from, {
+                    type: messageData.mediaType,
+                    caption: messageData.text || '',
+                    download: () => downloadMediaWithRetry(msg, messageData.from)
+                }, userSession, ctx);
+            } catch (mediaPolicyErr) {
+                logger.error(`[${messageData.from}] Error en la política de multimedia: ${mediaPolicyErr.message}`);
+            }
+            return;
+        }
+
         // Gate premium (capability opcional del flow): bloquear la transcripción
         // con IA (audio/imagen) de usuarios fuera de la prueba sin tocar la IA.
         // Solo aplica si el flow del tenant expone isPremiumBlocked; el resto de

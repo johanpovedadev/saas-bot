@@ -1495,6 +1495,12 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
                 logger.error(`[${jid}] Error al guardar en Sheets: ${sheetsError.message}`);
                 // No lanzar error, continuar con el flujo
             }            // ✅ Notificar admins sobre pedido completado usando notificationService
+            // Recuerda el pedido para asociarle el comprobante de pago que llegue después (ver paymentProof.js).
+            // (en ctx, no en la sesión: resetChat() la borra al terminar el pedido)
+            if (ctx) {
+                ctx.lastConfirmedOrders = ctx.lastConfirmedOrders || {};
+                ctx.lastConfirmedOrders[jid] = { at: Date.now(), nombre: payload.nombre, productos: payload.producto, total: orderTotal, pago: payload.pago };
+            }
             await notificationService.notifyAdminsNewOrder(sock, jid, payload, orderTotal, ctx);
             logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
