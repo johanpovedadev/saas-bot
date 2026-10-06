@@ -650,8 +650,10 @@ function captureSideChannelFields(text, userSession) {
             userSession.order.telefono = digitsOnly;
         } else if (!userSession.order.paymentMethod && looksLikePayment(p)) {
             const low = p.toLowerCase();
-            userSession.order.paymentMethod = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
-        } else if (!userSession.order.address && looksLikeAddress(p) && /\d/.test(p)) {
+            userSession.order.paymentMethod = canonicalPayment(low);
+        } else if (!userSession.order.address && looksLikeAddress(p) && /\d/.test(p)
+            && /\b(cra|carrera|cr|cll|calle|diag|diagonal|av|avenida|transv|transversal|trav|mz|manzana|barrio|casa|apto|apartamento|torre|km|kr)\b/i.test(p)
+            && !/^([st]\d{1,2}[\s,]*)+$/i.test(p)) {
             // Bug real (Johan probando en vivo, 25/9): "Que hay con manzana"
             // (pregunta sobre un producto con manzana) se guardó como
             // dirección, porque looksLikeAddress() reconoce "manzana" como
@@ -931,7 +933,7 @@ function classifyDeliveryParts(parts, userSession) {
             phonePart = p.replace(/[^0-9]/g, '');
         } else if (!paymentPart && looksLikePayment(p)) {
             const low = p.toLowerCase();
-            paymentPart = low.includes('transfer') ? 'transferencia' : (low.includes('efect') ? 'efectivo' : low);
+            paymentPart = canonicalPayment(low);
         } else if (!addrPart && looksLikeAddress(p)) {
             addrPart = p;
         } else if (!namePart) {
@@ -1004,6 +1006,7 @@ async function askNextMissingCheckoutField(sock, jid, userSession, ctx) {
         `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 
     await say(sock, jid, summaryText, ctx);
+    await sendTransferInfoIfPending(sock, jid, userSession, ctx);
     logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen.`);
 }
 
@@ -1172,6 +1175,42 @@ async function handleEnterTelefono(sock, jid, input, userSession, ctx) {
     await askNextMissingCheckoutField(sock, jid, userSession, ctx);
 }
 
+/** "nequi", "daviplata", "bancolombia" y "qr" son transferencia: así lo entiende el resto del flujo (y el pedido que llega al negocio). */
+function canonicalPayment(low) {
+    if (/transfer|nequi|daviplata|bancolombia|\bqr\b/.test(low)) return 'transferencia';
+    if (low.includes('efect')) return 'efectivo';
+    return low;
+}
+
+/**
+ * Tras mostrar el resumen final: si el cliente eligió pagar por transferencia en el mismo mensaje en que dio sus datos
+ * (nunca pasó por la pregunta "¿cómo vas a pagar?"), todavía no sabe a dónde transferir. Se le mandan los datos una vez.
+ */
+async function sendTransferInfoIfPending(sock, jid, userSession, ctx) {
+    const o = userSession.order || {};
+    if (o.paymentMethod === 'transferencia' && !o.transferInfoSent) await sendTransferInstructions(sock, jid, ctx, userSession);
+}
+
+/** Datos para pagar por transferencia: QR si existe, o la cuenta configurada del negocio (nunca una cuenta inventada). */
+async function sendTransferInstructions(sock, jid, ctx, userSession) {
+    if (userSession && userSession.order) userSession.order.transferInfoSent = true;
+    const qrPath = path.join(__dirname, '../qr.png');
+    if (fs.existsSync(qrPath)) {
+        await sendImage(sock, jid, qrPath, 'Escanea el siguiente código QR para realizar el pago. Recuerda enviarnos la imagen del pago por favor.', ctx);
+        return;
+    }
+    const payFlow = require('./flowRegistry').getTenantFlowWithCapability('getPaymentInstructions');
+    const instructions = payFlow ? payFlow.getPaymentInstructions(ctx) : null;
+    if (instructions) {
+        await say(sock, jid, instructions, ctx);
+    } else if (payFlow) {
+        await say(sock, jid, '💳 Un asesor te escribe enseguida con los datos para tu transferencia. 🙏', ctx);
+        try { await notificationService.notifyAdminsAboutCustomerIssue(sock, jid, 'Eligió pagar por transferencia pero el negocio no tiene datos de pago cargados en la configuración. Envíale la cuenta.', ctx); } catch (e) { logger.error(`No se pudo avisar de los datos de pago faltantes: ${e.message}`); }
+    } else {
+        await say(sock, jid, 'Realiza el pago a Nequi 313 6939663. Recuerda enviarnos el comprobante.', ctx);
+    }
+}
+
 async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     logger.info(`[${jid}] -> Entrando a handleEnterPaymentMethod. Método de pago recibido: "${input}"`);
     const cleanInput = input.toLowerCase().trim();
@@ -1192,13 +1231,9 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
     userSession.errorCount = 0;
 
     if (paymentMethod === 'transferencia') {
-        const qrPath = path.join(__dirname, '../qr.png');
-        if (fs.existsSync(qrPath)) {
-            await sendImage(sock, jid, qrPath, 'Escanea el siguiente código QR para realizar el pago. Recuerda enviarnos la imagen del pago por favor.', ctx);
-        } else {
-            await say(sock, jid, 'Realiza el pago a Nequi 313 6939663. Recuerda enviarnos el comprobante.', ctx);
-        }
+        await sendTransferInstructions(sock, jid, ctx, userSession);
     }
+
 
     if (!PHASE.FINALIZE_ORDER) {
         logger.error(`[${jid}] -> ERROR CRÍTICO: La fase 'FINALIZE_ORDER' no está definida en utils/phases.js. El flujo se romperá.`);
@@ -1229,12 +1264,113 @@ async function handleEnterPaymentMethod(sock, jid, input, userSession, ctx) {
         `¿Está todo correcto?\n${getFinalActionHint(cfg)}`;
 
     await say(sock, jid, summaryText, ctx);
+    await sendTransferInfoIfPending(sock, jid, userSession, ctx);
     logger.info(`[${jid}] -> Fase cambiada a ${userSession.phase}. Mostrando resumen.`);
+}
+
+const EDIT_FIELDS = [
+    { field: 'telefono', label: 'teléfono', re: /tel[eé]fono|celular|n[uú]mero|whatsapp/i, ask: '📞 ¿Cuál es el nuevo número de teléfono?' },
+    { field: 'name', label: 'nombre', re: /nombre/i, ask: '👤 ¿A nombre de quién va el pedido?' },
+    { field: 'paymentMethod', label: 'pago', re: /\bpago\b|pagar|efectivo|transferencia/i, ask: '💳 ¿Cómo vas a pagar? Escribe *Transferencia* o *Efectivo*.' },
+    { field: 'address', label: 'dirección', re: /direcci[oó]n|domicilio|barrio|calle|carrera|\bcra\b|\bcll\b|donde/i, ask: '🏠 ¿Cuál es la nueva dirección de entrega?' }
+];
+
+/** Resumen final con los datos actuales (sin tocar el costo de domicilio ya calculado). */
+async function showEditedSummary(sock, jid, userSession, ctx) {
+    userSession.phase = PHASE.FINALIZE_ORDER;
+    const cfg = getTenantCheckoutConfig();
+    const summary = generateCartSummary(userSession);
+    const orderTotal = summary.total + (userSession.order.deliveryCost || 0);
+    const deliveryText = userSession.order.pickup
+        ? 'Recoge en el local (sin domicilio)'
+        : (userSession.order.deliveryCost && userSession.order.deliveryCost > 0) ? money(userSession.order.deliveryCost) : 'Por confirmar';
+    await say(sock, jid,
+        `📝 *Resumen final del pedido*\n\n*Productos:*\n${summary.text}\n\nSubtotal: ${money(summary.total)}\nDomicilio: ${deliveryText}\n*Total a pagar: ${money(orderTotal)}*\n\n` +
+        `*Datos de entrega:*\n👤 Nombre: ${userSession.order.name}\n🏠 Dirección: ${userSession.order.address}\n📞 Teléfono: ${userSession.order.telefono}\n💳 Pago: ${userSession.order.paymentMethod}\n\n¿Está todo correcto?\n${getFinalActionHint(cfg)}`, ctx);
+    await sendTransferInfoIfPending(sock, jid, userSession, ctx);
+}
+
+/** Valida y guarda el nuevo valor de un dato de entrega. Devuelve null si es válido o el mensaje de error. */
+function applyEditedField(userSession, field, rawValue) {
+    const value = String(rawValue || '').trim();
+    if (field === 'address') {
+        if (value.length < 5 || /^\d+$/.test(value)) return '❌ Esa dirección no parece completa. Escríbela con calle o carrera y número (ej: Cra 23 #10-05).';
+        userSession.order.address = value; userSession.order.pickup = false;
+    } else if (field === 'name') {
+        if (value.length < 2 || /^\d+$/.test(value)) return '❌ No entendí el nombre. Escribe tu nombre completo.';
+        userSession.order.name = value;
+    } else if (field === 'telefono') {
+        const digits = value.replace(/\D/g, '').replace(/^57(?=\d{10}$)/, '');
+        if (digits.length < 7 || digits.length > 12) return '❌ Ese teléfono no parece válido (mínimo 7 dígitos). Escríbelo de nuevo.';
+        userSession.order.telefono = digits;
+    } else if (field === 'paymentMethod') {
+        const m = /transferencia|efectivo/i.exec(value);
+        const method = m ? m[0].toLowerCase() : normalizePaymentMethod(value.toLowerCase());
+        if (!method) return '❌ Opción no válida. Escribe *Transferencia* o *Efectivo*.';
+        userSession.order.paymentMethod = method;
+    }
+    return null;
+}
+
+/**
+ * El resumen final dice "¿Qué dato deseas editar? (Dirección, Nombre, Pago)", así que ESO tiene que funcionar:
+ * antes, contestar "Dirección" daba "Opción no válida" y escribir la dirección nueva CONFIRMABA el pedido con la
+ * dirección vieja. Ahora: elige el dato (o lo escribe directamente), se valida, se guarda y se muestra el
+ * resumen de nuevo. Devuelve true si el mensaje se atendió acá.
+ */
+async function handleEditDeliveryData(sock, jid, input, userSession, ctx) {
+    const st = userSession.editingDelivery;
+    const text = String(input || '').trim();
+    const norm = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    if (/^(no|nada|ya|cancelar|dejalo|asi esta|esta bien|todo bien)\b/.test(norm)) {
+        userSession.editingDelivery = null;
+        await showEditedSummary(sock, jid, userSession, ctx);
+        return true;
+    }
+
+    let field = st.field;
+    let value = null;
+    if (st.stage === 'choose') {
+        const found = EDIT_FIELDS.find(f => f.re.test(text));
+        if (!found) {
+            await say(sock, jid, '✏️ ¿Cuál dato quieres cambiar? Escribe *Dirección*, *Nombre*, *Teléfono* o *Pago* (o *no* para dejarlo como está).', ctx);
+            return true;
+        }
+        field = found.field;
+        // "dirección Calle 99 #1-1" / "pago transferencia": el valor viene en el mismo mensaje.
+        const leftover = text.replace(found.re, ' ').replace(/\b(mi|el|la|es|a|por|quiero|cambiar|cambia|editar|nueva|nuevo|de|para)\b/gi, ' ').replace(/[:,]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (field === 'paymentMethod') value = /transferencia|efectivo/i.test(text) ? text : null;
+        else if (leftover.length >= 3) value = leftover;
+        if (value === null) {
+            userSession.editingDelivery = { stage: 'value', field };
+            await say(sock, jid, found.ask, ctx);
+            return true;
+        }
+    } else {
+        value = text;
+    }
+
+    const error = applyEditedField(userSession, field, value);
+    if (error) {
+        userSession.editingDelivery = { stage: 'value', field };
+        await say(sock, jid, error, ctx);
+        return true;
+    }
+    userSession.editingDelivery = null;
+    userSession.errorCount = 0;
+    const etiqueta = EDIT_FIELDS.find(f => f.field === field).label;
+    await say(sock, jid, `✅ Listo, actualicé tu ${etiqueta}.`, ctx);
+    if (field === 'paymentMethod' && userSession.order.paymentMethod === 'transferencia') await sendTransferInstructions(sock, jid, ctx, userSession);
+    await showEditedSummary(sock, jid, userSession, ctx);
+    return true;
 }
 
 async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
     const finalAction = input.toLowerCase().trim();
     const cfg = getTenantCheckoutConfig();
+
+    if (userSession.editingDelivery && await handleEditDeliveryData(sock, jid, input, userSession, ctx)) return;
 
     if (validateInput(finalAction, 'confirmation')) {
         logger.info(`[${jid}] -> Pedido confirmado. Enviando al backend en ${API_BASE}`);
@@ -1414,7 +1550,8 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
         }
 
     } else if (validateInput(finalAction, 'edit') || (cfg && cfg.numericConfirm && finalAction === '2')) {
-        await say(sock, jid, '✏️ De acuerdo. ¿Qué dato deseas editar? (Dirección, Nombre, Pago)', ctx);
+        userSession.editingDelivery = { stage: 'choose', field: null };
+        await say(sock, jid, '✏️ De acuerdo. ¿Qué dato deseas editar? (Dirección, Nombre, Teléfono, Pago)', ctx);
     } else if (await handleDomicilioQuestion(sock, jid, input, userSession, ctx)) {
         // Pregunta por el valor del domicilio en vez de 1/2 - ya se manejó
         // (pidió dirección o avisó al equipo), se vuelve a mostrar el resumen.
@@ -1582,6 +1719,7 @@ async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
 }
 
 module.exports = {
+    sendTransferInfoIfPending,
     handleCartSummary,
     handleEnterAddress,
     handleEnterName,

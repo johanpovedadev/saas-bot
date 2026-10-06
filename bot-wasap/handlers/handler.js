@@ -583,6 +583,13 @@ async function processIncomingMessage(sock, messageData, ctx) {
         const CHECKOUT_DEDICATED_PHASES = new Set([
             PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO
         ]);
+        // Datos sensibles (tarjeta, cédula, clave): se revisan en TODAS las fases, también en las que piden
+        // dirección, nombre, teléfono o pago - allí un número de tarjeta se guardaba como si fuera la dirección,
+        // y de ahí viajaba al pedido, a la hoja y al aviso de la administración.
+        if (CHECKOUT_DEDICATED_PHASES.has(userSession.phase)) {
+            const sensitiveFlowCheckout = flowRegistry.getTenantFlowWithCapability('escalateIfSensitive');
+            if (sensitiveFlowCheckout && await sensitiveFlowCheckout.escalateIfSensitive(sock, jid, text, userSession, ctx)) return;
+        }
         if (!CHECKOUT_DEDICATED_PHASES.has(userSession.phase) && userSession.phase !== PHASE.WAITING_HUMAN) {
             // Nunca guardar nada de un mensaje con datos sensibles (tarjeta,
             // cédula, clave) — se verifica ANTES de capturar, usando la
@@ -721,8 +728,11 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // fase; un mensaje de texto libre repetido sí lo es, en cualquiera.
         const isBareMenuDigit = /^\d{1,2}$/.test(String(text || '').trim());
         const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
+        // Un saludo o un "gracias/ok" repetido no es un loop: es lo que escribe un cliente que no vio respuesta
+        // enseguida (las imágenes del menú tardan). Antes el segundo "hola" lo mandaba con una persona y el bot callaba.
+        const isHarmlessRepeat = frustrationService.isHarmlessRepeat(text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
-            !isBareMenuDigit &&
+            !isBareMenuDigit && !isHarmlessRepeat &&
             isMessageLoop) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {

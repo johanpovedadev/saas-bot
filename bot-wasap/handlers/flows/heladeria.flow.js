@@ -735,6 +735,28 @@ async function handleSabores(sock, jid, text, userSession, ctx) {
  * Para tokens muy cortos (< 3) solo se usan coincidencias exactas o
  * "target incluye el nombre", evitando falsos positivos como "y" → "chantilly".
  */
+/**
+ * ¿El topping encontrado explica TODAS las palabras que escribió el cliente? ("galletas oreo" explica
+ * "galletas oreo"; "queso" NO explica "queso oreo": falta "oreo").
+ */
+function phraseCoversAllWords(topping, words, dbFields) {
+    const nameWords = stripAccents(String(topping[dbFields.productName] || '').toLowerCase()).split(/[^a-z0-9]+/).filter(Boolean);
+    return words.every(w => nameWords.some(nw => nw === w || nw.startsWith(w) || w.startsWith(nw) || (w.length > 3 && nw.length > 3 && nw.slice(0, 4) === w.slice(0, 4))));
+}
+
+/**
+ * Unidades a buscar: si el cliente separó varios toppings con coma, "y", "con" o "+" cada pedazo es un
+ * topping ("queso y oreo" -> ["queso", "oreo"]; "con queso y con galletas oreo" -> ["queso", "galletas oreo"]);
+ * si no, las palabras sueltas como antes.
+ */
+function toppingUnits(input, meaningful) {
+    const chunks = String(input || '')
+        .split(/\s*(?:,|;|\+|\by\b|\be\b(?!\.)|\bcon\b|\bmas\b)\s*/)
+        .map(part => part.split(/\s+/).filter(w => w && !TOPPING_STOPWORDS.has(w)).join(' ').trim())
+        .filter(part => part.length >= 2);
+    return chunks.length > 1 ? chunks : meaningful;
+}
+
 function findBestTopping(target, list, dbFields) {
     const norm = (p) => stripAccents(String(p[dbFields.productName] || '').toLowerCase());
     const forms = [target];
@@ -948,7 +970,8 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
     // Intento 1: la frase completa ("gomitas trululu", "galletas oreo") como un
     // único topping. Evita que "gomitas" parcial resuelva a "gomitas de osito".
     const joinedPhrase = meaningful.join(' ');
-    const wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    let wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    if (wholeMatch && !phraseCoversAllWords(wholeMatch, meaningful, dbFields)) wholeMatch = null;
     if (wholeMatch) {
         matchedSomething = true;
         if (!flow.toppingsSeleccionados.find(x => (x.CodigoProducto || x) === (wholeMatch.CodigoProducto || wholeMatch))) {
@@ -956,7 +979,7 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
             added.push(wholeMatch);
         }
     } else {
-        for (const tok of meaningful) {
+        for (const tok of toppingUnits(input, meaningful)) {
             const m = tok.match(/^t(\d+)$/i);
             let top = null;
             if (m) {
@@ -1374,7 +1397,8 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
     let matchedSomething = false;
 
     const joinedPhrase = meaningful.join(' ');
-    const wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    let wholeMatch = joinedPhrase.length >= 2 ? findBestTopping(joinedPhrase, toppingsList, dbFields) : null;
+    if (wholeMatch && !phraseCoversAllWords(wholeMatch, meaningful, dbFields)) wholeMatch = null;
     if (wholeMatch) {
         matchedSomething = true;
         if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === (wholeMatch.CodigoProducto || wholeMatch))) {
@@ -1382,7 +1406,7 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
             added.push(wholeMatch);
         }
     } else {
-        for (const tok of meaningful) {
+        for (const tok of toppingUnits(input, meaningful)) {
             const m = tok.match(/^t(\d+)$/i);
             let top = null;
             if (m) {
@@ -2346,6 +2370,14 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
     // mandaría "❌ No entendí..." justo después del "👍 Anotado..." que ya se
     // envió, contradiciéndolo. pickupJustDetected ya cuenta como "el mensaje
     // sí se manejó".
+    // "una copa osito de fresa y chocolate": "fresa" es el SABOR, pero también existe un topping llamado
+    // "fresa" ($2.500). Si el clasificador devuelve el mismo nombre como sabor y como topping, el cliente hablaba
+    // del sabor: no se le cobra un topping que no pidió.
+    if (result && Array.isArray(result.sabores) && result.sabores.length && Array.isArray(result.toppings) && result.toppings.length) {
+        const key = (v) => stripAccents(String(v || '')).toLowerCase().trim();
+        const saborKeys = new Set(result.sabores.map(key));
+        result.toppings = result.toppings.filter(t => !saborKeys.has(key(t)));
+    }
     if (!result) return pickupJustDetected;
 
     // Bug real (auditoría 23/9, foto real de una clienta): cuando el cliente
@@ -2770,8 +2802,49 @@ async function classifyOrderInput(sock, jid, text, userSession, ctx) {
  * @returns {Promise<boolean>} true si se quitó algo (el caller no debe
  *   seguir procesando este mensaje con el flujo normal).
  */
+/**
+ * "Quítale el queso" cuando el producto YA está en el carrito (el cliente está revisando el pedido). Antes
+ * solo se podía quitar mientras el producto se armaba; después, el bot interpretaba "queso" como un producto
+ * nuevo y lo AGREGABA como una línea aparte (y cobraba de más). Quita el topping del producto del carrito que
+ * lo lleva (el último, si varios) y descuenta su precio. Solo con verbos de quitar ("sin" no: "una copa sin
+ * queso" es un pedido nuevo, no una corrección).
+ */
+async function tryRemoveToppingFromCart(sock, jid, text, userSession, ctx) {
+    const textNoAccents = stripAccents(String(text || '')).toLowerCase();
+    if (!/\b(quita|saca|elimina|borra)/i.test(textNoAccents)) return false;
+    if (![PHASE.HELADO_POST_ADD, PHASE.CONFIRM_ORDER].includes(userSession.phase)) return false;
+    const carrito = Array.isArray(userSession.carrito) ? userSession.carrito : [];
+    const flat = [];
+    for (let i = carrito.length - 1; i >= 0; i--) {
+        for (const top of (carrito[i].toppings || [])) flat.push({ nombre: top && (top.nombre || top.NombreProducto || top), precio: Number(top && top.precio) || 0, item: carrito[i], ref: top });
+    }
+    if (flat.length === 0) return false;
+    const matched = resolveTextReferenceToCartItems(flat, text, 'nombre', /\badici[oó]n(es)?\b/i);
+    if (matched.length === 0) return false;
+    // Si el mismo topping está en varios productos, se quita del último (el primero de la lista, que va de atrás hacia adelante).
+    const yaQuitados = new Set();
+    const quitados = [];
+    for (const m of matched) {
+        const clave = String(m.nombre).toLowerCase();
+        if (yaQuitados.has(clave)) continue;
+        yaQuitados.add(clave);
+        const idx = m.item.toppings.indexOf(m.ref);
+        if (idx === -1) continue;
+        m.item.toppings.splice(idx, 1);
+        m.item.precio = Math.max(0, (Number(m.item.precio) || 0) - m.precio);
+        m.item.subtotal = m.item.precio * (Number(m.item.cantidad) || 1);
+        quitados.push({ nombre: m.nombre, producto: m.item.nombre });
+    }
+    if (quitados.length === 0) return false;
+    userSession.errorCount = 0;
+    await say(sock, jid, `✅ Listo, quité ${quitados.map(q => `*${q.nombre}* de tu ${q.producto}`).join(' y ')}.`, ctx);
+    if (userSession.phase === PHASE.CONFIRM_ORDER) await checkoutHandler.handleCartSummary(sock, jid, userSession, ctx);
+    else await sendPostAddOptions(sock, jid, ctx, userSession);
+    return true;
+}
+
 async function tryRemoveOrderAddition(sock, jid, text, userSession, ctx) {
-    if (!userSession.heladoFlow) return false; // nada que quitar sin un pedido en construcción
+    if (!userSession.heladoFlow) return tryRemoveToppingFromCart(sock, jid, text, userSession, ctx); // sin producto en construcción: se mira el carrito
 
     // "quítamela"/"sácamela" (verbo + pronombre pegado) no calzan con un
     // \b...\b de palabra completa - se compara la raíz como prefijo sobre
@@ -2917,14 +2990,20 @@ async function sendLocalFinalSummary(sock, jid, userSession, ctx) {
         `¿Está todo correcto?\nEscribe *1* para confirmar o *2* para editar.`;
     await say(sock, jid, summaryText, ctx);
     userSession.phase = PHASE.FINALIZE_ORDER;
+    await checkoutHandler.sendTransferInfoIfPending(sock, jid, userSession, ctx);
 }
 
 const CHECKOUT_CONFIRM_WORDS = ['si', 'sí', 'sip', 'yes', 'ok', 'okay', 'dale', 'listo', 'confirmo', 'confirmar', 'correcto'];
 const CHECKOUT_EDIT_WORDS = ['editar', 'edita', 'corregir', 'cambiar', 'cambio', '2'];
 
 function hasWord(input, words) {
-    const tokens = String(input || '').toLowerCase().replace(/[^a-z0-9áéíóúüñ\s]/gi, ' ').trim().split(/\s+/);
-    return tokens.some(w => words.includes(w));
+    const raw = String(input || '').trim();
+    // Las opciones numéricas solo cuentan si el mensaje ES ese número (con o sin punto/paréntesis): una dirección
+    // como "Cra 5 #3-2" tiene dígitos sueltos y antes se tomaba como la opción 2 ("seguir comprando").
+    if (words.some(w => /^\d+$/.test(w) && new RegExp('^\\s*' + w + '\\s*[.)]?\\s*' + '$').test(raw))) return true;
+    const palabras = words.filter(w => !/^\d+$/.test(w));
+    const tokens = raw.toLowerCase().replace(/[^a-z0-9áéíóúüñ\s]/gi, ' ').trim().split(/\s+/);
+    return tokens.some(w => palabras.includes(w));
 }
 
 /**
@@ -3185,6 +3264,7 @@ async function checkoutFallbackPrompt(sock, jid, userSession, ctx) {
  */
 function isHumanRequest(text) {
     const t = stripAccents(String(text || '').toLowerCase());
+    if (/^\s*(hablar|hablar con alguien|atencion|persona)\s*[.!]*\s*$/.test(t)) return true; // lo que el menú dice que se escriba
     if (/\b(asesores?|humano|agente|representante)\b/.test(t)) return true;
     return /\b(pas(e|a)me\b|me pas\w* con\b|conect\w* me\b|me conect\w*|hablar con (un|una|alguien)|alguien (real|del equipo)|atencion humana|que me atienda\w*)\b/.test(t);
 }

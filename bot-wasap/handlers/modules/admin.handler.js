@@ -341,7 +341,12 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
         sess.erroresMIA = 0;
         sess._miaDisabledNotified = false;
         
-        if (frustrationService?.isWaitingForHuman?.(sess)) {
+        // Un chat que pasó a una persona puede no tener la marca waitingForHuman (la heladería lo deja en la fase
+        // WAITING_HUMAN y en el registro de espera): se reactiva por cualquiera de las tres señales, no solo por la marca.
+        const enEspera = frustrationService?.isWaitingForHuman?.(sess)
+            || sess.phase === require('../../utils/phases').WAITING_HUMAN
+            || waitingHumanStore.isWaiting(process.env.BUSINESS_KEY, target);
+        if (enEspera) {
             // reactivateBot solo apaga el flag "esperando humano" - hay que
             // resetear la fase tambien, si no el bot queda "reactivado" pero
             // sigue sin responderle automatico a este cliente.
@@ -356,7 +361,7 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
         await say(sock, jid, `✅ MIA reactivada para ${target.split('@')[0]}.`, ctx);
         
         try {
-            await say(sock, target, '✅ Un administrador reactivó MIA para este chat. Puedes continuar.');
+            await say(sock, target, '✅ Ya puedes continuar con tu pedido. Escribe *menú* si lo necesitas. 🍦', ctx);
         } catch (e) {
             logger.error('Error notificando al cliente:', e.message);
         }

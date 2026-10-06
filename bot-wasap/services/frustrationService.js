@@ -65,6 +65,18 @@ const MAX_REPEATED_MESSAGES = 2;
  * @param {string} text - Texto del mensaje actual
  * @returns {boolean} true si este mensaje es identico al inmediatamente anterior
  */
+/**
+ * Un saludo o un "gracias/ok/sí/no" repetido NO es un loop: es lo que escribe un cliente que no vio respuesta enseguida
+ * (las imágenes del menú tardan). Antes el segundo "hola" lo mandaba con una persona y el bot se quedaba callado.
+ * Solo aplica a mensajes de una o dos palabras ("hola de nuevo" sí cuenta como repetido en un loop real).
+ */
+function isHarmlessRepeat(text) {
+    const { isGreeting } = require('../config/greetings/greetings.colombia');
+    const t = String(text || '').trim();
+    if (!t || t.split(/\s+/).length > 2) return false;
+    return isGreeting(t) || /^(gracias|ok|okay|vale|listo|si|sí|no)\s*[.!]*$/i.test(t);
+}
+
 function checkMessageLoop(userSession, text) {
     try {
         if (!text || typeof text !== 'string') return false;
@@ -284,6 +296,7 @@ module.exports = {
     detectFrustration,
     detectAndHandleFrustration,  // ✅ Nueva función todo-en-uno
     checkMessageLoop,
+    isHarmlessRepeat,
     handleFrustration,
     incrementErrorCount,
     resetErrorCount,

@@ -1023,7 +1023,7 @@ function createCartAgent(plugin) {
         if (await adminHandler.handleAdminCommand(sock, jid, text, userSession, ctx)) return true;
         const isBareMenuDigit = /^\d{1,2}$/.test(text.trim());
         const isLoop = frustrationService.checkMessageLoop(userSession, text);
-        if (isLoop && !plugin.repeatAllowedPhases.has(phase) && !isBareMenuDigit) {
+        if (isLoop && !plugin.repeatAllowedPhases.has(phase) && !isBareMenuDigit && !frustrationService.isHarmlessRepeat(text)) {
             await frustrationService.handleFrustration(sock, jid, userSession, ctx, `Mensaje repetido (posible loop): "${text.substring(0, 100)}"`);
             emitTrace({ jid, text, path: 'loop', phase, calls, latencyMs: decision.latencyMs, usage: decision.usage });
             return true;
