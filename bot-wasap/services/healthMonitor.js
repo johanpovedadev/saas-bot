@@ -261,6 +261,7 @@ async function checkWhatsApp() {
 
 async function sendDailySummary() {
     if (!_sock || !_sock.info) return;
+    if (notificationService.technicalAlertsMuted('RESUMEN DEL DIA')) return;
     const admins = notificationService.getSystemAdminJids();
     if (admins.length === 0) return;
 

@@ -29,6 +29,16 @@ function getBusinessAdminJids() {
     return admins;
 }
 
+/**
+ * Silencio temporal de avisos TÉCNICOS (SYSTEM_ALERTS_MUTED=1): para pruebas con un negocio cuyos administradores son
+ * personas reales (ej. Mundo Helados mientras Johan prueba) y no deben recibir avisos de reconexión o de caídas.
+ * Solo calla lo técnico: los avisos de clientes (pide una persona, consulta de domicilio, pedidos) SIGUEN saliendo.
+ */
+const TECHNICAL_ALERT = /DESCONECTADO|RECONECTADO|STARTUP|TIMEOUT|INTERNET|DJANGO|SHEETS|REINICI|CA[IÍ]DO|RECUPERADO|ERROR CR[IÍ]TICO|RESUMEN DEL D[IÍ]A|SALUD/i;
+function technicalAlertsMuted(title = '') {
+    return process.env.SYSTEM_ALERTS_MUTED === '1' && TECHNICAL_ALERT.test(String(title));
+}
+
 function getSystemAdminJids() {
     const config = envConfig.admin?.system_admin_jids;
     if (config && Array.isArray(config) && config.length > 0) {
@@ -115,6 +125,7 @@ async function notifyAdminsAboutReservation(sock, jid, reserva, ctx) {
 
 async function notifyAdminsAboutCriticalError(sock, jid, message, error, ctx) {
     try {
+        if (technicalAlertsMuted('ERROR CRITICO')) return;
         const admins = getSystemAdminJids();
         const msg = `🔴 *Error Critico en el Bot* 🔴\n\n- *Cliente:* ${jid}\n- *Mensaje:* "${message}"\n- *Error:* ${error.message}\n\nPor favor, revisa la consola o los logs para mas detalles.`;
         await _sendToJids(sock, admins, msg, ctx);
@@ -220,6 +231,7 @@ async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendient
 // Todas estas notificaciones tecnicas van a system_admin_jids
 
 async function notifySystemAlert(sock, ctx, level, title, body) {
+    if (technicalAlertsMuted(title)) { logger.info(`Aviso técnico silenciado (SYSTEM_ALERTS_MUTED): ${title}`); return; }
     const admins = getSystemAdminJids();
     if (admins.length === 0) return;
     const msg = `${level} *${title}*\n\n${body}`;
@@ -285,6 +297,7 @@ async function notifyDjangoRecovered(sock, ctx) {
 }
 
 module.exports = {
+    technicalAlertsMuted,
     getAdminJids,
     getBusinessAdminJids,
     getSystemAdminJids,
