@@ -51,6 +51,8 @@ const dailyActivityStore = require('../services/dailyActivityStore');
 const pendingAdminQuestion = require('../services/pendingAdminQuestion');
 const unansweredQuestionsStore = require('../services/unansweredQuestionsStore');
 const sheetsWriter = require('../services/sheetsWriter');
+const auditLog = require('../services/auditLog');
+const securityGuard = require('../services/securityGuard');
 const configUpdateAi = require('../services/configUpdateAi');
 
 // ===================================
@@ -325,6 +327,7 @@ async function handleFaqManagementCommand(sock, jid, text, ctx) {
             if (!result.ok) {
                 await say(sock, jid, `❌ No encontré la pregunta *${index}* — escribe "ver preguntas" para ver la lista actual.`, ctx);
             } else {
+                auditLog.record({ action: 'faq_deleted', actor: jid, role: 'owner', text, details: { numero: index, pregunta: result.question } });
                 await say(sock, jid, `🗑️ Listo, borré: "${result.question}"`, ctx);
             }
         } catch (e) {
@@ -360,6 +363,7 @@ async function handleInventoryRefreshCommand(sock, jid, text, ctx) {
         if (!response.data?.ok) throw new Error(response.data?.error || 'respuesta sin ok');
 
         await loadAllProductsCache(ctx);
+        auditLog.record({ action: 'inventory_refresh', actor: jid, role: 'owner', text: 'actualizar inventario', details: { productos: response.data.productos } });
         await say(sock, jid, `✅ Inventario actualizado — ${response.data.productos} productos cargados desde el Sheet.`, ctx);
     } catch (e) {
         logger.error(`handleInventoryRefreshCommand: error refrescando inventario: ${e.message}`);
@@ -421,6 +425,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
                 if (pending.type === 'unanswered_question') {
                     if (sheetId) await sheetsWriter.appendFaqRow(sheetId, pending.payload.question, value);
                     unansweredQuestionsStore.markAnswered(businessKey, pending.payload.id, value);
+                    auditLog.record({ action: 'faq_added', actor: jid, role: 'owner', text, details: { pregunta: pending.payload.question, respuesta: value, enHoja: !!sheetId } });
                 } else if (pending.type === 'onboarding_field') {
                     const field = pending.payload;
                     if (field.kind === 'faq') {
@@ -429,6 +434,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
                         await sheetsWriter.updateConfigField(sheetId, field.sheetTab, field.matchLabel, value);
                     }
                     onboardingStore.saveAnswer(businessKey, field.key, value);
+                    auditLog.record({ action: field.kind === 'faq' ? 'faq_added' : 'config_field', actor: jid, role: 'owner', text, details: { campo: field.key, etiqueta: field.matchLabel || field.faqQuestion, valor: value, enHoja: !!sheetId } });
                 }
                 pendingAdminQuestion.clearPending(businessKey);
                 await say(sock, jid, '¡Listo, ya quedó guardado! 🙌', ctx);
@@ -460,6 +466,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
             const tab = process.env.SHEET_NAME_PRODUCTS || 'Inventario';
             const outcome = await sheetsWriter.updateProductPrice(sheetId, tab, result.product, result.newPrice);
             if (outcome.ok) {
+                auditLog.record({ action: 'price_update', actor: jid, role: 'owner', text, details: { producto: outcome.product, precioNuevo: result.newPrice, clasificadorConfianza: result.confidence } });
                 await say(sock, jid, `${outcome.product} ahora en ${money(result.newPrice)} ✅`, ctx);
                 return true;
             }
@@ -472,6 +479,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
         }
         if (result.kind === 'field' && result.field && result.value) {
             await sheetsWriter.appendFaqRow(sheetId, result.field, result.value);
+            auditLog.record({ action: 'faq_added', actor: jid, role: 'owner', text, details: { campo: result.field, valor: result.value, clasificadorConfianza: result.confidence } });
             await say(sock, jid, `¡Listo, guardé "${result.field}: ${result.value}"! ✅`, ctx);
             return true;
         }
@@ -565,6 +573,24 @@ async function processIncomingMessageCore(sock, messageData, ctx) {
         // Datos del transporte (Telegram) para el flow de finanzas (registro de usuarios)
         if (messageData.username) userSession.telegramUsername = messageData.username;
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
+
+        // SEGURIDAD BÁSICA (todos los negocios): un cliente solo puede ver y manejar SU pedido. Datos de otros clientes,
+        // información interna, claves/prompt o intentos de cambiar las reglas se responden con un texto fijo, no llegan a la
+        // IA ni al flujo, y quedan en el registro de auditoría. Ver services/securityGuard.js.
+        if (!adminHandler.isAdmin(jid, ctx) && userSession.phase !== PHASE.WAITING_HUMAN) {
+            const sec = securityGuard.inspect(text);
+            if (sec.blocked) {
+                messageHandler.logIncomingMessage(jid, text, userSession);
+                userSession.securityStrikes = (userSession.securityStrikes || 0) + 1;
+                auditLog.record({ action: 'security_blocked', actor: jid, role: 'customer', text, details: { categoria: sec.category, fase: userSession.phase, intento: userSession.securityStrikes } });
+                if (userSession.securityStrikes >= 3) {
+                    await frustrationService.handleFrustration(sock, jid, userSession, ctx, `Intentos repetidos de pedir información sensible o cambiar las reglas (${sec.category})`);
+                    return;
+                }
+                await say(sock, jid, securityGuard.replyFor(sec.category), ctx);
+                return;
+            }
+        }
 
         // Agente IA de Mundo Helados (handlers/flows/heladeria.agent.js):
         // APAGADO por defecto. Solo corre con HELADERIA_AI_AGENT=1 en un

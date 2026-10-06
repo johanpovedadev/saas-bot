@@ -83,7 +83,24 @@ function resolveTargetJid(token, userSession) {
  * @param {Object} ctx - Contexto global
  * @returns {Promise<boolean>} - true si se procesó un comando
  */
+/**
+ * Punto de entrada de los comandos de administración. Todo comando que un administrador ejecuta con éxito queda en el
+ * registro de auditoría (quién, cuándo, qué texto exacto) - ver services/auditLog.js.
+ */
 async function handleAdminCommand(sock, jid, text, userSession, ctx) {
+    const handled = await handleAdminCommandInner(sock, jid, text, userSession, ctx);
+    if (handled) {
+        try {
+            require('../../services/auditLog').record({
+                action: 'admin_command', actor: jid, role: 'admin', text,
+                details: { comando: String(text || '').toLowerCase().trim().split(/\s+/).slice(0, 3).join(' ') }
+            });
+        } catch (_) { /* la auditoría nunca debe romper el comando */ }
+    }
+    return handled;
+}
+
+async function handleAdminCommandInner(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
 
     // Prender/apagar otros bots por chat: tiene su PROPIA autorización (más
