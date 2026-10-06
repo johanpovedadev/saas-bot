@@ -22,6 +22,14 @@ const AI_MARKER = '@usa-ia-real';
 // Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
 const WITH_AI = process.argv.includes('--with-ai');
 
+// REGLA del proyecto: las pruebas simulan la IA, siempre. Gastar tokens reales es decisión de Johan y se declara
+// a propósito (ALLOW_REAL_AI=1); sin eso ni siquiera arranca, para que no pase por accidente (30 sept y 3 oct 2026).
+if (WITH_AI && process.env.ALLOW_REAL_AI !== '1') {
+    console.error('✋ --with-ai gasta tokens REALES de Gemini. Las pruebas simulan la IA por regla; si de verdad quieres gastar cuota, corre:');
+    console.error('   ALLOW_REAL_AI=1 node scripts/run-tests.js --with-ai');
+    process.exit(2);
+}
+
 function findTestFiles() {
     const rootFiles = fs.readdirSync(ROOT)
         .filter(f => /^test_.*\.js$/.test(f))
@@ -70,7 +78,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0' }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0' }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');

@@ -660,6 +660,10 @@ envConfig.printSummary = function() {
 
 module.exports = envConfig;
 
+// Política de IA del entorno: instala el freno en el SDK de Gemini (pruebas simuladas, tope diario) en TODO proceso
+// que cargue la configuración, llame o no a heladeriaAi. Ver services/geminiGuard.js.
+require('../services/geminiGuard');
+
 // Auto-validación en modo debug
 if (envConfig.debug.debugMode) {
     envConfig.printSummary();

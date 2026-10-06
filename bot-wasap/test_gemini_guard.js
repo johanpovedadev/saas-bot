@@ -10,6 +10,9 @@
 process.env.BUSINESS_KEY = 'heladeria';
 process.env.GEMINI_API_KEY = 'clave-falsa-para-prueba-de-guarda-0000000';
 process.env.LOG_LEVEL = 'fatal';
+// Esta prueba SIMULA el SDK (getGenerativeModel se reemplaza abajo): habilita la IA para ejercitar el cortacircuitos
+// sin que la regla "las pruebas no llaman a la IA" (test_regla_ia_simulada_en_pruebas.js) lo bloquee de antemano.
+process.env.ALLOW_REAL_AI = '1';
 
 const guard = require('./services/geminiGuard');
 const heladeriaAi = require('./services/heladeriaAi');
@@ -56,12 +59,16 @@ function check(cond, msg) {
         guard.noteError(new Error('503 Service Unavailable: high demand'));
         check(guard.isBlocked() === false, 'un error pasajero (503) no abre el cortacircuitos');
 
-        // 4) Contador de uso.
-        guard._reset();
-        guard.noteCall(); guard.noteCall(); guard.noteCall();
-        check(guard.status().calls === 3, 'cuenta las llamadas del día (para enterarse antes de que se agote la cuota)');
-
+        // 4) Contador de uso: lo lleva el SDK, una vez por llamada (aunque el servicio también avise con noteCall).
         GoogleGenerativeAI.prototype.getGenerativeModel = realGet;
+        const realFetch = global.fetch;
+        global.fetch = async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok' }], role: 'model' }, finishReason: 'STOP' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        guard._reset();
+        const real = new GoogleGenerativeAI(process.env.GEMINI_API_KEY).getGenerativeModel({ model: 'models/gemini-3.1-flash-lite' });
+        for (let i = 0; i < 3; i++) { guard.noteCall(); await real.generateContent('hola'); }
+        global.fetch = realFetch;
+        check(guard.status().calls === 3, 'cuenta las llamadas del día, una vez cada una (para enterarse antes de que se agote la cuota)');
+
         console.log(failures === 0 ? '\n✅ TODOS LOS CHECKS PASARON' : `\n❌ ${failures} fallos`);
         process.exitCode = failures === 0 ? 0 : 1;
     } catch (e) {

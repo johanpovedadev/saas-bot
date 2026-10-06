@@ -19,6 +19,12 @@
  *
  * Uso: node scripts/heladeria-agent/replay.js <corpus.json> <catalogo.json> <dirSalida> [concurrencia] [ids,separados]
  */
+// REGLA: este arnés gasta tokens REALES (una corrida completa son miles de llamadas). Solo corre si Johan lo pide a
+// propósito: ALLOW_REAL_AI=1, y con AI_DAILY_MAX acotas cuántas llamadas puede gastar como máximo.
+if (process.env.ALLOW_REAL_AI !== '1') {
+    console.error('✋ replay.js usa la IA real y gasta cuota. Para correrlo: ALLOW_REAL_AI=1 AI_DAILY_MAX=<tope> node scripts/heladeria-agent/replay.js ...');
+    process.exit(2);
+}
 const path = require('path');
 const fs = require('fs');
 const { AsyncLocalStorage } = require('async_hooks');

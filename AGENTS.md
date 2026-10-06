@@ -18,6 +18,16 @@
 
 - Explica brevemente qué archivos vas a editar y cuál es el impacto esperado antes de generar código.
 
+### 4. 🧪 Las pruebas SIMULAN la IA, siempre (Johan, 6 oct 2026)
+
+Los tokens reales los gasta Johan probando en la vida real; ninguna prueba, agente ni script los gasta por su cuenta. Origen: el 30 sept una sola corrida de pruebas hizo ~7.500 llamadas (≈85 % del gasto de 28 días) y el 3 oct las pruebas agotaron la cuota diaria.
+
+- Toda prueba (`test_*.js`, simulador `tests_sim/`) usa IA simulada. `services/geminiGuard.js` lo hace cumplir en el SDK: un proceso cuyo script principal es un test, o con `NODE_ENV=test`, no llega a Gemini aunque tenga clave real.
+- Gastar tokens reales en una prueba, un replay o un script es una decisión de Johan y se declara a propósito: `ALLOW_REAL_AI=1` (y acota con `AI_DAILY_MAX`). Nunca lo actives por tu cuenta ni lo dejes puesto en un `.env`.
+- Tope diario duro `AI_DAILY_MAX` (5000 por defecto): un bucle se corta solo.
+- Un agente, flujo o negocio nuevo se entrega con su prueba de IA simulada; la validación con IA real la corre Johan.
+- `test_regla_ia_simulada_en_pruebas.js` demuestra la regla con procesos reales: si falla, no se entrega.
+
 ## 🏗 Arquitectura
 
 - Un solo código (`bot-wasap/`) para varios negocios (tenants).

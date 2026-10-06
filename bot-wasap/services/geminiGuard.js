@@ -16,6 +16,16 @@
  *  3) Contador: cuántas llamadas hizo hoy este negocio (logs/ai-usage-*.json),
  *     con aviso al pasar el umbral AI_DAILY_WARN, para enterarse antes de que
  *     se acabe la cuota.
+ *  4) REGLA: las pruebas simulan la IA, siempre. Todo proceso cuyo script
+ *     principal sea un test (test_*.js, *.test.js) o corra con NODE_ENV=test
+ *     queda bloqueado, tenga la clave que tenga. Gastar tokens reales en una
+ *     prueba es una decisión de Johan: exige ALLOW_REAL_AI=1 explícito.
+ *  5) Tope diario duro (AI_DAILY_MAX, 5000 por defecto): si algo entra en bucle
+ *     -una prueba, un reintento infinito- se corta solo en vez de gastar el
+ *     saldo entero (el 30 sept 2026 una sola corrida gastó ~7.500 llamadas).
+ *
+ * El freno vive en el SDK (installSdkGuard), no en cada servicio: así cubre
+ * también a los negocios que llaman a Gemini sin pasar por heladeriaAi.
  */
 
 const fs = require('fs');
@@ -25,6 +35,9 @@ const { logger } = require('../utils/logger');
 const QUOTA_BLOCK_MS = 30 * 60 * 1000;   // tras "cuota diaria agotada", se vuelve a probar a los 30 min
 const DAILY_WARN = parseInt(process.env.AI_DAILY_WARN || '30000', 10);
 
+const DAILY_MAX = parseInt(process.env.AI_DAILY_MAX || '5000', 10);
+
+let sdkGuardInstalled = false;
 let blockedUntil = 0;
 let blockReason = '';
 let counted = { day: '', calls: 0, errors: 0, warned: false };
@@ -42,15 +55,44 @@ function isDisabledByEnv() {
     return process.env.LION_DISABLE_AI === '1';
 }
 
-/** true si NO se debe llamar a Gemini ahora (pruebas o cuota agotada). */
+/** ¿Este proceso es una prueba? Por el script principal o por NODE_ENV, no por una bandera que se pueda olvidar. */
+function isTestProcess() {
+    const main = (require.main && require.main.filename) || '';
+    return process.env.NODE_ENV === 'test' || /(^|[\\/])test_[^\\/]*\.js$|\.test\.js$/.test(main);
+}
+
+function realAiAllowedInTests() {
+    return process.env.ALLOW_REAL_AI === '1';
+}
+
+/**
+ * LION_AI_STUBBED=1: la prueba sustituye la IA por simulacros y necesita que los servicios la traten como disponible
+ * (para ejercitar la ruta "con IA"). NO levanta el freno del SDK: si un simulacro se queda corto y algo llega a Gemini,
+ * la llamada sigue bloqueada.
+ */
+function aiStubbedInTest() {
+    return process.env.LION_AI_STUBBED === '1';
+}
+
+/**
+ * Motivo por el que NO se debe llamar a Gemini ahora, o '' si se puede.
+ * @param {boolean} [atSdk] true en la puerta del SDK, la única que sale a la red.
+ */
+function blockReasonNow(atSdk = false) {
+    if (isDisabledByEnv()) return 'IA desactivada por LION_DISABLE_AI';
+    if (isTestProcess() && !realAiAllowedInTests() && (atSdk || !aiStubbedInTest())) return 'las pruebas simulan la IA (ALLOW_REAL_AI=1 la habilita a propósito)';
+    if (Date.now() < blockedUntil) return blockReason;
+    if (counted.day === today() && counted.calls >= DAILY_MAX) return `tope diario de ${DAILY_MAX} llamadas (AI_DAILY_MAX)`;
+    return '';
+}
+
+/** true si NO se debe llamar a Gemini ahora (pruebas, cuota agotada o tope diario). */
 function isBlocked() {
-    if (isDisabledByEnv()) return true;
-    if (Date.now() < blockedUntil) return true;
-    return false;
+    return blockReasonNow() !== '';
 }
 
 function status() {
-    return { disabledByEnv: isDisabledByEnv(), blockedUntil, blockReason, ...counted };
+    return { disabledByEnv: isDisabledByEnv(), blockedUntil, blockReason, dailyMax: DAILY_MAX, ...counted };
 }
 
 function persist() {
@@ -63,6 +105,11 @@ function persist() {
 
 /** Se llama justo antes de cada llamada a la red. */
 function noteCall() {
+    if (sdkGuardInstalled) return; // el SDK ya cuenta cada llamada (installSdkGuard)
+    countCall();
+}
+
+function countCall() {
     const d = today();
     if (counted.day !== d) counted = { day: d, calls: 0, errors: 0, warned: false };
     counted.calls++;
@@ -88,7 +135,40 @@ function noteError(e) {
     }
 }
 
+/**
+ * Envuelve GenerativeModel.generateContent{,Stream} del SDK: es el ÚNICO camino a Gemini, así que si está bloqueado
+ * no sale ninguna petición (ni gasta, ni depende de internet) y si no, la llamada queda contada. Idempotente.
+ */
+function installSdkGuard() {
+    if (sdkGuardInstalled) return;
+    let GenerativeModel;
+    try { ({ GenerativeModel } = require('@google/generative-ai')); } catch (_) { return; }
+    for (const method of ['generateContent', 'generateContentStream']) {
+        const original = GenerativeModel.prototype[method];
+        if (typeof original !== 'function') continue;
+        GenerativeModel.prototype[method] = function guarded(...args) {
+            const why = blockReasonNow(true);
+            if (why) return Promise.reject(new Error(`GEMINI_BLOQUEADO: ${why}`));
+            countCall();
+            return original.apply(this, args);
+        };
+    }
+    sdkGuardInstalled = true;
+}
+
+/** Retoma el contador del día tras un reinicio (PM2 reinicia seguido): el tope diario no se "reinicia" con el proceso. */
+function loadTodayCount() {
+    if (isTestProcess()) return;
+    try {
+        const saved = JSON.parse(fs.readFileSync(usageFile(), 'utf8'));
+        if (saved && saved.day === today()) counted = { ...counted, ...saved };
+    } catch (_) { /* primer arranque del día */ }
+}
+
 /** Solo para pruebas. */
 function _reset() { blockedUntil = 0; blockReason = ''; counted = { day: '', calls: 0, errors: 0, warned: false }; }
 
-module.exports = { isBlocked, noteCall, noteError, status, isDailyQuotaError, _reset };
+loadTodayCount();
+installSdkGuard();
+
+module.exports = { isBlocked, blockReasonNow, isTestProcess, noteCall, noteError, status, isDailyQuotaError, installSdkGuard, _reset };

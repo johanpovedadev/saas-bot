@@ -25,6 +25,7 @@ Object.assign(process.env, {
     // levanta el interruptor global que pone scripts/run-tests.js para que los
     // clientes de IA lleguen hasta el SDK simulado y se pueda medir la temperatura.
     LION_DISABLE_AI: '0',
+    LION_AI_STUBBED: '1', // el SDK es simulado: los servicios ven la IA disponible (la regla de pruebas sin IA real sigue vigente)
     CONVERSATION_LOG_PATH: path.join(TMP, 'conv.log'),
     WAITING_HUMAN_STORE_PATH: path.join(TMP, 'wh.json'),
     DAILY_ACTIVITY_STORE_PATH: path.join(TMP, 'da.json'),
