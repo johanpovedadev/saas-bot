@@ -18,6 +18,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const SKIP_MARKER = 'no es para correr';
 const AI_MARKER = '@usa-ia-real';
+// Clave de cifrado de finanzas SOLO para pruebas (32 bytes en base64): en una máquina limpia no hay .env con la real.
+const TEST_FINANCE_KEY = Buffer.alloc(32, 7).toString('base64');
 // --with-ai: corre SOLO los tests que dependen de Gemini de verdad (con la clave real y gastando cuota).
 // Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
 const WITH_AI = process.argv.includes('--with-ai');
@@ -78,7 +80,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0' }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');
