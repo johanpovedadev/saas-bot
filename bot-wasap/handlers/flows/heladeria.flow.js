@@ -1100,9 +1100,24 @@ async function handleQuantity(sock, jid, text, userSession, ctx, skipUnitsQuesti
             currentObs: ''
         };
         userSession.phase = HELADO_UNITS_MODE;
+        // Se le dice QUÉ eligió, para que la pregunta ("¿lo mismo o diferente?") sea explícita.
+        const nombresDe = (l) => (l || []).map(x => getProductName(x) || (x && x.nombre) || String(x || '')).filter(Boolean);
+        const saboresElegidos = nombresDe(flow.saboresSeleccionados);
+        const toppingsElegidos = nombresDe(flow.toppingsSeleccionados);
+        const tieneToppings = toppingsElegidos.length > 0;
+        const saboresTxt = saboresElegidos.length ? `sabor${saboresElegidos.length > 1 ? 'es' : ''} *${saboresElegidos.join(', ')}*` : 'los sabores que elegiste';
+        const toppingsTxt = tieneToppings ? ` y toppings *${toppingsElegidos.join(', ')}*` : ' y sin toppings';
         await say(sock, jid,
-            `🔄 Vas a pedir *${qty} unidades* de *${nombre}*. ¿Quieres que TODAS lleven los *mismos sabores y toppings* que elegiste, o *sabores/toppings diferentes* para cada una?\n\n` +
-            `*1)* Todas iguales\n*2)* Cada una diferente\n\n_Escribe el número de la opción._`, ctx);
+            `🔄 Vas a pedir *${qty} unidades* de *${nombre}* con ${saboresTxt}${toppingsTxt}.
+
+` +
+            `¿Las ${qty} llevan *lo mismo* (los mismos sabores${tieneToppings ? ' y los mismos toppings' : ''}), o quieres *cada una diferente*?
+
+` +
+            `*1)* Todas iguales
+*2)* Cada una diferente
+
+_Escribe el número de la opción._`, ctx);
         return;
     }
 

@@ -28,6 +28,9 @@ const isText = (m) => typeof m.content === 'string';
 
 // --- Reconocedores de pasos del flujo de reglas ----------------------------
 const RE_SABORES_PROMPT = /📍 \*Paso 1:\* Elige \*(\d+) (sabores|sabor)\*:/;
+// El mismo paso cuando se vuelve a mostrar (reshowCurrentStep) tras responder una pregunta: otro texto, mismos códigos.
+const RE_SABORES_RESHOW = /^🍦 \*(.+?)\* — elige \*(\d+) (sabores|sabor)\*:/m;
+const RE_TOPPINGS_UNIT_RESHOW = /📍 \*Toppings \(opcional\) unidad (\d+):\*/;
 // Pregunta de toppings con lista codificada (paso normal, por unidad, o el
 // "re-mostrar paso" de reshowCurrentStep): todas traen "¿Le agregamos algún
 // topping?" o la instrucción "Escribe el código (T1, T2...)".
@@ -35,7 +38,16 @@ const RE_TOPPINGS_PROMPT = /¿Le agregamos algún topping\?|_Escribe el código 
 const RE_TOPPINGS_LIST_ONLY = /📍 \*Toppings disponibles( \(unidad \d+\))?:\*/;
 const RE_UNIT_SABORES_PROMPT = /🍦 Unidad \*(\d+)\/(\d+)\* — elige \*(\d+) (sabores|sabor)\*:/;
 // El cliente pidió VER la lista (no solo se re-muestra el paso).
-const RE_ASKS_LIST = /\b(lista|cuales|cu[aá]les|que (toppings|adiciones|sabores) (hay|tienen|tienes)|qu[eé] hay|opciones|muestrame|mu[eé]strame|mandame la lista)\b/i;
+const RE_ASKS_LIST = /\b(lista|cuales|cu[aá]les|qu[eé] (toppings|adiciones|sabores) (hay|tienen|tienes)|qu[eé] hay|opciones|muestrame|mu[eé]strame|mandame la lista)\b/i;
+// ¿Pidió ver la lista de TOPPINGS? Preguntar "qué sabores de jugo hay" también contiene "qué ... hay" y NO es eso
+// (replay con IA real, 5 oct 2026: se le mostró la lista completa de toppings a quien preguntaba por los jugos).
+function asksToppingList(text) {
+    const t = String(text || '');
+    if (!RE_ASKS_LIST.test(t)) return false;
+    if (/\b(jugos?|limonadas?|malteadas?|granizados?|bebidas?|tomar|helados?|copas?|productos?|menu|men[uú])\b/i.test(t) && !/\b(toppings?|adiciones?|adici[oó]n|extras?)\b/i.test(t)) return false;
+    if (/\bsabores\b/i.test(t) && !/\b(toppings?|adiciones?|adici[oó]n|extras?)\b/i.test(t)) return false;
+    return true;
+}
 // Mensajes que muestran que la cantidad / el modo de unidades ya se resolvió.
 const RE_QTY_RESOLVED = /^(🔄 Vas a pedir|✅ \d+x |🍦 Unidad \*\d+\/\d+\*|🛒 \*Tu pedido)/m;
 const RE_UNITS_RESOLVED = /^(🍦 Unidad \*\d+\/\d+\*|✅ \d+x |🛒 \*Tu pedido)/m;
@@ -77,21 +89,38 @@ function rewriteSaboresPrompt(text, answeredLater) {
     return `🍦 ¡${nombre ? `*${nombre}*, ` : ''}buena elección! ${pregunta}${opciones}`;
 }
 
+function rewriteSaboresReshow(text) {
+    const m = text.match(RE_SABORES_RESHOW);
+    const nombre = m ? m[1] : '';
+    const n = m ? parseInt(m[2], 10) : 1;
+    const sabores = namesFromCodedList(text);
+    const opciones = sabores.length ? ` Tenemos ${joinNames(sabores, 12)}.` : '';
+    const pregunta = n > 1 ? `¿De qué sabores la quieres? Son *${n}* (pueden repetirse, ej: "todos de fresa").` : '¿De qué sabor lo quieres?';
+    return `🍦 Seguimos con ${nombre ? `*${nombre}*` : 'tu pedido'}. ${pregunta}${opciones}`;
+}
+
+function rewriteToppingsUnitReshow(text) {
+    const unit = (text.match(RE_TOPPINGS_UNIT_RESHOW) || [])[1];
+    const lista = rewriteToppingsList(text.replace(RE_TOPPINGS_UNIT_RESHOW, `📍 *Toppings disponibles (unidad ${unit}):*`));
+    return lista;
+}
+
 function rewriteToppingsPrompt(text, answeredLater) {
     // Conserva la confirmación de lo anterior ("✅ Sabores: *...*.", "✅
     // Sabores unidad *2*: *Lulo*.").
     const first = text.split('\n')[0];
     const confirm = /^✅ Sabores/.test(first) ? first : '';
     if (answeredLater) return confirm || null;
-    const tops = namesFromCodedList(text);
-    const ejemplos = tops.length ? ` (ej: ${joinNames(tops, 5)})` : '';
-    const q = `¿Le agregamos algún topping${ejemplos}? Tienen costo adicional. Si quieres te paso la lista con precios 🍓🍫`;
-    return confirm ? `${confirm}\n\n${q}` : q;
+    // Regla de Johan (6 oct 2026): al preguntar por toppings se envía la lista COMPLETA con precios, aclarando que son
+    // opcionales y tienen costo adicional (sin códigos T1..: el cliente los pide por nombre).
+    const lista = rewriteToppingsList(text);
+    return confirm ? `${confirm}\n\n${lista}` : lista;
 }
 
 function rewriteToppingsList(text) {
     // El cliente PIDIÓ la lista: se muestra, sin códigos.
-    const title = (text.match(/📍 \*Toppings disponibles( \(unidad \d+\))?:\*/) || ['🍓 *Estos son nuestros toppings* (tienen costo adicional):'])[0];
+    const unidad = (text.match(/📍 \*Toppings disponibles \(unidad (\d+)\):\*/) || [])[1];
+    const title = `🍓 *Toppings${unidad ? ` de la unidad ${unidad}` : ''}* — son *opcionales* y tienen un *costo adicional* (el precio está al lado):`;
     const lines = text.split('\n')
         .filter(l => /^\*?T\d+\.?\*?\s/.test(l) || /^\*[^*]+\*$/.test(l))
         .map(l => l.replace(/^\*?T\d+\.?\*?\s+/, '• '))
@@ -108,7 +137,22 @@ function rewriteUnitSaboresPrompt(text, answeredLater) {
     return `🍦 Ahora la unidad *${unit} de ${total}*: ¿${n > 1 ? `qué *${n}* sabores` : 'qué sabor'} le ponemos?${opciones}`;
 }
 
-function rewriteUnitsPrompt(text) {
+/**
+ * Varias unidades del mismo producto: se le dice QUÉ eligió ("Fresa", sin toppings) y se le pregunta, con esas
+ * palabras, si las demás llevan lo mismo o algo distinto. Una pregunta clara y corta, con la respuesta a la vista.
+ */
+function rewriteUnitsPrompt(text, T) {
+    const flow = (T && T.userSession && T.userSession.heladoFlow) || null;
+    const qty = (flow && flow.customization && flow.customization.qty) || (text.match(/\*(\d+) unidades\*/) || [])[1];
+    const nombreDe = (x) => (x && (x.NombreProducto || x.nombre)) || String(x || '');
+    const sabores = flow ? (flow.saboresSeleccionados || []).map(nombreDe).filter(Boolean) : [];
+    const toppings = flow ? (flow.toppingsSeleccionados || []).map(nombreDe).filter(Boolean) : [];
+    const producto = (text.match(/de \*(.+?)\*\./) || [])[1] || (flow && flow.product ? nombreDe(flow.product) : 'tu pedido');
+    if (qty && flow) {
+        const eleccion = `${sabores.length ? `sabor${sabores.length > 1 ? 'es' : ''} *${sabores.join(', ')}*` : 'los sabores que elegiste'}${toppings.length ? ` y toppings *${toppings.join(', ')}*` : ' y sin toppings'}`;
+        return `🔄 Vas a pedir *${qty} unidades* de *${producto}* con ${eleccion}.\n\n` +
+            `¿Las ${qty} llevan *lo mismo* (los mismos sabores${toppings.length ? ' y los mismos toppings' : ''}), o quieres *cada una diferente*? 😊`;
+    }
     return text.replace(/\n*\*1\)\* Todas iguales\n\*2\)\* Cada una diferente\n*(_Escribe el número de la opción\._)?/, '').trim();
 }
 
@@ -154,14 +198,16 @@ function present(messages, T) {
         let t = m.content;
         const toppingsAnsweredLater = later.some(x => /^(✅ Toppings:|✅ Sin toppings|¿Cuántas unidades)/m.test(x) || RE_QTY_RESOLVED.test(x) || RE_POST_ADD.test(x) || RE_CART_SUMMARY.test(x));
         if (RE_SABORES_PROMPT.test(t)) t = rewriteSaboresPrompt(t, answeredLater);
+        else if (RE_SABORES_RESHOW.test(t)) t = answeredLater ? null : rewriteSaboresReshow(t);
+        else if (RE_TOPPINGS_UNIT_RESHOW.test(t)) t = rewriteToppingsUnitReshow(t);
         else if (RE_UNIT_SABORES_PROMPT.test(t)) t = rewriteUnitSaboresPrompt(t, later.some(x => /^✅ Sabores unidad/m.test(x) || RE_QTY_RESOLVED.test(x) && !RE_UNIT_SABORES_PROMPT.test(x)));
         else if (RE_TOPPINGS_LIST_ONLY.test(t)) t = rewriteToppingsList(t);
         else if (RE_TOPPINGS_PROMPT.test(t)) {
-            t = (!toppingsAnsweredLater && RE_ASKS_LIST.test(customerText))
+            t = (!toppingsAnsweredLater && asksToppingList(customerText))
                 ? rewriteToppingsList(t)
                 : rewriteToppingsPrompt(t, toppingsAnsweredLater);
         }
-        else if (RE_UNITS_PROMPT.test(t) || /^🔄 Vas a pedir/.test(t)) t = later.some(x => RE_UNITS_RESOLVED.test(x)) ? null : rewriteUnitsPrompt(t);
+        else if (RE_UNITS_PROMPT.test(t) || /^🔄 Vas a pedir/.test(t)) t = later.some(x => RE_UNITS_RESOLVED.test(x)) ? null : rewriteUnitsPrompt(t, T);
         else if (RE_POST_ADD.test(t)) t = later.some(x => RE_POST_ADD.test(x) || RE_CART_SUMMARY.test(x)) ? null : rewritePostAdd(t);
         else if (RE_CART_SUMMARY.test(t)) t = rewriteCartSummary(t);
         if (t === null || t === undefined) continue;
@@ -176,4 +222,4 @@ function present(messages, T) {
     return out;
 }
 
-module.exports = { present, namesFromCodedList };
+module.exports = { present, namesFromCodedList, asksToppingList };

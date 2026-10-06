@@ -30,7 +30,7 @@ Object.assign(process.env, {
     TIME_WRITING_SIMULATION_MS: '1',
     LOG_LEVEL: 'warn'
 });
-delete process.env.HELADERIA_AI_AGENT;
+process.env.HELADERIA_AI_AGENT = '0'; // el .env.heladeria lo deja en 1 (el agente es el modo por defecto del negocio)
 
 const axios = require('axios');
 let postedOrders = 0;

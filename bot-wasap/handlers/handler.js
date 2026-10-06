@@ -490,7 +490,28 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
  * @param {Object} messageData - Datos del mensaje (from, text, key)
  * @param {Object} ctx - Contexto global
  */
+/**
+ * Punto de entrada de cada mensaje. Con el agente de heladería encendido, las respuestas numéricas del cliente
+ * ("1", "2", "S1 S3"...) las resuelve el flujo de reglas (gratis y exacto), pero esos textos traen menús numerados y
+ * códigos: se presentan en tono conversacional, igual que los turnos del agente.
+ */
 async function processIncomingMessage(sock, messageData, ctx) {
+    const jid = messageData && messageData.from;
+    if (jid && process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria' && typeof (messageData && messageData.text) === 'string') {
+        try {
+            const heladeriaAgent = require('./flows/heladeria.agent');
+            const session = ctx && ctx.sessions && ctx.sessions[jid];
+            if (heladeriaAgent.shouldPresentRules(messageData.text, session, jid)) {
+                return await heladeriaAgent.runWithPresentation(sock, jid, messageData.text, session, ctx, (bufferedSock) => processIncomingMessageCore(bufferedSock, messageData, ctx));
+            }
+        } catch (e) {
+            logger.error(`[${jid}] error preparando la presentación del agente, sigue por reglas: ${e.message}`);
+        }
+    }
+    return processIncomingMessageCore(sock, messageData, ctx);
+}
+
+async function processIncomingMessageCore(sock, messageData, ctx) {
     const { from: jid, text } = messageData;
     
     try {

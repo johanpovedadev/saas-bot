@@ -548,7 +548,12 @@ const CORE_EXECUTORS = {
     },
 
     async info_local(args, T) {
+        // handleDireccionOption deja al cliente en el menú inicial (es la opción 3 del menú). Si preguntó por el horario
+        // a mitad de un pedido, se conserva su fase: si no, su siguiente "2" ("ir a pagar") se leía como la opción 2
+        // del menú (encargos) y el pedido que llevaba quedaba huérfano.
+        const faseAntes = T.userSession.phase;
         await menuHandler.handleDireccionOption(T.sock, T.jid, T.userSession, T.ctx);
+        if (faseAntes !== PHASE.SELECCION_OPCION && faseAntes !== PHASE.BROWSE_IMAGES) T.userSession.phase = faseAntes;
     },
 
     async responder_pregunta(args, T) {
@@ -602,7 +607,9 @@ const CORE_EXECUTORS = {
         const opts = [];
         const all = T.plugin.catalog.clarifiable(T.ctx);
         const orderable = T.plugin.catalog.orderable(T.ctx);
-        for (const o of (Array.isArray(args.opciones) ? args.opciones : []).slice(0, 10)) {
+        for (const o0 of (Array.isArray(args.opciones) ? args.opciones : []).slice(0, 10)) {
+            // La IA a veces copia el código de la lista ("S1 Lulo"): al cliente se le muestra el nombre, nunca el código.
+            const o = String(o0).replace(/^[ST]\d{1,2}[.:)\s-]+/i, '').trim() || String(o0);
             // Primero coincidencia EXACTA en todo el catálogo; después
             // producto por similitud. Si no es nada del catálogo se muestra
             // como texto, SIN precio - replay real: la IA ofreció variantes
@@ -1122,9 +1129,52 @@ function createCartAgent(plugin) {
         return true;
     }
 
+    /**
+     * ¿Este mensaje lo va a resolver el flujo de reglas por ser protocolo numérico ("1", "2", "S1 S3") y conviene
+     * presentarle al cliente la respuesta del flujo en tono conversacional? (mismo criterio que processMessage).
+     */
+    function shouldPresentRules(text, userSession, jid) {
+        if (!isEnabledFor(jid) || !userSession || typeof plugin.hooks.present !== 'function') return false;
+        if (typeof text !== 'string' || !text.trim()) return false;
+        if (!plugin.agentPhases.has(userSession.phase)) return false;
+        const hasPendingOptions = Array.isArray(userSession._agentPendingOptions) && userSession._agentPendingOptions.length > 0;
+        return !hasPendingOptions && plugin.fastPathApplies(text, userSession.phase);
+    }
+
+    /**
+     * Corre `run(sockBuffered)` (el flujo de reglas) reteniendo lo que le escribe a ESTE cliente y lo envía al final
+     * ya presentado (sin menús numerados ni códigos), igual que los turnos del agente. Los avisos a otros números
+     * (administración) salen de inmediato. Si la presentación falla, los mensajes van tal cual.
+     */
+    async function runWithPresentation(sock, jid, text, userSession, ctx, run) {
+        const outbox = [];
+        const turnStartIso = new Date().toISOString();
+        ctx.__agentBufferingJids = ctx.__agentBufferingJids || new Set();
+        ctx.__agentBufferingJids.add(jid);
+        const bufferedSock = new Proxy(sock, {
+            get(target, prop) {
+                if (prop === 'sendMessage') {
+                    return async (to, content, opts) => {
+                        if (to === jid) { outbox.push({ content, opts }); return { id: null }; }
+                        return target.sendMessage(to, content, opts);
+                    };
+                }
+                const v = target[prop];
+                return typeof v === 'function' ? v.bind(target) : v;
+            }
+        });
+        try {
+            await run(bufferedSock);
+        } finally {
+            await flushOutbox({ jid, ctx, plugin, text, userSession: (ctx.sessions && ctx.sessions[jid]) || userSession }, sock, outbox, turnStartIso);
+        }
+    }
+
     return {
         isEnabled,
         isEnabledFor,
+        shouldPresentRules,
+        runWithPresentation,
         processMessage,
         setTraceListener,
         _internal: { TOOLS, EXECUTORS, EXEC_ORDER, GROUNDS, EFFECTS, buildUserContent, describeHistory }

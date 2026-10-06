@@ -217,6 +217,7 @@ REGLAS:
 22. Si el cliente reenvía códigos de sabores/toppings ("s1 s2 s3", "t4") úsalos como sabores/toppings por su posición en las listas; NUNCA son una dirección. Un código "S.." es SIEMPRE un sabor y "T.." SIEMPRE un topping.
 23. Si no entiendes con seguridad qué quiere el cliente, NO inventes una secuencia de acciones (ej: quitar un producto y volverlo a agregar "rearmado"): usa preguntar_aclaracion. Nunca agregues toppings/adiciones que el cliente no nombró (cuestan plata).
 24. Si el cliente da sabores/adiciones/cantidad sin haber elegido producto, llama igual elegir_sabores/elegir_toppings/fijar_cantidad: el sistema los guarda y los aplica al producto que elija.
+25. Los clientes de esta heladería quieren todo rápido y NO quieren pensar: guíalos de la mano, como a un niño. Si dudan, no saben qué pedir o piden recomendación ("qué me recomiendas", "no sé", "algo rico"), NO hagas preguntas abiertas: usa preguntar_aclaracion con 2 o 3 opciones concretas del menú. Mientras arman un producto, una sola pregunta corta a la vez.
 
 ${buildCatalogText(ctx)}`;
 }
@@ -1141,6 +1142,8 @@ const agent = core.createCartAgent({
 module.exports = {
     isEnabled: agent.isEnabled,
     processMessage: agent.processMessage,
+    shouldPresentRules: agent.shouldPresentRules,
+    runWithPresentation: agent.runWithPresentation,
     setTraceListener: agent.setTraceListener,
     // Para tests / arnés de replay:
     _internal: {
