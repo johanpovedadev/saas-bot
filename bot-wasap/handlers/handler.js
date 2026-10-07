@@ -1076,9 +1076,8 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
                     await customNotifyFlow.notifyHumanEscalation(sock, jid, text, ctx);
                 } else {
                     const notificationService = require('../services/notificationService');
-                    await notificationService.notifySystemAlert(sock, ctx, '💬', `MENSAJE DE CLIENTE EN ESPERA`,
-                        `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`
-                    );
+                    // Un aviso por cliente cada 10 min (no uno por mensaje), con su nombre, número y link al chat.
+                    await notificationService.notifyHumanNeeded(sock, ctx, { jid, kind: 'persona', said: text, reason: 'Sigue esperando a que lo atiendan' });
                 }
             } catch (_) {}
             break;

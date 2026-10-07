@@ -213,8 +213,7 @@ const DOMICILIO_PRICE_RE = /\b(cu[aá]nto|valor|precio|cuesta|cobran)\b/i;
 
 async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
     try {
-        await notificationService.notifySystemAlert(sock, ctx, '🛵', 'CONSULTA VALOR DE DOMICILIO',
-            `Cliente: ${jid}\nDirección: ${direccion}\nHora: ${new Date().toLocaleString('es-CO')}`);
+        await notificationService.notifyHumanNeeded(sock, ctx, { jid, kind: 'domicilio', address: direccion });
     } catch (e) { /* ignore */ }
 }
 

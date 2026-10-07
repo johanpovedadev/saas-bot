@@ -2,6 +2,7 @@
 const { logger } = require('../utils/logger');
 const { say } = require('./bot_core');
 const envConfig = require('../config/env.loader');
+const ownerMessages = require('./ownerMessages');
 
 // ISSUE 60: Cola de notificaciones para cuando WhatsApp está offline
 const pendingNotifications = [];
@@ -39,12 +40,17 @@ function technicalAlertsMuted(title = '') {
     return process.env.SYSTEM_ALERTS_MUTED === '1' && TECHNICAL_ALERT.test(String(title));
 }
 
+/**
+ * Administrador del SISTEMA (Johan): recibe lo técnico. Si el negocio no lo configuró no se cae al dueño: los avisos
+ * de "BOT DESCONECTADO" o "STARTUP TIMEOUT" no le sirven a quien atiende un negocio (7 oct 2026: a la dueña de Mundo
+ * Helados le llegaban cientos).
+ */
 function getSystemAdminJids() {
     const config = envConfig.admin?.system_admin_jids;
     if (config && Array.isArray(config) && config.length > 0) {
         return config.map(normalizeJid).filter(Boolean);
     }
-    return getBusinessAdminJids();
+    return [];
 }
 
 /**
@@ -89,16 +95,38 @@ async function _sendToJids(sock, jids, msg, ctx) {
     }
 }
 
-async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
+/**
+ * Avisa a quien atiende los pedidos (la dueña) que un cliente necesita a una persona, con un mensaje que se entiende
+ * sin abrir nada más (ver services/ownerMessages.js). Un mismo cliente no genera más de un aviso cada 10 minutos.
+ *
+ * @param {Object} p
+ * @param {string} p.jid
+ * @param {'persona'|'ayuda'|'domicilio'|'sensible'} [p.kind]
+ * @param {string} [p.said] lo que escribió el cliente
+ * @param {string} [p.reason] por qué se avisa
+ * @param {string} [p.address]
+ * @param {number} [p.now] solo para pruebas
+ */
+async function notifyHumanNeeded(sock, ctx, { jid, kind = 'persona', said, reason, address, now }) {
     try {
+        const gate = ownerMessages.shouldNotify(kind, jid, now);
+        if (!gate.send) { logger.info(`Aviso a la administración omitido (ya se avisó hace poco por ${jid})`); return false; }
+        const session = ctx && ctx.sessions && ctx.sessions[jid];
+        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more });
         const admins = getOrdersAdminJids();
-        const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-        const msg = `🔔 Atencion: Cliente con dificultades.\n\nCliente: ${jid.split('@')[0]}\nUltimo mensaje: "${lastMessage}"\nAbrir chat: ${chatLink}\n\nPor favor, toma el control de este chat.`;
         await _sendToJids(sock, admins, msg, ctx);
-        logger.info(`Notificados admins negocio sobre problema con ${jid}`);
+        if (admins.length === 0) logger.warn(`Cliente ${jid} necesita una persona pero no hay administradores de pedidos configurados`);
+        return admins.length > 0;
     } catch (e) {
-        logger.error(`Error en notifyAdminsAboutCustomerIssue: ${e.message}`);
+        logger.error(`Error en notifyHumanNeeded: ${e.message}`);
+        return false;
     }
+}
+
+/** Compatibilidad: los textos internos de siempre se traducen a un motivo que la dueña entienda. */
+async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
+    const { reason, said } = ownerMessages.interpretLegacyReason(lastMessage);
+    return notifyHumanNeeded(sock, ctx, { jid, kind: 'ayuda', said, reason });
 }
 
 async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
@@ -200,6 +228,8 @@ async function notifyAdmin(sock, ctx, text) {
  */
 async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendientesNuevas = 0, pendientesAcumuladas = 0, numerosAcumulados = [] }) {
     const businessName = envConfig.business?.name || 'tu negocio';
+    // Un día sin movimiento no merece un mensaje: a quien atiende un negocio le sobra ruido.
+    if (!respondidas && !pendientes) { logger.info('Resumen diario omitido: hoy no hubo conversaciones'); return; }
     let pendientesLine;
     if (pendientes === 0) {
         pendientesLine = `✅ No quedó ninguna conversación pendiente.`;
@@ -211,12 +241,12 @@ async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendient
         pendientesLine = `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} pendiente${pendientes === 1 ? '' : 's'}:\n` +
             `   ${pendientesNuevas} nueva${pendientesNuevas === 1 ? '' : 's'} de hoy\n` +
             `   ${pendientesAcumuladas} de días anteriores, todavía sin cerrar:\n${listado}${masTexto}\n\n` +
-            `_Apenas resuelvas una, escribe "reactivar mia <número>" para que deje de salir acá._`;
+            `_Apenas resuelvas una, escribe "reactivar mia <número>" para que deje de salir aquí._`;
     }
     const msg = `¡Hola! Resumen de hoy en ${businessName}:\n\n` +
         `✅ Respondí en ${respondidas} conversacion${respondidas === 1 ? '' : 'es'}\n` +
         `${pendientesLine}\n\n` +
-        `¿Necesitás algo más? Escribime.`;
+        `¿Necesitas algo más? Escríbeme.`;
     await notifyAdmin(sock, ctx, msg);
     logger.info(`Resumen diario enviado a admins negocio: ${respondidas} respondidas, ${pendientes} pendientes (${pendientesNuevas} nuevas, ${pendientesAcumuladas} acumuladas)`);
 }
@@ -232,7 +262,10 @@ async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendient
 
 async function notifySystemAlert(sock, ctx, level, title, body) {
     if (technicalAlertsMuted(title)) { logger.info(`Aviso técnico silenciado (SYSTEM_ALERTS_MUTED): ${title}`); return; }
-    const admins = getSystemAdminJids();
+    // Lo técnico va al administrador de sistema; lo demás (un cliente pide una persona, consulta de domicilio...) es
+    // de quien atiende los pedidos. Antes todo iba al de sistema y, al restaurar el número de Johan, la dueña dejaba
+    // de enterarse de sus clientes.
+    const admins = TECHNICAL_ALERT.test(String(title)) ? getSystemAdminJids() : getOrdersAdminJids();
     if (admins.length === 0) return;
     const msg = `${level} *${title}*\n\n${body}`;
     await _sendToJids(sock, admins, msg, ctx);
@@ -302,6 +335,7 @@ module.exports = {
     getBusinessAdminJids,
     getSystemAdminJids,
     getOrdersAdminJids,
+    notifyHumanNeeded,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,

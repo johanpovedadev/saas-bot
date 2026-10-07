@@ -2238,8 +2238,7 @@ const DOMICILIO_PRICE_RE = /\b(cu[aá]nto|valor|precio|cuesta|cobran)\b/i;
 async function notifyDomicilioQuery(sock, jid, direccion, ctx) {
     const notificationService = require('../../services/notificationService');
     try {
-        await notificationService.notifySystemAlert(sock, ctx, '🛵', 'CONSULTA VALOR DE DOMICILIO',
-            `Cliente: ${jid}\nDirección: ${direccion}\nHora: ${new Date().toLocaleString('es-CO')}`);
+        await notificationService.notifyHumanNeeded(sock, ctx, { jid, kind: 'domicilio', address: direccion });
     } catch (e) { /* ignore */ }
 }
 
@@ -3263,11 +3262,10 @@ async function handleHumanRequest(sock, jid, text, userSession, ctx, force = fal
     userSession.phase = PHASE.WAITING_HUMAN;
     const notificationService = require('../../services/notificationService');
     try {
-        await notificationService.notifySystemAlert(sock, ctx, sensitive ? '🔒' : '💬',
-            sensitive ? 'DATOS SENSIBLES DETECTADOS' : 'CLIENTE PIDE ATENCIÓN HUMANA',
-            sensitive
-                ? `Cliente: ${jid}\nEl cliente intentó compartir datos sensibles (tarjeta/cédula/clave). NO se muestran ni se guardan.\nHora: ${new Date().toLocaleString('es-CO')}`
-                : `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
+        // Mensaje para la dueña en lenguaje de negocio (nombre, número, qué dijo, link al chat): ver ownerMessages.
+        await notificationService.notifyHumanNeeded(sock, ctx, sensitive
+            ? { jid, kind: 'sensible' }
+            : { jid, kind: 'persona', said: text, reason: 'Pidió hablar con una persona' });
     } catch (e) { /* ignore */ }
     await say(sock, jid, sensitive
         ? '🔒 Por tu seguridad, no compartas datos sensibles (números de tarjeta, claves, documentos) por este chat. Ya avisé a un asesor para que te atienda con seguridad. 🍦'

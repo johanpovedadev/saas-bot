@@ -7,7 +7,7 @@ process.env.BUSINESS_KEY = 'heladeria';
 process.env.LOG_LEVEL = 'fatal';
 const notificationService = require('./services/notificationService');
 const envConfig = require('./config/env.loader');
-envConfig.admin = Object.assign({}, envConfig.admin, { business_admin_jids: ['573000000001@c.us'], system_admin_jids: [] });
+envConfig.admin = Object.assign({}, envConfig.admin, { business_admin_jids: ['573000000001@c.us'], system_admin_jids: ['573000000009@c.us'] });
 
 let failures = 0;
 function check(cond, msg) { if (cond) console.log('✅', msg); else { failures++; console.log('❌', msg); } }
