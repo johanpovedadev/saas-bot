@@ -103,7 +103,17 @@ async function handleSeleccionOpcion(sock, jid, option, userSession, ctx) {
     if (menuConfig.options.showLocation) activeOptions.push('location');  // ✅ Movido a posición 3
     
     const selectedIndex = parseInt(option) - 1;
-    const selectedOption = activeOptions[selectedIndex];
+    let selectedOption = activeOptions[selectedIndex];
+
+    // Palabras en vez de número: el propio bot le dice al cliente "Escribe *menú*", así que tiene que
+    // funcionar (antes respondía "No entendí" a la palabra que él mismo pidió escribir, y al segundo
+    // intento mandaba al cliente con una persona).
+    if (!selectedOption && Number.isNaN(parseInt(option))) {
+        const palabra = String(option || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/s+/g, ' ').trim();
+        if (/^(ver |el |la |mostrar |quiero ver |quiero )?(menu|carta|productos|catalogo|lista)( de productos| de helados)?$/.test(palabra) && activeOptions.includes('products')) selectedOption = 'products';
+        else if (/^(horarios?|direccion|ubicacion|donde (estan|quedan|queda)|a que hora (abren|cierran)|horario y direccion|direccion y horarios?)$/.test(palabra) && activeOptions.includes('location')) selectedOption = 'location';
+        else if (/^(encargos?|pedido por encargo|pedidos por encargo|evento|eventos)$/.test(palabra) && activeOptions.includes('customOrders')) selectedOption = 'customOrders';
+    }
     
     switch (selectedOption) {
         case 'products':
@@ -177,14 +187,18 @@ async function handleVerMenuOption(sock, jid, userSession, ctx) {
     const menuDayMessage = envConfig.messages.templates.menuDay || '📋 ¡Aquí está nuestro delicioso menú del día!';
     await say(sock, jid, envConfig.messages.render(menuDayMessage), ctx);    // NO enviar imágenes del menú, solo mostrar productos y precios
     // Usar el cache de productos cargado al inicio (ctx.productsCache o ctx.cachedInventory)
-    const productos = ctx.productsCache || ctx.cachedInventory || [];
-    
+    // Si el negocio sabe qué es un producto del menú (heladería: sin sabores ni toppings, que no se venden
+    // sueltos), su flow lo dice; sin esa capacidad se muestra todo el catálogo como antes.
+    const menuFlow = require('../flowRegistry').getTenantFlowWithCapability('getMenuProducts');
+    const productos = menuFlow ? menuFlow.getMenuProducts(ctx) : (ctx.productsCache || ctx.cachedInventory || []);
+
     if (productos && productos.length > 0) {
         let msg = '*Menú de Productos y Precios:*\n';
         productos.forEach((p, idx) => {
-            const nombre = p.NombreProducto || p.nombre || p.name || p.productName || 'Producto';
+            const nombre = String(p.NombreProducto || p.nombre || p.name || p.productName || 'Producto').trim();
             const precio = p.Precio_Venta || p.precio || p.price || p.productPrice || 0;
-            msg += `${idx + 1}. 🍽️ *${nombre}* - $${precio}\n`;
+            const precioTexto = menuFlow ? money(Number(String(precio).replace(/[^0-9]/g, '')) || 0) : `${precio}`;
+            msg += `${idx + 1}. 🍽️ *${nombre}* - ${precioTexto}\n`;
         });
         msg += '\n_Escribe el número del producto para seleccionarlo rápidamente._';
         await say(sock, jid, msg, ctx);
@@ -212,12 +226,29 @@ async function handleVerMenuOption(sock, jid, userSession, ctx) {
 async function handleDireccionOption(sock, jid, userSession, ctx) {
     logger.info(`[${jid}] -> Ver dirección y horarios`);
 
+    // Si el negocio tiene sus datos reales en las preguntas frecuentes que edita el dueño (dirección, horario),
+    // se usan ESOS: la configuración técnica puede traer valores de relleno y no deben llegar al cliente.
+    const locationFlow = require('../flowRegistry').getTenantFlowWithCapability('getLocationInfo');
+    const realInfo = locationFlow ? locationFlow.getLocationInfo(ctx) : null;
+    // Si el cliente ya está armando un pedido (carrito con productos o fase de pedido), solo se le responde: invitarlo
+    // a "hacer un pedido" cuando ya lo está haciendo estorba. Quien llega del menú inicial sí recibe la invitación.
+    const yaPideAlgo = (Array.isArray(userSession.carrito) && userSession.carrito.length > 0) ||
+        (!!userSession.phase && ![PHASE.SELECCION_OPCION, PHASE.BROWSE_IMAGES, PHASE.MENU_PRINCIPAL].includes(userSession.phase));
+    if (realInfo) {
+        await say(sock, jid, yaPideAlgo ? realInfo : `${realInfo}\n\n---\n¿Deseas hacer un pedido? Escribe *menú* 😊`, ctx);
+        if (!yaPideAlgo) userSession.phase = PHASE.SELECCION_OPCION;
+        return;
+    }
+
     // Usar configuración genérica desde .env
-    const address = envConfig.business.location.address || process.env.BUSINESS_ADDRESS || '';
+    const esRelleno = (v) => !v || /pendiente|\[.*\]|000 0000|0000000/i.test(String(v));
+    const addressRaw = envConfig.business.location.address || process.env.BUSINESS_ADDRESS || '';
+    const address = esRelleno(addressRaw) ? '' : addressRaw;
     const hours = envConfig.business.hours.weekday 
         ? `Lunes a Viernes: ${envConfig.business.hours.weekday.open} - ${envConfig.business.hours.weekday.close}\nSábado y Domingo: ${envConfig.business.hours.weekend.open} - ${envConfig.business.hours.weekend.close}`
         : (process.env.BUSINESS_HOURS || '');
-    const phone = envConfig.business.contact.phone || process.env.BUSINESS_PHONE || '';
+    const phoneRaw = envConfig.business.contact.phone || process.env.BUSINESS_PHONE || '';
+    const phone = esRelleno(phoneRaw) ? '' : phoneRaw;
     const googleMapsLink = envConfig.business.contact.googleMapsLink || process.env.GOOGLE_MAPS_LINK || '';
     const emoji = envConfig.ui.emoji.main || '📍';
 

@@ -2,6 +2,31 @@
 
 const path = require('path');
 const fs = require('fs');
+
+// AISLAMIENTO MULTITENANT (auditoría 1 oct 2026) - ANTES de cargar nada más:
+// 1) Sin BUSINESS_KEY explícito el bot NO arranca. Antes caía por defecto en
+//    'mascotas' y abría la sesión de WhatsApp de mascotas (auth/mascotas): con
+//    bot-mascotas ya corriendo, dos procesos contestaban el mismo número.
+// 2) Un solo proceso por negocio: si otro proceso vivo ya tiene la sesión de
+//    este negocio, este se detiene en vez de abrirla por segunda vez.
+const RAW_BUSINESS_KEY = String(process.env.BUSINESS_KEY || '').trim();
+if (!RAW_BUSINESS_KEY || /[^a-z0-9_-]/i.test(RAW_BUSINESS_KEY)) {
+    console.error(`❌ BUSINESS_KEY ${RAW_BUSINESS_KEY ? `inválido ("${RAW_BUSINESS_KEY}")` : 'no definido'}: el bot no arranca sin saber de qué negocio es (cada negocio tiene su propia sesión de WhatsApp en auth/<BUSINESS_KEY>).`);
+    process.exit(1);
+}
+// Todos los módulos leen process.env.BUSINESS_KEY: se deja ya limpio. En
+// Windows, `set BUSINESS_KEY=x && node index.js` (launch-tenants.js viejo)
+// guardaba "x " con espacio final -> no se encontraba config/businesses/x.json
+// ni .env.x y el bot arrancaba con la configuración por defecto.
+process.env.BUSINESS_KEY = RAW_BUSINESS_KEY;
+{
+    const instanceLock = require('./utils/tenantInstanceLock').acquireInstanceLock(path.join(__dirname, 'auth', RAW_BUSINESS_KEY));
+    if (!instanceLock.ok) {
+        console.error(`❌ Ya hay un bot de "${RAW_BUSINESS_KEY}" corriendo (PID ${instanceLock.holder.pid}, desde ${new Date(instanceLock.holder.startedAt).toLocaleString('es-CO')}). No se abre la misma sesión de WhatsApp dos veces. Detén el otro proceso primero (pm2 stop bot-${RAW_BUSINESS_KEY}).`);
+        process.exit(1);
+    }
+}
+
 const { Client, LocalAuth, Message } = require('whatsapp-web.js');
 
 // PATCH: WhatsApp Web renombró el getter id._serialized → id.$1 (2026).
@@ -32,7 +57,7 @@ const { logger } = require('./utils/logger');
 const { execSync } = require('child_process');
 
 // ISSUE 45: Business key from env
-const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'mascotas').replace(/[^a-z0-9_-]/gi, '');
+const BUSINESS_KEY = RAW_BUSINESS_KEY;
 const AUTH_DIR = path.join(__dirname, 'auth', BUSINESS_KEY);
 const QR_PATH = path.join(__dirname, 'assets', BUSINESS_KEY, 'qr_code.png');
 

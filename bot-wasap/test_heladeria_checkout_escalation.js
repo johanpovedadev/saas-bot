@@ -12,6 +12,9 @@
  */
 const assert = require('assert');
 process.env.BUSINESS_KEY = 'heladeria';
+// La IA está SIMULADA en este test (nada sale a la red): se levanta el interruptor global que pone scripts/run-tests.js.
+process.env.LION_DISABLE_AI = '0';
+process.env.LION_AI_STUBBED = '1'; // la IA es simulada: los servicios la ven disponible, pero el SDK sigue bloqueado
 
 const handler = require('./handlers/handler.js');
 const flowRegistry = require('./handlers/flowRegistry');

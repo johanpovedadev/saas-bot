@@ -306,6 +306,77 @@ function fuzzySearchToppings(query, toppings, options = {}) {
     return fuzzySearchSecondaryItems(query, toppings, options);
 }
 
+/**
+ * Palabras funcionales en español que no aportan significado al identificar
+ * A QUÉ ítem de un carrito se refiere el cliente (artículos, conectores,
+ * verbos de pedido comunes). Genérico por diseño - no depende del catálogo
+ * de ningún negocio en particular, así que cualquier flujo de carrito puede
+ * reusarlo en vez de mantener su propia lista de stopwords.
+ */
+const CART_REFERENCE_STOPWORDS = new Set([
+    'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas',
+    'con', 'sin', 'para', 'por', 'ponle', 'pon', 'ponme', 'agrega', 'agregale', 'agreganos',
+    'añade', 'añadele', 'dale', 'dame', 'me', 'te', 'le', 'que', 'se', 'a', 'en', 'al', 'es',
+    'porfa', 'favor', 'tambien', 'ademas', 'quiero', 'necesito', 'mas', 'más', 'otro', 'otra',
+    'otros', 'otras', 'quita', 'quitame', 'saca', 'sacame', 'elimina', 'borra'
+]);
+
+/**
+ * Encuentra a qué ítem(s) de una lista se refiere un texto libre del
+ * cliente - por nombre exacto/parcial, por similitud difusa, o (solo
+ * cuando hay EXACTAMENTE un ítem en la lista) por una referencia GENÉRICA
+ * al tipo de cosa que es, sin nombrarla (ej. "quita la adición", "sin ese
+ * topping").
+ *
+ * Genérico por diseño: no sabe nada de ningún negocio en particular.
+ * Cualquier flujo de carrito con "cosas agregadas a un pedido en curso que
+ * el cliente puede querer quitar sin nombrarlas exactamente" - heladería,
+ * un restaurante con adiciones, una panadería con extras - reusa esta misma
+ * función en vez de reescribir el matching cada vez.
+ *
+ * Bug real que motivó el caso genérico (heladería, 29/9/2026): el cliente
+ * dijo "Sin adición" para quitar la única adición recién anotada, sin
+ * nombrarla - el matching por nombre nunca iba a encontrar eso porque
+ * "adición" no es el nombre de ningún producto del catálogo.
+ *
+ * @param {Array<Object>} items - ítems candidatos (no se modifica esta lista;
+ *   el caller decide qué hacer con los que hicieron match, ej. splice()).
+ * @param {string} text - lo que escribió el cliente.
+ * @param {string} nameField - qué campo de cada ítem tiene el nombre visible
+ *   (ej. 'NombreProducto').
+ * @param {RegExp} [genericTermRegex] - patrón que indica una referencia
+ *   GENÉRICA al tipo de ítem (ej. /\badici[oó]n(es)?\b/i para "adición").
+ *   Si se omite, solo se intenta match por nombre exacto/difuso.
+ * @param {number} [fuzzyThreshold=0.6] - umbral de similitud difusa, mismo
+ *   default que ya usa el resto del código para resolver por nombre.
+ * @returns {Array<Object>} los ítems de `items` que hicieron match (mismas
+ *   referencias, sin clonar) - vacío si no hubo match.
+ */
+function resolveTextReferenceToCartItems(items, text, nameField, genericTermRegex, fuzzyThreshold = 0.6) {
+    const textNorm = normalizeForComparison(text);
+    const textWords = textNorm.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !CART_REFERENCE_STOPWORDS.has(w));
+    const matched = [];
+    const fuzzyOnly = [];
+    for (const item of (items || [])) {
+        const nombre = normalizeForComparison(String((item && item[nameField]) || ''));
+        if (nombre.length < 3) continue;
+        const nombreWords = nombre.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+        const exactMatch = textNorm.includes(nombre) || nombreWords.some(w => textWords.includes(w));
+        const fuzzyMatch = !exactMatch && textWords.some(w => nombreWords.some(nw => similarityScore(w, nw) >= fuzzyThreshold));
+        if (exactMatch) matched.push(item);
+        else if (fuzzyMatch) fuzzyOnly.push(item);
+    }
+    // El parecido por letras solo sirve para errores de ortografía cuando NADA coincide por nombre: si ya hay
+    // coincidencias exactas, los parecidos son ruido (un verbo mal escrito no debe arrastrar a otros ítems).
+    if (matched.length === 0) matched.push(...fuzzyOnly);
+    // Referencia genérica ("la adición", "ese topping"): solo se resuelve
+    // sola cuando hay EXACTAMENTE un ítem - con 2+ sería adivinar cuál.
+    if (matched.length === 0 && items && items.length === 1 && genericTermRegex && genericTermRegex.test(textNorm)) {
+        matched.push(items[0]);
+    }
+    return matched;
+}
+
 module.exports = {
     levenshteinDistance,
     similarityScore,
@@ -315,5 +386,6 @@ module.exports = {
     fuzzySearchSecondaryItems,  // Nueva función genérica
     fuzzySearchSabores,         // @deprecated - usar fuzzySearchPrimaryItems
     fuzzySearchToppings,        // @deprecated - usar fuzzySearchSecondaryItems
-    normalizeForComparison
+    normalizeForComparison,
+    resolveTextReferenceToCartItems
 };

@@ -2,11 +2,15 @@
 /**
  * Bug real reportado por Johan: hizo un pedido de prueba de punta a punta
  * ("ya terminé todo") y nunca le llegó el aviso de "nuevo pedido" - su
- * propio número de WhatsApp está configurado como admin del negocio
- * (business_admin_jids), y _sendToJids() excluía silenciosamente cualquier
- * admin cuyo JID coincidiera con el JID del cliente (excludeJid), pensado
- * para evitar auto-notificarse pero que en este caso real dejaba al admin
- * sin ver NINGÚN aviso de pedido nuevo.
+ * propio número de WhatsApp estaba configurado como admin del negocio, y
+ * _sendToJids() excluía silenciosamente cualquier admin cuyo JID coincidiera
+ * con el JID del cliente (excludeJid), pensado para evitar auto-notificarse
+ * pero que en este caso real dejaba al admin sin ver NINGÚN aviso de pedido
+ * nuevo.
+ *
+ * Nota: notifyAdminsNewOrder ahora lee orders_admin_jids (admin de pedidos,
+ * separado del admin de sistema/cambios - ver test_admin_roles_split.js),
+ * así que este test muta esa propiedad en vez de business_admin_jids.
  * Uso: node test_notify_admin_same_as_customer.js
  */
 const notificationService = require('./services/notificationService');
@@ -29,8 +33,8 @@ const ctx = {};
         const OTHER_ADMIN = '573000999999@c.us';
 
         const envConfig = require('./config/env.loader');
-        const origAdminJids = envConfig.admin.business_admin_jids;
-        envConfig.admin.business_admin_jids = [SAME_JID, OTHER_ADMIN];
+        const origOrdersAdminJids = envConfig.admin.orders_admin_jids;
+        envConfig.admin.orders_admin_jids = [SAME_JID, OTHER_ADMIN];
 
         sent.length = 0;
         await notificationService.notifyAdminsNewOrder(sock, SAME_JID, {
@@ -44,7 +48,7 @@ const ctx = {};
         check(!!sentToOther, 'el otro admin también recibe el aviso (regresión: nada se rompió para el caso normal)');
         check(sentToSame && /NUEVO PEDIDO/.test(sentToSame.text), 'el mensaje recibido es el de nuevo pedido');
 
-        envConfig.admin.business_admin_jids = origAdminJids;
+        envConfig.admin.orders_admin_jids = origOrdersAdminJids;
 
         console.log(failures === 0 ? '\nTodos los tests pasaron.' : `\n${failures} FALLOS`);
         process.exitCode = failures === 0 ? 0 : 1;

@@ -12,6 +12,44 @@ const { logger, logConversation } = require('../../utils/logger');
 const { say } = require('../../services/bot_core');
 const leadsTracker = require('../../lion-leads-readonly');
 const chatHistory = require('../../lion-chat-readonly');
+const botRegistry = require('../../services/botRegistry');
+
+// REGLA "bots aparte": cache del registro de números de bots (bot_owners.json).
+// Se lee de disco como máximo cada 30s, no en cada mensaje. Cada bot registra
+// su propio número al conectarse ('ready'), así que esto lista TODOS los bots.
+let _botNumbersCache = null;
+let _botNumbersCacheAt = 0;
+const BOT_NUMBERS_CACHE_TTL = 30000;
+
+function getRegisteredBotNumbers() {
+    const now = Date.now();
+    if (!_botNumbersCache || (now - _botNumbersCacheAt) > BOT_NUMBERS_CACHE_TTL) {
+        try {
+            const owners = botRegistry.getAllOwners() || {};
+            _botNumbersCache = Object.values(owners)
+                .map(o => (o && o.jid) ? String(o.jid).split('@')[0].replace(/\D/g, '') : '')
+                .filter(Boolean);
+        } catch (e) {
+            _botNumbersCache = _botNumbersCache || [];
+        }
+        _botNumbersCacheAt = now;
+    }
+    return _botNumbersCache;
+}
+
+/**
+ * REGLA "bots aparte": verifica si un remitente es un número registrado como
+ * OTRO bot (bot_owners.json). Evita el eco cruzado entre bots que comparten
+ * el número del admin (causa de los "flujos revueltos").
+ * @param {string} from - JID del remitente
+ * @returns {boolean}
+ */
+function isRegisteredBotNumber(from) {
+    if (!from) return false;
+    const digits = String(from).split('@')[0].replace(/\D/g, '');
+    if (!digits) return false;
+    return getRegisteredBotNumbers().includes(digits);
+}
 
 /**
  * Extrae datos del mensaje de WhatsApp
@@ -101,6 +139,14 @@ function shouldProcessMessage(from, text, key, fromMe = false) {
     
     // Ignorar mensajes propios
     if (fromMe || key.fromMe) return false;
+    
+    // REGLA "bots aparte": ignorar mensajes de números registrados como OTROS
+    // bots (bot_owners.json). Evita el eco cruzado entre bots que comparten el
+    // número del admin (causa de los "flujos revueltos").
+    if (isRegisteredBotNumber(from)) {
+        logger.debug(`[${from}] Remitente es un número registrado de otro bot — ignorando (regla: bots aparte)`);
+        return false;
+    }
     
     return true;
 }
@@ -327,5 +373,6 @@ module.exports = {
     createWhatsAppLink,
     isValidMessage,
     logIncomingMessage,
-    handleProcessingError
+    handleProcessingError,
+    isRegisteredBotNumber
 };

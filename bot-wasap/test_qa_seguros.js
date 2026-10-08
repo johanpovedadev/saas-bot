@@ -233,7 +233,12 @@ async function run() {
     const baseUrl = ((envCfg.api && envCfg.api.baseUrl) || (envCfg.backend && envCfg.backend.apiBase) || 'http://127.0.0.1:8001').replace(/\/+$/, '');
     const base = baseUrl.includes('/api') ? baseUrl : baseUrl + '/api';
 
-    try {
+    // Las secciones 10 y ISSUE #33 hablan con el backend real (Django de mascotas) y la 10 ESCRIBE un lead de prueba
+    // en su base: solo corren con QA_LIVE_BACKEND=1. Una prueba normal no toca ningún backend.
+    const liveBackend = process.env.QA_LIVE_BACKEND === '1';
+    if (!liveBackend) console.log('  ⏭  omitido (requiere el backend levantado; actívalo con QA_LIVE_BACKEND=1)');
+
+    if (liveBackend) try {
         await new Promise((resolve) => {
             const payload = JSON.stringify({
                 estado: 'pendiente',
@@ -289,7 +294,7 @@ async function run() {
     assert(typeof ns.notifyDjangoRecovered === 'function', 'notificationService.notifyDjangoRecovered existe (ISSUE #33)');
 
     // ISSUE #33 - Health endpoint Django
-    try {
+    if (liveBackend) try {
         await new Promise((resolve) => {
             const req = http.get(`${base}/health/`, (res) => {
                 let body = '';

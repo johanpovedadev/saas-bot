@@ -1,13 +1,20 @@
 'use strict';
 /**
- * Bug real (2026-09-03): Johan probando su propio pedido de heladería con su
- * número de admin ("Cra 23 #10-05, Juan Pérez, 3139848800, efectivo") quedó
- * atrapado por el clasificador de IA de actualización de Sheet
- * (handleAdminSheetUpdate, Caso B) — lo interpretó como "actualizar un campo
- * del negocio" y guardó basura en vez de dejarlo completar el checkout.
- * Este test cubre el filtro determinístico agregado en handler.js
- * (looksLikeCheckoutMessage) para que esto nunca vuelva a pasar, sin
- * necesitar Gemini para decidirlo.
+ * Historial: bug real (2026-09-03) - Johan probando su propio pedido de
+ * heladería con su número de admin quedó atrapado por el clasificador de IA
+ * de actualización de Sheet (handleAdminSheetUpdate, Caso B), que lo
+ * interpretó como "actualizar un campo del negocio" y guardó basura en vez
+ * de dejarlo completar el checkout.
+ *
+ * Decisión (25 sep 2026, confirmada con Johan): en vez de seguir dejando que
+ * el número de admin avance un pedido de cliente (regla "admins aparte" -
+ * ver handler.js, evita el loop real de pilates_clientas/mascotas cuando el
+ * admin comparte número con otro bot), el número de admin queda BLOQUEADO
+ * del flujo de cliente sin excepción. Para probar el bot como cliente, usar
+ * un número que NO sea admin. Este test ya no verifica que el checkout
+ * avance - verifica que el mensaje de admin NUNCA se procese como pedido
+ * NI se malinterprete como instrucción de actualización de Sheet (la misma
+ * clase de bug original, aplicada a la regla nueva).
  * Uso: node test_admin_checkout_not_hijacked.js
  */
 process.env.BUSINESS_KEY = 'heladeria';
@@ -45,12 +52,10 @@ async function send(sock, ctx, jid, text) {
 
 (async () => {
     try {
-        // Doble de prueba: nunca clasifica nada como actualización real (así
-        // los mensajes previos del flujo normal — "cajas de helado", "1",
-        // etc. — no se ven afectados si el filtro determinístico los deja
-        // pasar hasta acá). Lo que importa es CUÁNTAS VECES se llama, no qué
-        // devuelve: si el filtro de looksLikeCheckoutMessage falla, el
-        // mensaje de checkout SÍ dispara una llamada más acá.
+        // Nunca clasifica nada como actualización real - lo que importa es
+        // CUÁNTAS VECES se llama, no qué devuelve: si algún día el filtro
+        // determinístico de handleAdminSheetUpdate cambia y deja pasar el
+        // mensaje de checkout hasta la IA, esto lo detecta.
         let aiCalls = 0;
         configUpdateAi.interpretUpdateInstruction = async () => {
             aiCalls++;
@@ -61,27 +66,17 @@ async function send(sock, ctx, jid, text) {
         const sent = [];
         const sock = makeSock(sent);
 
-        // Llegar hasta "escribe tu dirección de entrega" (mismo camino real
-        // que en el log: producto -> cantidad -> ir a pagar -> confirmar).
-        await send(sock, ctx, ADMIN_JID, 'cajas de helado');
-        await send(sock, ctx, ADMIN_JID, '1'); // cantidad
-        await send(sock, ctx, ADMIN_JID, '2'); // HELADO_POST_ADD: ir a pagar
-        await send(sock, ctx, ADMIN_JID, '1'); // confirm_order: confirmar pedido
-
-        check(ctx.sessions[ADMIN_JID].phase === 'checkout_dir', `llegó a pedir la dirección (fase: ${ctx.sessions[ADMIN_JID].phase})`);
-
-        // El mensaje real que disparó el bug.
-        const aiCallsBefore = aiCalls;
-        sent.length = 0;
+        // El mensaje real que disparó el bug original (2026-09-03) - un
+        // dato de checkout con forma de "Dirección, Nombre, Teléfono, Pago".
         await send(sock, ctx, ADMIN_JID, 'Cra 23 #10-05, Juan Pérez, 3139848800, efectivo');
         const out = sent.join('\n');
 
-        check(aiCalls === aiCallsBefore, `el clasificador de IA de actualización de Sheet NUNCA se llama para el mensaje de checkout (llamadas antes: ${aiCallsBefore}, después: ${aiCalls})`);
-        check(!/guard[ée]/i.test(out), `no aparece el mensaje de "guardé" del hijack (${out.slice(0, 150)})`);
-        check(ctx.sessions[ADMIN_JID].order?.address === 'Cra 23 #10-05', `la dirección se clasificó bien (${ctx.sessions[ADMIN_JID].order?.address})`);
-        check(ctx.sessions[ADMIN_JID].order?.name === 'Juan Pérez', `el nombre se clasificó bien (${ctx.sessions[ADMIN_JID].order?.name})`);
-        check(ctx.sessions[ADMIN_JID].order?.telefono === '3139848800', `el teléfono se clasificó bien (${ctx.sessions[ADMIN_JID].order?.telefono})`);
-        check(ctx.sessions[ADMIN_JID].order?.paymentMethod === 'efectivo', `el método de pago se clasificó bien (${ctx.sessions[ADMIN_JID].order?.paymentMethod})`);
+        check(aiCalls === 0, `el clasificador de IA de actualización de Sheet NUNCA se llama para un mensaje de admin con forma de checkout (llamadas: ${aiCalls})`);
+        check(!/guard[ée]/i.test(out), `no aparece el mensaje de "guardé" del hijack original (${out.slice(0, 150)})`);
+        check(
+            !(ctx.sessions[ADMIN_JID] && ctx.sessions[ADMIN_JID].order && ctx.sessions[ADMIN_JID].order.address),
+            'el mensaje NO se procesó como un pedido de cliente (regla "admins aparte")'
+        );
 
         console.log(failures === 0 ? '\nTodos los tests pasaron.' : `\n${failures} FALLOS`);
         process.exitCode = failures === 0 ? 0 : 1;

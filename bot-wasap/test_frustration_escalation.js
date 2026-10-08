@@ -142,9 +142,10 @@ async function testWaitingHumanSurvivesNextMessage() {
     // reactivaron desde el panel" y resetea la fase solo).
     waitingHumanStore.markWaiting('pilates_clientas', jid, 'prueba: sobrevive al siguiente mensaje');
 
-    const originalNotify = notificationService.notifySystemAlert;
+    // El reenvío de mensajes de un chat en espera ahora es un aviso por cliente (notifyHumanNeeded, ver ownerMessages).
+    const originalNotify = notificationService.notifyHumanNeeded;
     let forwardedMsg = null;
-    notificationService.notifySystemAlert = async (s, c, emoji, title, body) => { forwardedMsg = body; };
+    notificationService.notifyHumanNeeded = async (s, c, p) => { forwardedMsg = p.said; };
 
     try {
         await send(sock, ctx, jid, 'sigo esperando');
@@ -152,7 +153,7 @@ async function testWaitingHumanSurvivesNextMessage() {
         assert.ok(forwardedMsg && /sigo esperando/.test(forwardedMsg), 'el mensaje del cliente en espera debe reenviarse al admin');
         console.log('OK: WAITING_HUMAN sobrevive al siguiente mensaje del cliente (isFlowPhase fix) y se reenvia al admin');
     } finally {
-        notificationService.notifySystemAlert = originalNotify;
+        notificationService.notifyHumanNeeded = originalNotify;
         waitingHumanStore.clearWaiting('pilates_clientas', jid);
     }
 }

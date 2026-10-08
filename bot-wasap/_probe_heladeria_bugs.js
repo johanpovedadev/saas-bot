@@ -150,23 +150,6 @@ async function send(text) {
         console.log('   fase:', ctx.sessions[JID].phase);
     } else console.log('   (banana split no encontrado)');
 
-    // ============ BUG 5: audio "2 conos sencillos" → debe iniciar flujo guiado ============
-    console.log('=== BUG 5: audio "2 conos sencillos" (mocked interpretAudioIntent) ===');
-    heladeriaAi.transcribeAudio = async () => 'quiero 2 conos sencillos de lulo';
-    heladeriaAi.interpretAudioIntent = async (audioBase64, userSession, mimeType, ctxInfo) => {
-        return { intent: 'order', products: [{ nombre: 'conos sencillos', cantidad: 2 }], transcription: 'quiero 2 conos sencillos de lulo' };
-    };
-    sessionService.resetChat(JID, ctx);
-    const s5 = ctx.sessions[JID];
-    await heladeriaFlow.processAudio(sock, JID, 'fakemb64', 'audio/ogg; codecs=opus', true, s5, ctx);
-    const s5b = ctx.sessions[JID];
-    console.log('   fase:', s5b.phase);
-    console.log('   producto actual:', s5b.heladoFlow && s5b.heladoFlow.product && s5b.heladoFlow.product.NombreProducto);
-    console.log('   respuesta:', strip(sent.join('\n')));
-
-    heladeriaAi.transcribeAudio = async () => null;
-    heladeriaAi.interpretAudioIntent = async () => null;
-
     heladeriaAi.interpretOrderText = async () => ({ producto: null, sabores: [], toppings: [], cantidad: null, direccion: null, duda: null });
 
     // ============ VER CARRITO tras "seguir comprando" (en el menú) ============

@@ -4,6 +4,7 @@
 const { say } = require('./bot_core');
 const notificationService = require('./notificationService');
 const waitingHumanStore = require('./waitingHumanStore');
+const unansweredQuestionsStore = require('./unansweredQuestionsStore');
 const PHASE = require('../utils/phases');
 const { logger } = require('../utils/logger');
 
@@ -64,6 +65,18 @@ const MAX_REPEATED_MESSAGES = 2;
  * @param {string} text - Texto del mensaje actual
  * @returns {boolean} true si este mensaje es identico al inmediatamente anterior
  */
+/**
+ * Un saludo o un "gracias/ok/sí/no" repetido NO es un loop: es lo que escribe un cliente que no vio respuesta enseguida
+ * (las imágenes del menú tardan). Antes el segundo "hola" lo mandaba con una persona y el bot se quedaba callado.
+ * Solo aplica a mensajes de una o dos palabras ("hola de nuevo" sí cuenta como repetido en un loop real).
+ */
+function isHarmlessRepeat(text) {
+    const { isGreeting } = require('../config/greetings/greetings.colombia');
+    const t = String(text || '').trim();
+    if (!t || t.split(/\s+/).length > 2) return false;
+    return isGreeting(t) || /^(gracias|ok|okay|vale|listo|si|sí|no)\s*[.!]*$/i.test(t);
+}
+
 function checkMessageLoop(userSession, text) {
     try {
         if (!text || typeof text !== 'string') return false;
@@ -199,7 +212,14 @@ async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustrac
         // de detección de loop llama a esta función y hace `return`
         // inmediato, sin pasar por ese chequeo global después.
         waitingHumanStore.markWaiting(process.env.BUSINESS_KEY, jid, reason);
-        
+
+        // Encola la última pregunta real del cliente como "candidato" para
+        // que el dueño la responda luego por chat (ver Parte 2 del resumen
+        // diario/preguntas graduales) - no rompe nada si falla, es best-effort.
+        try {
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, jid, userSession.lastMessageText || reason, reason);
+        } catch (_) { /* no crítico */ }
+
         // Resetear contadores de error para evitar múltiples notificaciones
         userSession.errorCount = 0;
         userSession.messageHistory = [];
@@ -276,6 +296,7 @@ module.exports = {
     detectFrustration,
     detectAndHandleFrustration,  // ✅ Nueva función todo-en-uno
     checkMessageLoop,
+    isHarmlessRepeat,
     handleFrustration,
     incrementErrorCount,
     resetErrorCount,

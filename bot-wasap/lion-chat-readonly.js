@@ -26,4 +26,14 @@ function getRecentMessages(phone) {
 	return messagesByPhone.get(phone) || [];
 }
 
-module.exports = { recordMessage, getRecentMessages, MAX_MESSAGES_PER_LEAD };
+// Quita los mensajes DEL BOT registrados desde `sinceIso` (los del cliente
+// no se tocan). Lo usa el agente IA: los mensajes que retiene durante un
+// turno se registran con el texto crudo, y al enviarlos se reemplazan por lo
+// que el cliente realmente vio.
+function removeBotMessagesSince(phone, sinceIso) {
+	const history = messagesByPhone.get(phone);
+	if (!history) return;
+	messagesByPhone.set(phone, history.filter(m => !(m.fromMe && m.timestamp >= sinceIso)));
+}
+
+module.exports = { recordMessage, getRecentMessages, removeBotMessagesSince, MAX_MESSAGES_PER_LEAD };

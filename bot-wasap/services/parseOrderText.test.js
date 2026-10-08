@@ -1,3 +1,9 @@
+// Fija el tenant a heladería: los datos de esta prueba son de heladería
+// ("helado vainilla", "sin toppings"), pero sin esto el env.loader.js carga
+// el BUSINESS_KEY del .env compartido (pescadería) y su nomenclatura
+// (item_secondary_plural="bebidas"), rompiendo el nombre del campo esperado.
+process.env.BUSINESS_KEY = 'heladeria';
+
 const { parseOrderText } = require('./parseOrderText');
 const assert = require('assert');
 
@@ -21,8 +27,7 @@ try {
     t('Necesito 2 kilos de queso', { quantity: 2, unit: 'kg', product_name: 'queso' });
     t('Vainilla, sin', { quantity: null, unit: null, product_name: 'vainilla', toppings: 'empty' });
     console.log('All parseOrderText tests passed');
-    process.exit(0);
 } catch (e) {
     console.error('Test failed:', e.message);
-    process.exit(1);
+    process.exitCode = 1; // sin process.exit: el logger (pino) aún abre su archivo y process.exit lo hacía fallar en una máquina limpia
 }

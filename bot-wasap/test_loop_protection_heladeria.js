@@ -86,9 +86,9 @@ async function send(sock, ctx, jid, text) {
             const originalNotify = notificationService.notifyAdminsAboutCustomerIssue;
             let notified = 0;
             notificationService.notifyAdminsAboutCustomerIssue = async () => { notified++; };
-            const originalAlert = notificationService.notifySystemAlert;
+            const originalAlert = notificationService.notifyHumanNeeded;
             let forwarded = 0;
-            notificationService.notifySystemAlert = async () => { forwarded++; };
+            notificationService.notifyHumanNeeded = async () => { forwarded++; };
             try {
                 await send(sock, ctx, jid, 'loop sin fin');
                 await send(sock, ctx, jid, 'loop sin fin'); // escala
@@ -104,7 +104,7 @@ async function send(sock, ctx, jid, text) {
                 assert.ok(forwarded >= 1, 'los mensajes siguientes SI deben reenviarse al admin (via el case WAITING_HUMAN compartido)');
             } finally {
                 notificationService.notifyAdminsAboutCustomerIssue = originalNotify;
-                notificationService.notifySystemAlert = originalAlert;
+                notificationService.notifyHumanNeeded = originalAlert;
             }
         }
         console.log('OK: una vez apagado, se queda apagado - no vuelve a responderle al chat aunque el loop insista');
