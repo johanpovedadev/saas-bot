@@ -193,7 +193,10 @@ add('GUI-15', 'Guiado', 'Después de completar un pedido, un cliente nuevo pedid
     await t.say(c, 'no', { phase: 'HELADO_QUANTITY' });
     await t.say(c, '1', { phase: 'HELADO_POST_ADD' });
     await pagarYConfirmar(c, t);
-    await t.say(c, 'hola', { has: ['Ver nuestro menú'], phase: 'seleccion_opcion' });
+    // Ya es un cliente de siempre: al volver se le ofrece repetir; si prefiere el menú, empieza limpio.
+    await t.say(c, 'hola', { has: ['lo de siempre'], phase: 'seleccion_opcion' });
+    t.ok(!c.session.carrito || c.session.carrito.length === 0, 'la oferta de lo de siempre no dejó el pedido anterior en el carrito', JSON.stringify(c.session.carrito));
+    await t.say(c, 'menú', { has: ['Ver nuestro menú'], phase: 'seleccion_opcion' });
     t.ok(!c.session.carrito || c.session.carrito.length === 0, 'el carrito del pedido anterior quedó vacío', JSON.stringify(c.session.carrito));
     await t.say(c, '1', { phase: 'seleccion_producto' });
     await elegirPorNumero(c, t, 18, 'Copa Osito');

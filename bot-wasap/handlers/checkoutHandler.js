@@ -1509,7 +1509,14 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             }            // ✅ Notificar admins sobre pedido completado usando notificationService
             // Recuerda el pedido para asociarle el comprobante de pago que llegue después (ver paymentProof.js).
             // (en ctx, no en la sesión: resetChat() la borra al terminar el pedido)
-            try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
+            // Cliente recurrente: el pedido confirmado alimenta su perfil ("lo de siempre") y las cifras de la dueña.
+            let savedProfile = { orderCount: 0, returning: false };
+            try {
+                if (require('./flowRegistry').getTenantFlowWithCapability('getMenuProducts')) {
+                    savedProfile = require('../services/customerProfileStore').saveFromOrder(process.env.BUSINESS_KEY, jid, { order: userSession.order, carrito: userSession.carrito, total: orderTotal });
+                }
+            } catch (profileErr) { logger.warn(`customerProfileStore.saveFromOrder: ${profileErr.message}`); }
+            try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal, Date.now(), savedProfile.returning); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
             if (ctx) {
                 ctx.lastConfirmedOrders = ctx.lastConfirmedOrders || {};
                 ctx.lastConfirmedOrders[jid] = { at: Date.now(), nombre: payload.nombre, productos: payload.producto, total: orderTotal, pago: payload.pago };
@@ -1518,6 +1525,10 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
             await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
+            if (savedProfile.orderCount === 1) {
+                // Transparencia: se le dice qué se guardó y cómo borrarlo (solo la primera vez).
+                await say(sock, jid, '💛 Guardé tu nombre, dirección y este pedido para que la próxima vez sea más rápido. Si no quieres, escribe *borra mis datos*.', ctx);
+            }
             // Solo envía algo si el negocio configuró un link de reseña de
             // Google — ver services/reviewRequestService.js. Nunca bloquea
             // ni rompe el flujo de checkout si falla.
@@ -1739,6 +1750,7 @@ async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
 
 module.exports = {
     sendTransferInfoIfPending,
+    showFinalSummary: showEditedSummary,
     handleCartSummary,
     handleEnterAddress,
     handleEnterName,

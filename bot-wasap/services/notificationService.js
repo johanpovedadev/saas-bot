@@ -112,7 +112,9 @@ async function notifyHumanNeeded(sock, ctx, { jid, kind = 'persona', said, reaso
         const gate = ownerMessages.shouldNotify(kind, jid, now);
         if (!gate.send) { logger.info(`Aviso a la administración omitido (ya se avisó hace poco por ${jid})`); return false; }
         const session = ctx && ctx.sessions && ctx.sessions[jid];
-        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more });
+        let orderCount = 0;
+        try { const profile = require('./customerProfileStore').get(process.env.BUSINESS_KEY, jid); orderCount = profile ? profile.orderCount || 0 : 0; } catch (_) { /* sin perfil: no pasa nada */ }
+        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more, orderCount });
         const admins = getOrdersAdminJids();
         await _sendToJids(sock, admins, msg, ctx);
         if (admins.length === 0) logger.warn(`Cliente ${jid} necesita una persona pero no hay administradores de pedidos configurados`);

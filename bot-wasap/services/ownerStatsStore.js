@@ -41,18 +41,19 @@ function writeAll(data) {
 /** El registro del negocio para ese día; si es de otro día, empieza uno nuevo en cero. */
 function entryFor(all, businessKey, day) {
     if (!all[businessKey] || all[businessKey].date !== day) {
-        all[businessKey] = { date: day, orders: { count: 0, total: 0 }, chatsInHours: [], chatsAfterHours: [] };
+        all[businessKey] = { date: day, orders: { count: 0, total: 0, returning: 0 }, chatsInHours: [], chatsAfterHours: [] };
     }
     return all[businessKey];
 }
 
-/** Un pedido confirmado por el cliente. */
-function recordOrder(businessKey, total, now = Date.now()) {
+/** Un pedido confirmado por el cliente; `returning` si ya le había comprado al negocio antes (cliente recurrente). */
+function recordOrder(businessKey, total, now = Date.now(), returning = false) {
     if (!businessKey) return;
     const all = readAll();
     const entry = entryFor(all, businessKey, dayKey(now));
     entry.orders.count += 1;
     entry.orders.total += Number(total) || 0;
+    if (returning) entry.orders.returning = (entry.orders.returning || 0) + 1;
     writeAll(all);
 }
 
@@ -69,8 +70,8 @@ function recordChat(businessKey, jid, afterHours, now = Date.now()) {
 /** Cifras del día, o ceros si todavía no hay nada. */
 function getToday(businessKey, now = Date.now()) {
     const entry = readAll()[businessKey];
-    if (!entry || entry.date !== dayKey(now)) return { date: dayKey(now), orders: { count: 0, total: 0 }, chatsInHours: 0, chatsAfterHours: 0 };
-    return { date: entry.date, orders: entry.orders, chatsInHours: entry.chatsInHours.length, chatsAfterHours: entry.chatsAfterHours.length };
+    if (!entry || entry.date !== dayKey(now)) return { date: dayKey(now), orders: { count: 0, total: 0, returning: 0 }, chatsInHours: 0, chatsAfterHours: 0 };
+    return { date: entry.date, orders: { returning: 0, ...entry.orders }, chatsInHours: entry.chatsInHours.length, chatsAfterHours: entry.chatsAfterHours.length };
 }
 
 module.exports = sharedJsonFile.lockedExports(STORE_PATH, { recordOrder, recordChat, getToday, dayKey }, ['recordOrder', 'recordChat']);
