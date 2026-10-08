@@ -27,7 +27,7 @@ function check(cond, msg) {
 }
 
 const origInterpret = heladeriaAi.interpretOrderText;
-const origNotify = notificationService.notifySystemAlert;
+const origNotify = notificationService.notifyHumanNeeded;
 
 function makeSession(phase) {
     const osito = (ctx.productsCache || []).find(p => /osito/i.test(String(p.NombreProducto || '')));
@@ -45,7 +45,7 @@ function makeSession(phase) {
     try {
         await botCore.loadAllProductsCache(ctx).catch(e => console.log('cache fail:', e.message));
         let notified = null;
-        notificationService.notifySystemAlert = async (s, c, emoji, title, body) => { notified = { emoji, title, body }; };
+        notificationService.notifyHumanNeeded = async (s, c, p) => { notified = { kind: p.kind, body: p.address || '' }; };
 
         // Caso 1: pregunta SIN dirección -> pide la dirección, NO escala, NO cambia de fase.
         {
@@ -74,7 +74,7 @@ function makeSession(phase) {
             notified = null;
             await heladeriaFlow.handle(sock, JID, 'Cra 23 #10-20, barrio Centro', s, ctx);
             const joined = sent.join('\n');
-            check(!!notified, 'se avisa al equipo (notifySystemAlert) al recibir la dirección');
+            check(!!notified, 'se avisa a quien atiende (notifyHumanNeeded, tipo domicilio) al recibir la dirección');
             check(notified && /Cra 23 #10-20/.test(notified.body), `el aviso incluye la dirección exacta (${notified && notified.body})`);
             check(/validando|confirmamos/i.test(joined) && /Cra 23/.test(joined), 'le confirma al cliente que ya está validando, mencionando su dirección');
             check(/sigamos con tu pedido|continuemos/i.test(joined), 'invita a continuar el pedido de forma cortés');
@@ -110,7 +110,7 @@ function makeSession(phase) {
         process.exitCode = 1;
     } finally {
         heladeriaAi.interpretOrderText = origInterpret;
-        notificationService.notifySystemAlert = origNotify;
+        notificationService.notifyHumanNeeded = origNotify;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

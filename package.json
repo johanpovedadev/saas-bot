@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "test": "echo 'No hay pruebas a nivel raiz - ver bot-wasap/ e inventario/' && exit 0"
   },
   "devDependencies": {
     "husky": "^8.0.0"

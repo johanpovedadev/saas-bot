@@ -23,8 +23,14 @@ const waitingHumanStore = require('../../services/waitingHumanStore');
 function getAdminJids(ctx = {}) {
     const admins = [];
     
-    // 1. Desde config file (business config) - prioridad para multi-tenant
+    // 1. Desde config file (business config) - prioridad para multi-tenant.
+    // REGLA "admins aparte": se incluyen TODOS los roles de admin — negocio
+    // (cambios/informes), sistema (alertas técnicas) y pedidos (escalamiento
+    // humano). Todos quedan SIEMPRE aparte del flujo de cliente.
     if (envConfig.admin?.jids?.length) admins.push(...envConfig.admin.jids);
+    if (envConfig.admin?.business_admin_jids?.length) admins.push(...envConfig.admin.business_admin_jids);
+    if (envConfig.admin?.system_admin_jids?.length) admins.push(...envConfig.admin.system_admin_jids);
+    if (envConfig.admin?.orders_admin_jids?.length) admins.push(...envConfig.admin.orders_admin_jids);
     
     // 2. Desde .env (compatibilidad hacia atrás)
     if (process.env.ADMIN_JID) admins.push(process.env.ADMIN_JID);
@@ -44,7 +50,14 @@ function getAdminJids(ctx = {}) {
  */
 function isAdmin(jid, ctx = {}) {
     const adminJids = getAdminJids(ctx);
-    return adminJids.includes(jid);
+    if (adminJids.includes(jid)) return true;
+    // Comparación robusta por dígitos: cubre @lid (privacidad de WhatsApp),
+    // @s.whatsapp.net y cualquier otro formato de JID. Sin esto, un mensaje
+    // del admin que llega como "xxx@lid" NO se reconocía como admin y el bot
+    // lo procesaba como cliente (causa de los "flujos revueltos").
+    const digits = String(jid || '').split('@')[0].replace(/\D/g, '');
+    if (!digits) return false;
+    return adminJids.some(a => String(a || '').split('@')[0].replace(/\D/g, '') === digits);
 }
 
 /**
@@ -70,7 +83,24 @@ function resolveTargetJid(token, userSession) {
  * @param {Object} ctx - Contexto global
  * @returns {Promise<boolean>} - true si se procesó un comando
  */
+/**
+ * Punto de entrada de los comandos de administración. Todo comando que un administrador ejecuta con éxito queda en el
+ * registro de auditoría (quién, cuándo, qué texto exacto) - ver services/auditLog.js.
+ */
 async function handleAdminCommand(sock, jid, text, userSession, ctx) {
+    const handled = await handleAdminCommandInner(sock, jid, text, userSession, ctx);
+    if (handled) {
+        try {
+            require('../../services/auditLog').record({
+                action: 'admin_command', actor: jid, role: 'admin', text,
+                details: { comando: String(text || '').toLowerCase().trim().split(/\s+/).slice(0, 3).join(' ') }
+            });
+        } catch (_) { /* la auditoría nunca debe romper el comando */ }
+    }
+    return handled;
+}
+
+async function handleAdminCommandInner(sock, jid, text, userSession, ctx) {
     const t = text.toLowerCase().trim();
 
     // Prender/apagar otros bots por chat: tiene su PROPIA autorización (más
@@ -328,7 +358,12 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
         sess.erroresMIA = 0;
         sess._miaDisabledNotified = false;
         
-        if (frustrationService?.isWaitingForHuman?.(sess)) {
+        // Un chat que pasó a una persona puede no tener la marca waitingForHuman (la heladería lo deja en la fase
+        // WAITING_HUMAN y en el registro de espera): se reactiva por cualquiera de las tres señales, no solo por la marca.
+        const enEspera = frustrationService?.isWaitingForHuman?.(sess)
+            || sess.phase === require('../../utils/phases').WAITING_HUMAN
+            || waitingHumanStore.isWaiting(process.env.BUSINESS_KEY, target);
+        if (enEspera) {
             // reactivateBot solo apaga el flag "esperando humano" - hay que
             // resetear la fase tambien, si no el bot queda "reactivado" pero
             // sigue sin responderle automatico a este cliente.
@@ -343,7 +378,7 @@ async function handleMiaReactivarCommand(sock, jid, text, userSession, ctx) {
         await say(sock, jid, `✅ MIA reactivada para ${target.split('@')[0]}.`, ctx);
         
         try {
-            await say(sock, target, '✅ Un administrador reactivó MIA para este chat. Puedes continuar.');
+            await say(sock, target, '✅ Ya puedes continuar con tu pedido. Escribe *menú* si lo necesitas. 🍦', ctx);
         } catch (e) {
             logger.error('Error notificando al cliente:', e.message);
         }

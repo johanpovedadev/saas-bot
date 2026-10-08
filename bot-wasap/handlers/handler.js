@@ -43,6 +43,7 @@ const parserHandler = require('./modules/parser.handler');
 const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
+const cartInfoQuestions = require('./modules/cartInfoQuestions');
 const { say } = require('./modules/handler.utils');
 const { sendTypingIndicator, loadAllProductsCache } = require('../services/bot_core');
 const axios = require('axios');
@@ -50,6 +51,8 @@ const dailyActivityStore = require('../services/dailyActivityStore');
 const pendingAdminQuestion = require('../services/pendingAdminQuestion');
 const unansweredQuestionsStore = require('../services/unansweredQuestionsStore');
 const sheetsWriter = require('../services/sheetsWriter');
+const auditLog = require('../services/auditLog');
+const securityGuard = require('../services/securityGuard');
 const configUpdateAi = require('../services/configUpdateAi');
 
 // ===================================
@@ -324,6 +327,7 @@ async function handleFaqManagementCommand(sock, jid, text, ctx) {
             if (!result.ok) {
                 await say(sock, jid, `❌ No encontré la pregunta *${index}* — escribe "ver preguntas" para ver la lista actual.`, ctx);
             } else {
+                auditLog.record({ action: 'faq_deleted', actor: jid, role: 'owner', text, details: { numero: index, pregunta: result.question } });
                 await say(sock, jid, `🗑️ Listo, borré: "${result.question}"`, ctx);
             }
         } catch (e) {
@@ -359,6 +363,7 @@ async function handleInventoryRefreshCommand(sock, jid, text, ctx) {
         if (!response.data?.ok) throw new Error(response.data?.error || 'respuesta sin ok');
 
         await loadAllProductsCache(ctx);
+        auditLog.record({ action: 'inventory_refresh', actor: jid, role: 'owner', text: 'actualizar inventario', details: { productos: response.data.productos } });
         await say(sock, jid, `✅ Inventario actualizado — ${response.data.productos} productos cargados desde el Sheet.`, ctx);
     } catch (e) {
         logger.error(`handleInventoryRefreshCommand: error refrescando inventario: ${e.message}`);
@@ -420,6 +425,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
                 if (pending.type === 'unanswered_question') {
                     if (sheetId) await sheetsWriter.appendFaqRow(sheetId, pending.payload.question, value);
                     unansweredQuestionsStore.markAnswered(businessKey, pending.payload.id, value);
+                    auditLog.record({ action: 'faq_added', actor: jid, role: 'owner', text, details: { pregunta: pending.payload.question, respuesta: value, enHoja: !!sheetId } });
                 } else if (pending.type === 'onboarding_field') {
                     const field = pending.payload;
                     if (field.kind === 'faq') {
@@ -428,6 +434,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
                         await sheetsWriter.updateConfigField(sheetId, field.sheetTab, field.matchLabel, value);
                     }
                     onboardingStore.saveAnswer(businessKey, field.key, value);
+                    auditLog.record({ action: field.kind === 'faq' ? 'faq_added' : 'config_field', actor: jid, role: 'owner', text, details: { campo: field.key, etiqueta: field.matchLabel || field.faqQuestion, valor: value, enHoja: !!sheetId } });
                 }
                 pendingAdminQuestion.clearPending(businessKey);
                 await say(sock, jid, '¡Listo, ya quedó guardado! 🙌', ctx);
@@ -459,6 +466,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
             const tab = process.env.SHEET_NAME_PRODUCTS || 'Inventario';
             const outcome = await sheetsWriter.updateProductPrice(sheetId, tab, result.product, result.newPrice);
             if (outcome.ok) {
+                auditLog.record({ action: 'price_update', actor: jid, role: 'owner', text, details: { producto: outcome.product, precioNuevo: result.newPrice, clasificadorConfianza: result.confidence } });
                 await say(sock, jid, `${outcome.product} ahora en ${money(result.newPrice)} ✅`, ctx);
                 return true;
             }
@@ -471,6 +479,7 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
         }
         if (result.kind === 'field' && result.field && result.value) {
             await sheetsWriter.appendFaqRow(sheetId, result.field, result.value);
+            auditLog.record({ action: 'faq_added', actor: jid, role: 'owner', text, details: { campo: result.field, valor: result.value, clasificadorConfianza: result.confidence } });
             await say(sock, jid, `¡Listo, guardé "${result.field}: ${result.value}"! ✅`, ctx);
             return true;
         }
@@ -489,7 +498,28 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
  * @param {Object} messageData - Datos del mensaje (from, text, key)
  * @param {Object} ctx - Contexto global
  */
+/**
+ * Punto de entrada de cada mensaje. Con el agente de heladería encendido, las respuestas numéricas del cliente
+ * ("1", "2", "S1 S3"...) las resuelve el flujo de reglas (gratis y exacto), pero esos textos traen menús numerados y
+ * códigos: se presentan en tono conversacional, igual que los turnos del agente.
+ */
 async function processIncomingMessage(sock, messageData, ctx) {
+    const jid = messageData && messageData.from;
+    if (jid && process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria' && typeof (messageData && messageData.text) === 'string') {
+        try {
+            const heladeriaAgent = require('./flows/heladeria.agent');
+            const session = ctx && ctx.sessions && ctx.sessions[jid];
+            if (heladeriaAgent.shouldPresentRules(messageData.text, session, jid)) {
+                return await heladeriaAgent.runWithPresentation(sock, jid, messageData.text, session, ctx, (bufferedSock) => processIncomingMessageCore(bufferedSock, messageData, ctx));
+            }
+        } catch (e) {
+            logger.error(`[${jid}] error preparando la presentación del agente, sigue por reglas: ${e.message}`);
+        }
+    }
+    return processIncomingMessageCore(sock, messageData, ctx);
+}
+
+async function processIncomingMessageCore(sock, messageData, ctx) {
     const { from: jid, text } = messageData;
     
     try {
@@ -518,12 +548,28 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // algo del Sheet. Si no aplica ninguno de los dos casos, sigue de
         // largo (el dueno puede seguir usando el bot como cliente de prueba).
         if (adminHandler.isAdmin(jid, ctx)) {
+            // REGLA "admins aparte": los administradores NUNCA se procesan como
+            // cliente. Solo reciben comandos de control (handleAdminCommand) y la
+            // edición del Sheet (handleAdminSheetUpdate). Esto evita que un bot
+            // responda con flujo de cliente a su propio admin — causa raíz de los
+            // "flujos revueltos" cuando el número del admin está conectado a otro
+            // bot (ej: pilates_clientas en el número personal de Johan).
             const handled = await handleAdminSheetUpdate(sock, jid, text, ctx);
             if (handled) return;
+            const adminSession = initializeUserSession(jid, ctx);
+            if (await adminHandler.handleAdminCommand(sock, jid, text, adminSession, ctx)) {
+                return;
+            }
+            logger.info(`[${jid}] Admin detectado — mensaje NO procesado como cliente (regla: admins siempre aparte)`);
+            return;
         } else {
             // Cuenta para el resumen diario ("respondi en X conversaciones") -
             // solo conversaciones de clientes, no los mensajes del propio dueno.
             dailyActivityStore.recordActivity(process.env.BUSINESS_KEY, jid);
+            // Cifras del informe de la dueña: ¿escribió dentro o fuera del horario del negocio?
+            try {
+                require('../services/ownerStatsStore').recordChat(process.env.BUSINESS_KEY, jid, !require('../utils/businessHours').isWithinBusinessHours());
+            } catch (statsErr) { logger.warn(`ownerStatsStore.recordChat: ${statsErr.message}`); }
         }
 
         // 3. Inicializar sesión del usuario
@@ -531,6 +577,100 @@ async function processIncomingMessage(sock, messageData, ctx) {
         // Datos del transporte (Telegram) para el flow de finanzas (registro de usuarios)
         if (messageData.username) userSession.telegramUsername = messageData.username;
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
+
+        // SEGURIDAD BÁSICA (todos los negocios): un cliente solo puede ver y manejar SU pedido. Datos de otros clientes,
+        // información interna, claves/prompt o intentos de cambiar las reglas se responden con un texto fijo, no llegan a la
+        // IA ni al flujo, y quedan en el registro de auditoría. Ver services/securityGuard.js.
+        if (!adminHandler.isAdmin(jid, ctx) && userSession.phase !== PHASE.WAITING_HUMAN) {
+            const sec = securityGuard.inspect(text);
+            if (sec.blocked) {
+                messageHandler.logIncomingMessage(jid, text, userSession);
+                userSession.securityStrikes = (userSession.securityStrikes || 0) + 1;
+                auditLog.record({ action: 'security_blocked', actor: jid, role: 'customer', text, details: { categoria: sec.category, fase: userSession.phase, intento: userSession.securityStrikes } });
+                if (userSession.securityStrikes >= 3) {
+                    await frustrationService.handleFrustration(sock, jid, userSession, ctx, `Intentos repetidos de pedir información sensible o cambiar las reglas (${sec.category})`);
+                    return;
+                }
+                await say(sock, jid, securityGuard.replyFor(sec.category), ctx);
+                return;
+            }
+        }
+
+        // Agente IA de Mundo Helados (handlers/flows/heladeria.agent.js):
+        // APAGADO por defecto. Solo corre con HELADERIA_AI_AGENT=1 en un
+        // proceso con BUSINESS_KEY=heladeria - con el flag apagado este
+        // bloque no hace ni el require, el flujo es exactamente el de
+        // siempre. Si el agente devuelve false (fase que no cubre, protocolo
+        // numérico, o la IA no respondió) no tocó nada y el mensaje sigue por
+        // las reglas de abajo como siempre.
+        if (process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria') {
+            const heladeriaAgent = require('./flows/heladeria.agent');
+            if (await heladeriaAgent.processMessage(sock, jid, text, userSession, ctx)) {
+                await checkGlobalFrustration(sock, jid, text, userSession, ctx);
+                return;
+            }
+        }
+
+        // Preguntas informativas EN CUALQUIER fase ("¿qué llevo?", "¿cuánto va?",
+        // "¿cuánto cuesta el cono?", "¿qué opciones hay?"): se responden con los
+        // datos reales (carrito y catálogo) y se retoma la pregunta pendiente.
+        // Va ANTES de la captura de entrega para que una pregunta nunca se
+        // guarde como si fuera la dirección (regla de Johan, 3 oct 2026).
+        // Solo actúa en tenants que implementan getInfoCatalog; si el mensaje
+        // no es solo una pregunta de este tipo devuelve false y todo sigue igual.
+        if (await cartInfoQuestions.tryAnswerInfoQuestion(sock, jid, text, userSession, ctx, say)) {
+            return;
+        }
+
+        // Captura de campos de entrega (dirección/teléfono/pago) EN CUALQUIER
+        // fase, para cualquier negocio de carrito — no solo cuando el bot los
+        // pidió explícitamente. Evita que se pierdan en silencio cuando llegan
+        // junto con otra cosa que un handler determinístico de fase ya
+        // resuelve por su cuenta (ver ticket "Mundo Helados no debe romperse
+        // fuera de flujo", 24-25 sep 2026). Se salta en las fases que YA piden
+        // estos datos explícitamente (esas usan classifyDeliveryParts, más
+        // completo, con su propio fallback de nombre) y en WAITING_HUMAN
+        // (nada se procesa ni se guarda mientras espera un humano).
+        const CHECKOUT_DEDICATED_PHASES = new Set([
+            PHASE.CHECK_DIR, PHASE.CHECK_NAME, PHASE.CHECK_TELEFONO, PHASE.CHECK_PAGO
+        ]);
+        // Datos sensibles (tarjeta, cédula, clave): se revisan en TODAS las fases, también en las que piden
+        // dirección, nombre, teléfono o pago - allí un número de tarjeta se guardaba como si fuera la dirección,
+        // y de ahí viajaba al pedido, a la hoja y al aviso de la administración.
+        if (CHECKOUT_DEDICATED_PHASES.has(userSession.phase)) {
+            const sensitiveFlowCheckout = flowRegistry.getTenantFlowWithCapability('escalateIfSensitive');
+            if (sensitiveFlowCheckout && await sensitiveFlowCheckout.escalateIfSensitive(sock, jid, text, userSession, ctx)) return;
+        }
+        if (!CHECKOUT_DEDICATED_PHASES.has(userSession.phase) && userSession.phase !== PHASE.WAITING_HUMAN) {
+            // Nunca guardar nada de un mensaje con datos sensibles (tarjeta,
+            // cédula, clave) — se verifica ANTES de capturar, usando la
+            // capacidad opcional del tenant (hoy solo heladería la tiene; un
+            // tenant sin esta capacidad simplemente no la bloquea, igual que
+            // antes de este cambio).
+            const sensitiveFlow = flowRegistry.getTenantFlowWithCapability('escalateIfSensitive');
+            const alreadyEscalated = sensitiveFlow && await sensitiveFlow.escalateIfSensitive(sock, jid, text, userSession, ctx);
+            if (alreadyEscalated) return;
+            // Corrección de un campo de entrega YA capturado (cambiar/quitar:
+            // "cambia mi dirección a Cra 45 #12-30", "quita la dirección",
+            // "mejor pago con transferencia"). Se evalúa ANTES del captador
+            // pasivo para que el prefijo de intención no se guarde como parte
+            // del valor. Si el mensaje era una corrección, se consume (el
+            // flujo no debe reinterpretar la instrucción como un pedido) y el
+            // pedido sigue su curso normal — nunca se reinicia ni pierde lo
+            // ya armado.
+            const correction = await checkoutHandler.handleFieldCorrection(sock, jid, text, userSession, ctx);
+            if (correction && correction.changed) return;
+            // Quitar una adición/topping YA agregado al pedido en curso
+            // ("quítale las gomitas", "sácame el queso"), sin importar la
+            // fase — capability opcional del tenant (hoy solo heladería;
+            // ver tryRemoveOrderAddition en heladeria.flow.js para la
+            // historia de por qué esto NO puede vivir condicionado a una
+            // lista de fases).
+            const removalFlow = flowRegistry.getTenantFlowWithCapability('tryRemoveOrderAddition');
+            const removed = removalFlow && await removalFlow.tryRemoveOrderAddition(sock, jid, text, userSession, ctx);
+            if (removed) return;
+            checkoutHandler.captureSideChannelFields(text, userSession);
+        }
         
         // 4. ✅ VALIDAR FASE ANTES DE PROCESAR (Máquina de Estados)
         const currentFlow = getCurrentFlow();
@@ -619,8 +759,31 @@ async function processIncomingMessage(sock, messageData, ctx) {
             PHASE.HELADO_PER_UNIT_SABORES, PHASE.HELADO_PER_UNIT_TOPPINGS,
             PHASE.SELECCION_PRODUCTO
         ]);
+        // Bug real (24-26 sep 2026, ticket "Mundo Helados no debe romperse
+        // fuera de flujo"): el cliente puede responder el mismo número corto
+        // dos veces seguidas para DOS preguntas distintas - primero se vio
+        // en el menú principal ("1" para "seguir comprando", luego "1" para
+        // "ver menú"), después en la transición cantidad -> personalización
+        // ("2" para "quiero 2 unidades", luego "2" para "cada una
+        // diferente"). Cualquier transición entre dos preguntas numeradas
+        // seguidas puede repetir el mismo dígito por coincidencia legítima -
+        // no tiene sentido exentar fase por fase cada vez que aparece un
+        // caso nuevo. Probé exentar solo SELECCION_OPCION primero pero eso
+        // no alcanzaba (rompió con HELADO_QUANTITY -> HELADO_UNITS_MODE);
+        // antes de eso probé exentar la fase COMPLETA y eso rompió
+        // test_waiting_human_panel.js: un cliente que manda el MISMO mensaje
+        // de TEXTO LIBRE dos veces (ej. "nadie me ayuda") SÍ es una señal
+        // real de que está atascado y debe escalar, sin importar la fase.
+        // La diferencia real nunca fue la fase, es el CONTENIDO: un número
+        // corto de menú (1-2 dígitos) repetido nunca es loop, en NINGUNA
+        // fase; un mensaje de texto libre repetido sí lo es, en cualquiera.
+        const isBareMenuDigit = /^\d{1,2}$/.test(String(text || '').trim());
         const isMessageLoop = frustrationService.checkMessageLoop(userSession, text);
+        // Un saludo o un "gracias/ok" repetido no es un loop: es lo que escribe un cliente que no vio respuesta
+        // enseguida (las imágenes del menú tardan). Antes el segundo "hola" lo mandaba con una persona y el bot callaba.
+        const isHarmlessRepeat = frustrationService.isHarmlessRepeat(text);
         if (userSession.phase !== PHASE.WAITING_HUMAN && !REPEAT_ALLOWED_PHASES.has(userSession.phase) &&
+            !isBareMenuDigit && !isHarmlessRepeat &&
             isMessageLoop) {
             const loopNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
             if (loopNotifyFlow) {
@@ -888,9 +1051,18 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
         // FASE: ENCARGO PERSONALIZADO
         // Siguiente: BROWSE_IMAGES o SELECCION_OPCION
         // ===================================
-        case PHASE.ENCARGO:
-            await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+        case PHASE.ENCARGO: {
+            // Un tenant puede envolver el encargo para contar errores (hoy:
+            // heladería). Sin la capacidad, comportamiento idéntico al de
+            // siempre - los demás tenants no cambian.
+            const encargoFlow = flowRegistry.getTenantFlowWithCapability('handleEncargoPhase');
+            if (encargoFlow) {
+                await encargoFlow.handleEncargoPhase(sock, jid, text, userSession, ctx);
+            } else {
+                await reservationsHandler.handleEncargo(sock, jid, text, userSession, ctx);
+            }
             break;
+        }
 
         // ===================================
         // FASE: ESPERANDO ATENCIÓN HUMANA
@@ -908,9 +1080,8 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
                     await customNotifyFlow.notifyHumanEscalation(sock, jid, text, ctx);
                 } else {
                     const notificationService = require('../services/notificationService');
-                    await notificationService.notifySystemAlert(sock, ctx, '💬', `MENSAJE DE CLIENTE EN ESPERA`,
-                        `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`
-                    );
+                    // Un aviso por cliente cada 10 min (no uno por mensaje), con su nombre, número y link al chat.
+                    await notificationService.notifyHumanNeeded(sock, ctx, { jid, kind: 'persona', said: text, reason: 'Sigue esperando a que lo atiendan' });
                 }
             } catch (_) {}
             break;
@@ -1162,11 +1333,35 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
             logger.debug(`[${messageData.from}] Media de grupo/estado/propio ignorado`);
             return;
         }
+        // REGLA "bots aparte": ignorar media de números registrados como otros bots
+        if (messageHandler.isRegisteredBotNumber(messageData.from)) {
+            logger.debug(`[${messageData.from}] Media de número registrado de otro bot ignorado (regla: bots aparte)`);
+            return;
+        }
         logger.info(`[${messageData.from}] 📎 Media detectado: ${messageData.mediaType}`);
         const userSession = initializeUserSession(messageData.from, ctx);
         if (messageData.username) userSession.telegramUsername = messageData.username;
         if (messageData.firstName) userSession.telegramFirstName = messageData.firstName;
         const currentFlow = getCurrentFlow();
+
+        // Política propia de multimedia (capability opcional del flow): el negocio decide qué hacer con audios e
+        // imágenes sin pasar por la transcripción general (heladería: audio ignorado, imagen solo si es comprobante).
+        if (currentFlow && typeof currentFlow.handleMedia === 'function') {
+            try {
+                const outcome = await currentFlow.handleMedia(sock, messageData.from, {
+                    type: messageData.mediaType,
+                    caption: messageData.text || '',
+                    download: () => downloadMediaWithRetry(msg, messageData.from)
+                }, userSession, ctx);
+                // Un audio entendido sigue como si el cliente lo hubiera escrito (seguridad, agente, flujo...).
+                if (outcome && outcome.text) {
+                    return processSocketMessage(sock, msg, { ...messageData, text: outcome.text, mediaType: null }, ctx);
+                }
+            } catch (mediaPolicyErr) {
+                logger.error(`[${messageData.from}] Error en la política de multimedia: ${mediaPolicyErr.message}`);
+            }
+            return;
+        }
 
         // Gate premium (capability opcional del flow): bloquear la transcripción
         // con IA (audio/imagen) de usuarios fuera de la prueba sin tocar la IA.
@@ -1216,7 +1411,16 @@ async function processSocketMessage(sock, msg, messageData, ctx) {
                     return;
                 }
                 logger.info(`[${messageData.from}] media: transcribiendo (mime=${media.mimetype})...`);
-                const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg');
+                // Bug real (auditoría 23/9, foto real de una clienta): una
+                // imagen con pie de foto (ej: "3 de esta xfavor") traía ese
+                // texto en messageData.text (extractMessageData ya lo lee de
+                // msg.body/caption), pero acá NUNCA se pasaba - solo se
+                // analizaban los bytes de la imagen, así que la cantidad/
+                // intención que el cliente escribió junto a la foto se
+                // perdía en silencio. Ahora se pasa como 4to argumento
+                // (transcribeAudio lo ignora sin problema, solo lo usa
+                // transcribeImage).
+                const transcribed = await transcribeFn(media.data, userSession, media.mimetype || 'image/jpeg', messageData.text || '');
                 logger.info(`[${messageData.from}] media: transcripción terminó: ${transcribed ? JSON.stringify(transcribed.substring(0, 60)) : 'null'}`);
                 if (!transcribed) {
                     await sock.sendMessage(messageData.from, 'No pude entender el contenido. Intenta escribirlo como texto.');
@@ -1318,6 +1522,7 @@ const unmuteChat = handlerUtils.unmuteChat;
 module.exports = {
     // Main processors
     processIncomingMessage,
+    processSocketMessage,
     setupSocketHandlers,
     
     // Session management

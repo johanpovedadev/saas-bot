@@ -546,6 +546,30 @@ async function handleProductSelection(sock, jid, input, userSession, ctx) {
         }
     }
     
+    // El bot le dice al cliente "escribe el nombre o una palabra del producto (ej: copa, caja)". Una palabra suelta
+    // se busca entre los productos que se le mostraron: si hay UNO, se selecciona; si hay varios, se le ofrecen
+    // para que elija (nunca se escoge uno por él: "helado" o "copa" son ambiguos). Antes solo valía el número o el
+    // nombre EXACTO completo y "copa" daba "No entendí". Frases largas o con cantidades siguen yendo a la IA.
+    const palabras = String(input || '').trim().split(/\s+/).filter(Boolean);
+    const esComando = /^(hablar|menu|men[uú]|carrito|pagar|cancelar|ayuda|asesor|humano|persona|hola)$/i.test(String(input || '').trim());
+    if (palabras.length >= 1 && palabras.length <= 3 && !/\d/.test(input) && !esComando && inventory.length > 0) {
+        const consulta = normalizeText(input).split(' ').filter(w => w.length >= 3);
+        if (consulta.length > 0) {
+            const coincidencias = inventory.filter(p => {
+                const nombre = normalizeText(p.NombreProducto || '');
+                return consulta.every(w => nombre.includes(w));
+            });
+            if (coincidencias.length === 1) {
+                await handleSingleProductFound(sock, jid, coincidencias[0], userSession, ctx);
+                return;
+            }
+            if (coincidencias.length > 1) {
+                await handleMultipleProductsFoundEmpathic(sock, jid, coincidencias.slice(0, 10), userSession, ctx, input);
+                return;
+            }
+        }
+    }
+
     if (!producto) {
         logger.warn(`[${jid}] -> No se encontró producto con input: "${input}"`);
         // Modo híbrido: delegar a la IA antes del mensaje genérico. El flow

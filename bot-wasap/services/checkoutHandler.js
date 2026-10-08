@@ -394,7 +394,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
                     ctx.reservas = ctx.reservas || [];
                     ctx.reservas.push({ timestamp: Date.now(), payload });
                 }
-                const fallbackPath = path.join(__dirname, '..', 'tmp', `failed_order_${Date.now()}.json`);
+                const fallbackPath = path.join(__dirname, '..', 'tmp', `failed_order_${process.env.BUSINESS_KEY || "sin-negocio"}_${Date.now()}.json`);
                 fs.writeFileSync(fallbackPath, JSON.stringify({ payload, error: error.message }, null, 2));
                 logger.info(`[${jid}] -> Pedido guardado en fallback: ${fallbackPath}`);
             } catch (fsErr) {

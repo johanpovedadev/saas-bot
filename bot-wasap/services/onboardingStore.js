@@ -10,24 +10,22 @@
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
+const sharedJsonFile = require('../utils/sharedJsonFile');
 
 const STORE_PATH = process.env.ONBOARDING_STORE_PATH || path.join(__dirname, '..', 'data', 'onboarding_progress.json');
 
 function readAll() {
-    try {
-        if (!fs.existsSync(STORE_PATH)) return {};
-        return JSON.parse(fs.readFileSync(STORE_PATH, 'utf-8') || '{}');
-    } catch (e) {
-        logger.error(`onboardingStore: error leyendo registro: ${e.message}`);
+    const r = sharedJsonFile.readJson(STORE_PATH);
+    if (!r.ok) {
+        logger.error(`onboardingStore: archivo corrupto (se guardó copia .corrupt-*): ${r.error && r.error.message}`);
         return {};
     }
+    return r.data;
 }
 
 function writeAll(data) {
     try {
-        const dir = path.dirname(STORE_PATH);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+        sharedJsonFile.writeJsonAtomic(STORE_PATH, data);
     } catch (e) {
         logger.error(`onboardingStore: error escribiendo registro: ${e.message}`);
     }
@@ -56,4 +54,10 @@ function saveAnswer(businessKey, fieldKey, value) {
     writeAll(all);
 }
 
-module.exports = { getProgress, advance, saveAnswer };
+// Las operaciones que leen-modifican-escriben van con candado entre procesos
+// (varios bots comparten este archivo) - ver utils/sharedJsonFile.js.
+module.exports = sharedJsonFile.lockedExports(STORE_PATH, {
+    getProgress,
+    advance,
+    saveAnswer
+}, ['advance', 'saveAnswer']);

@@ -15,24 +15,22 @@
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
+const sharedJsonFile = require('../utils/sharedJsonFile');
 
-const REGISTRY_PATH = path.join(__dirname, '..', 'data', 'bot_owners.json');
+const REGISTRY_PATH = process.env.BOT_OWNERS_STORE_PATH || path.join(__dirname, '..', 'data', 'bot_owners.json');
 
 function readAll() {
-    try {
-        if (!fs.existsSync(REGISTRY_PATH)) return {};
-        return JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf-8') || '{}');
-    } catch (e) {
-        logger.error(`botRegistry: error leyendo registro: ${e.message}`);
+    const r = sharedJsonFile.readJson(REGISTRY_PATH);
+    if (!r.ok) {
+        logger.error(`botRegistry: archivo corrupto (se guardó copia .corrupt-*): ${r.error && r.error.message}`);
         return {};
     }
+    return r.data;
 }
 
 function writeAll(data) {
     try {
-        const dir = path.dirname(REGISTRY_PATH);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(REGISTRY_PATH, JSON.stringify(data, null, 2), 'utf-8');
+        sharedJsonFile.writeJsonAtomic(REGISTRY_PATH, data);
     } catch (e) {
         logger.error(`botRegistry: error escribiendo registro: ${e.message}`);
     }
@@ -63,4 +61,10 @@ function getAllOwners() {
     return readAll();
 }
 
-module.exports = { registerOwner, getOwner, getAllOwners };
+// Las operaciones que leen-modifican-escriben van con candado entre procesos
+// (varios bots comparten este archivo) - ver utils/sharedJsonFile.js.
+module.exports = sharedJsonFile.lockedExports(REGISTRY_PATH, {
+    registerOwner,
+    getOwner,
+    getAllOwners
+}, ['registerOwner']);

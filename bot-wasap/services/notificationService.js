@@ -2,6 +2,7 @@
 const { logger } = require('../utils/logger');
 const { say } = require('./bot_core');
 const envConfig = require('../config/env.loader');
+const ownerMessages = require('./ownerMessages');
 
 // ISSUE 60: Cola de notificaciones para cuando WhatsApp está offline
 const pendingNotifications = [];
@@ -29,8 +30,38 @@ function getBusinessAdminJids() {
     return admins;
 }
 
+/**
+ * Silencio temporal de avisos TÉCNICOS (SYSTEM_ALERTS_MUTED=1): para pruebas con un negocio cuyos administradores son
+ * personas reales (ej. Mundo Helados mientras Johan prueba) y no deben recibir avisos de reconexión o de caídas.
+ * Solo calla lo técnico: los avisos de clientes (pide una persona, consulta de domicilio, pedidos) SIGUEN saliendo.
+ */
+const TECHNICAL_ALERT = /DESCONECTADO|RECONECTADO|STARTUP|TIMEOUT|INTERNET|DJANGO|SHEETS|REINICI|CA[IÍ]DO|RECUPERADO|ERROR CR[IÍ]TICO|RESUMEN DEL D[IÍ]A|SALUD/i;
+function technicalAlertsMuted(title = '') {
+    return process.env.SYSTEM_ALERTS_MUTED === '1' && TECHNICAL_ALERT.test(String(title));
+}
+
+/**
+ * Administrador del SISTEMA (Johan): recibe lo técnico. Si el negocio no lo configuró no se cae al dueño: los avisos
+ * de "BOT DESCONECTADO" o "STARTUP TIMEOUT" no le sirven a quien atiende un negocio (7 oct 2026: a la dueña de Mundo
+ * Helados le llegaban cientos).
+ */
 function getSystemAdminJids() {
     const config = envConfig.admin?.system_admin_jids;
+    if (config && Array.isArray(config) && config.length > 0) {
+        return config.map(normalizeJid).filter(Boolean);
+    }
+    return [];
+}
+
+/**
+ * Admin de PEDIDOS/ESCALAMIENTO HUMANO - pedido de Johan: número separado
+ * del admin de sistema/cambios (getBusinessAdminJids), para validar pedidos
+ * terminados o chats que necesitan ayuda de una persona. Si el tenant no
+ * configuró "orders_admin_jids" todavía, cae de vuelta a business_admin_jids
+ * (mismo comportamiento de siempre, sin romper tenants sin el split).
+ */
+function getOrdersAdminJids() {
+    const config = envConfig.admin?.orders_admin_jids;
     if (config && Array.isArray(config) && config.length > 0) {
         return config.map(normalizeJid).filter(Boolean);
     }
@@ -64,21 +95,43 @@ async function _sendToJids(sock, jids, msg, ctx) {
     }
 }
 
-async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
+/**
+ * Avisa a quien atiende los pedidos (la dueña) que un cliente necesita a una persona, con un mensaje que se entiende
+ * sin abrir nada más (ver services/ownerMessages.js). Un mismo cliente no genera más de un aviso cada 10 minutos.
+ *
+ * @param {Object} p
+ * @param {string} p.jid
+ * @param {'persona'|'ayuda'|'domicilio'|'sensible'} [p.kind]
+ * @param {string} [p.said] lo que escribió el cliente
+ * @param {string} [p.reason] por qué se avisa
+ * @param {string} [p.address]
+ * @param {number} [p.now] solo para pruebas
+ */
+async function notifyHumanNeeded(sock, ctx, { jid, kind = 'persona', said, reason, address, now }) {
     try {
-        const admins = getBusinessAdminJids();
-        const chatLink = `https://wa.me/${jid.split('@')[0]}`;
-        const msg = `🔔 Atencion: Cliente con dificultades.\n\nCliente: ${jid.split('@')[0]}\nUltimo mensaje: "${lastMessage}"\nAbrir chat: ${chatLink}\n\nPor favor, toma el control de este chat.`;
+        const gate = ownerMessages.shouldNotify(kind, jid, now);
+        if (!gate.send) { logger.info(`Aviso a la administración omitido (ya se avisó hace poco por ${jid})`); return false; }
+        const session = ctx && ctx.sessions && ctx.sessions[jid];
+        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more });
+        const admins = getOrdersAdminJids();
         await _sendToJids(sock, admins, msg, ctx);
-        logger.info(`Notificados admins negocio sobre problema con ${jid}`);
+        if (admins.length === 0) logger.warn(`Cliente ${jid} necesita una persona pero no hay administradores de pedidos configurados`);
+        return admins.length > 0;
     } catch (e) {
-        logger.error(`Error en notifyAdminsAboutCustomerIssue: ${e.message}`);
+        logger.error(`Error en notifyHumanNeeded: ${e.message}`);
+        return false;
     }
+}
+
+/** Compatibilidad: los textos internos de siempre se traducen a un motivo que la dueña entienda. */
+async function notifyAdminsAboutCustomerIssue(sock, jid, lastMessage, ctx) {
+    const { reason, said } = ownerMessages.interpretLegacyReason(lastMessage);
+    return notifyHumanNeeded(sock, ctx, { jid, kind: 'ayuda', said, reason });
 }
 
 async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
         const msg = `🔴 Error de MIA\n\nCliente: ${jid.split('@')[0]}\nError: ${error.message}\nAbrir chat: ${chatLink}\n\nLa IA ha sido desactivada para este chat.`;
         await _sendToJids(sock, admins, msg, ctx);
@@ -90,7 +143,7 @@ async function notifyAdminsAboutMIAError(sock, jid, error, ctx) {
 
 async function notifyAdminsAboutReservation(sock, jid, reserva, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const msg = `📣 Nueva reserva registrada:\n\n- ID: ${reserva.id || 'N/A'}\n- Cliente: ${jid.split('@')[0]}\n- Nombre: ${reserva.name || 'N/A'}\n- Telefono: ${reserva.telefono || 'N/A'}\n- Tipo: ${reserva.tipo || 'N/A'}\n- Direccion: ${reserva.address || 'N/A'}\n- Pago: ${reserva.payment || 'efectivo'}`;
         await _sendToJids(sock, admins, msg, ctx);
     } catch (e) {
@@ -100,6 +153,7 @@ async function notifyAdminsAboutReservation(sock, jid, reserva, ctx) {
 
 async function notifyAdminsAboutCriticalError(sock, jid, message, error, ctx) {
     try {
+        if (technicalAlertsMuted('ERROR CRITICO')) return;
         const admins = getSystemAdminJids();
         const msg = `🔴 *Error Critico en el Bot* 🔴\n\n- *Cliente:* ${jid}\n- *Mensaje:* "${message}"\n- *Error:* ${error.message}\n\nPor favor, revisa la consola o los logs para mas detalles.`;
         await _sendToJids(sock, admins, msg, ctx);
@@ -109,10 +163,11 @@ async function notifyAdminsAboutCriticalError(sock, jid, message, error, ctx) {
     }
 }
 
-// ISSUE #29 - notificaciones comerciales a business_admin_jids
+// ISSUE #29 - notificaciones comerciales a orders_admin_jids (validar
+// pedidos terminados) - separado de business_admin_jids (cambios/informes).
 async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
     try {
-        const admins = getBusinessAdminJids();
+        const admins = getOrdersAdminJids();
         const chatLink = `https://wa.me/${jid.split('@')[0]}`;
 
         if (payload.plan) {
@@ -127,10 +182,73 @@ async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
         // Johan probando desde su propio numero, que tambien es admin) - bug
         // real: se filtraba silenciosamente y el admin nunca veia el aviso.
         await _sendToJids(sock, admins, msg, ctx);
-        logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
+        // Auditoría 23/9: este log se imprimía igual aunque `admins` viniera
+        // vacío (tenant mal configurado, sin ningún JID de admin) - un pedido
+        // confirmado se veía en los logs como "notificado" sin que nadie lo
+        // recibiera de verdad, ocultando justo el tipo de problema de
+        // configuración (ej. JIDs de admin mezclados entre tenants) que ya se
+        // dio en esta sesión.
+        if (admins.length === 0) {
+            logger.warn(`Pedido de ${jid} confirmado pero NO se notificó a ningún admin (orders_admin_jids/business_admin_jids vacío para este tenant)`);
+        } else {
+            logger.info(`Notificados admins negocio sobre pedido de ${jid}`);
+        }
     } catch (e) {
         logger.error(`Error en notifyAdminsNewOrder: ${e.message}`);
     }
+}
+
+// ISSUE #39 - Resumen diario automatico al dueno del negocio (push, no
+// on-demand) + preguntas graduales de conocimiento. Van a business_admin_jids
+// (el dueno del negocio), por el MISMO bot de WhatsApp que ya le habla a sus
+// clientes - no requiere numero ni bot nuevo.
+
+/**
+ * Mensaje de texto libre para el dueno del negocio (usado por el resumen
+ * diario y por la pregunta gradual de onboarding/aprendizaje).
+ */
+async function notifyAdmin(sock, ctx, text) {
+    const admins = getBusinessAdminJids();
+    if (admins.length === 0) return;
+    await _sendToJids(sock, admins, text, ctx);
+}
+
+/**
+ * Resumen diario: cuantas conversaciones respondio el bot hoy vs cuantas
+ * siguen esperando atencion humana. Ver services/dailySummaryScheduler.js
+ * para cuando se dispara.
+ */
+/**
+ * Bug real (pedido de Johan, 24/9): el resumen decía "8 conversaciones
+ * necesitan tu atención" sin ninguna forma de saber si son NUEVAS de hoy o
+ * las MISMAS de días anteriores que nadie cerró todavía. Ahora separa las
+ * dos cosas y, si hay acumuladas, lista los números para que se puedan
+ * revisar/cerrar puntualmente (con "reactivar mia <número>" una vez
+ * resueltas - si no, seguirán apareciendo cada noche).
+ */
+async function notifyDailySummary(sock, ctx, { respondidas, pendientes, pendientesNuevas = 0, pendientesAcumuladas = 0, numerosAcumulados = [] }) {
+    const businessName = envConfig.business?.name || 'tu negocio';
+    // Un día sin movimiento no merece un mensaje: a quien atiende un negocio le sobra ruido.
+    if (!respondidas && !pendientes) { logger.info('Resumen diario omitido: hoy no hubo conversaciones'); return; }
+    let pendientesLine;
+    if (pendientes === 0) {
+        pendientesLine = `✅ No quedó ninguna conversación pendiente.`;
+    } else if (pendientesAcumuladas === 0) {
+        pendientesLine = `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} de HOY necesita${pendientes === 1 ? '' : 'n'} tu atención.`;
+    } else {
+        const listado = numerosAcumulados.slice(0, 5).map(n => `   • ${n}`).join('\n');
+        const masTexto = numerosAcumulados.length > 5 ? `\n   _(+${numerosAcumulados.length - 5} más)_` : '';
+        pendientesLine = `⚠️ ${pendientes} conversacion${pendientes === 1 ? '' : 'es'} pendiente${pendientes === 1 ? '' : 's'}:\n` +
+            `   ${pendientesNuevas} nueva${pendientesNuevas === 1 ? '' : 's'} de hoy\n` +
+            `   ${pendientesAcumuladas} de días anteriores, todavía sin cerrar:\n${listado}${masTexto}\n\n` +
+            `_Apenas resuelvas una, escribe "reactivar mia <número>" para que deje de salir aquí._`;
+    }
+    const msg = `¡Hola! Resumen de hoy en ${businessName}:\n\n` +
+        `✅ Respondí en ${respondidas} conversacion${respondidas === 1 ? '' : 'es'}\n` +
+        `${pendientesLine}\n\n` +
+        `¿Necesitas algo más? Escríbeme.`;
+    await notifyAdmin(sock, ctx, msg);
+    logger.info(`Resumen diario enviado a admins negocio: ${respondidas} respondidas, ${pendientes} pendientes (${pendientesNuevas} nuevas, ${pendientesAcumuladas} acumuladas)`);
 }
 
 // =====================================================
@@ -139,12 +257,15 @@ async function notifyAdminsNewOrder(sock, jid, payload, total, ctx) {
 // ISSUE #32 - Monitoreo Google Sheets
 // ISSUE #33 - Health Check Django
 // ISSUE #34 - Heartbeat General
-// ISSUE #39 - Resumen Diario
 // =====================================================
 // Todas estas notificaciones tecnicas van a system_admin_jids
 
 async function notifySystemAlert(sock, ctx, level, title, body) {
-    const admins = getSystemAdminJids();
+    if (technicalAlertsMuted(title)) { logger.info(`Aviso técnico silenciado (SYSTEM_ALERTS_MUTED): ${title}`); return; }
+    // Lo técnico va al administrador de sistema; lo demás (un cliente pide una persona, consulta de domicilio...) es
+    // de quien atiende los pedidos. Antes todo iba al de sistema y, al restaurar el número de Johan, la dueña dejaba
+    // de enterarse de sus clientes.
+    const admins = TECHNICAL_ALERT.test(String(title)) ? getSystemAdminJids() : getOrdersAdminJids();
     if (admins.length === 0) return;
     const msg = `${level} *${title}*\n\n${body}`;
     await _sendToJids(sock, admins, msg, ctx);
@@ -209,14 +330,19 @@ async function notifyDjangoRecovered(sock, ctx) {
 }
 
 module.exports = {
+    technicalAlertsMuted,
     getAdminJids,
     getBusinessAdminJids,
     getSystemAdminJids,
+    getOrdersAdminJids,
+    notifyHumanNeeded,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,
     notifyAdminsAboutCriticalError,
     notifyAdminsNewOrder,
+    notifyAdmin,
+    notifyDailySummary,
     notifyBotDisconnected,
     notifyBotReconnected,
     notifySheetsError,

@@ -62,7 +62,16 @@ function readJsonBody(req) {
 }
 
 function startStatusServer({ botName, businessSlug, port } = {}) {
-    const resolvedPort = Number(port || process.env.LION_STATUS_PORT || 8096);
+    // Sin puerto propio NO se levanta (auditoría 1 oct 2026): antes caía por
+    // defecto en 8096, que es el puerto de heladería - un bot sin
+    // LION_STATUS_PORT (ej. bot-dev) que arrancara primero se quedaba con el
+    // puerto de heladería y respondía /send, /leads, /messages, /pause en su
+    // nombre. Cada bot debe tener su propio LION_STATUS_PORT en PM2.
+    const resolvedPort = Number(port || process.env.LION_STATUS_PORT);
+    if (!resolvedPort) {
+        console.warn(`[lion-status-server] ${businessSlug || ''}: sin LION_STATUS_PORT propio, no se levanta el servidor de estado (nunca se usa el puerto de otro negocio).`);
+        return null;
+    }
 
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, 'http://localhost');

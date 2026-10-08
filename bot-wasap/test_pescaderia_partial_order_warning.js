@@ -6,6 +6,16 @@
  * las dos cosas. Ahora debe avisarse explícitamente que no se agregó esa
  * parte (paridad con test_heladeria_partial_order_warning.js).
  * Uso: node test_pescaderia_partial_order_warning.js
+ *
+ * Requiere infraestructura local (25 sep 2026): carga el catálogo real vía
+ * botCore.loadAllProductsCache(), que pega contra el backend Django en
+ * :8002 - ese backend necesita su propio env de tenant cargado (mismo
+ * patrón .env.<BUSINESS_KEY> que ya usa bot-wasap) para servir el
+ * inventario real de pescadería, no solo `python manage.py runserver`.
+ * Pescadería es tenant de prueba (decisión de Johan, 25 sep 2026: Mundo
+ * Helados es el cliente crítico) - no es para correr en cada commit hasta
+ * que el Django multi-tenant esté configurado. Correr a mano cuando ese
+ * backend esté levantado con el env correcto.
  */
 const assert = require('assert');
 process.env.BUSINESS_KEY = 'pescaderia';

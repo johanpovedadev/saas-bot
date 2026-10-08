@@ -16,6 +16,15 @@ const flowRegistry = require('./handlers/flowRegistry');
 const heladeriaFlow = require('./handlers/flows/heladeria.flow.js');
 const sessionService = require('./services/sessionService');
 const heladeriaAi = require('./services/heladeriaAi');
+const businessHours = require('./utils/businessHours');
+
+// Este test es sobre el aviso de "parte del pedido no reconocida", no sobre
+// la regla de horario - se fuerza "abierto" para que no dependa de la hora
+// real en que corra (Copa Car no es de los productos permitidos fuera de
+// horario, ver test_heladeria_fuera_horario_solo_cajas.js para esa regla).
+const origIsOpen = businessHours.isWithinBusinessHours;
+businessHours.isWithinBusinessHours = () => true;
+process.on('exit', () => { businessHours.isWithinBusinessHours = origIsOpen; });
 
 const sent = [];
 const sock = { sendMessage: async (jid, text) => { sent.push(String(text)); }, getChatById: async () => null };
