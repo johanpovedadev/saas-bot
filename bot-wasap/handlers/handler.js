@@ -566,6 +566,10 @@ async function processIncomingMessageCore(sock, messageData, ctx) {
             // Cuenta para el resumen diario ("respondi en X conversaciones") -
             // solo conversaciones de clientes, no los mensajes del propio dueno.
             dailyActivityStore.recordActivity(process.env.BUSINESS_KEY, jid);
+            // Cifras del informe de la dueña: ¿escribió dentro o fuera del horario del negocio?
+            try {
+                require('../services/ownerStatsStore').recordChat(process.env.BUSINESS_KEY, jid, !require('../utils/businessHours').isWithinBusinessHours());
+            } catch (statsErr) { logger.warn(`ownerStatsStore.recordChat: ${statsErr.message}`); }
         }
 
         // 3. Inicializar sesión del usuario

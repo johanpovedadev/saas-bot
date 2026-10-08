@@ -1496,6 +1496,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             }            // ✅ Notificar admins sobre pedido completado usando notificationService
             // Recuerda el pedido para asociarle el comprobante de pago que llegue después (ver paymentProof.js).
             // (en ctx, no en la sesión: resetChat() la borra al terminar el pedido)
+            try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
             if (ctx) {
                 ctx.lastConfirmedOrders = ctx.lastConfirmedOrders || {};
                 ctx.lastConfirmedOrders[jid] = { at: Date.now(), nombre: payload.nombre, productos: payload.producto, total: orderTotal, pago: payload.pago };

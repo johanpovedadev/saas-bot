@@ -18,6 +18,9 @@ const { logger } = require('../utils/logger');
 const notificationService = require('./notificationService');
 const waitingHumanStore = require('./waitingHumanStore');
 const dailyActivityStore = require('./dailyActivityStore');
+const ownerStatsStore = require('./ownerStatsStore');
+const ownerReport = require('./ownerReport');
+const envConfig = require('../config/env.loader');
 
 function todayKey(now) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -61,7 +64,44 @@ async function runDailySummary(sock, ctx) {
     });
 }
 
+/**
+ * Informe del día para la dueña (ver services/ownerReport.js): pedidos y total, clientes atendidos fuera del horario,
+ * tiempo ahorrado y quién espera a una persona. Un solo mensaje y ninguno si no hubo movimiento.
+ */
+async function runOwnerReport(sock, ctx) {
+    const businessKey = process.env.BUSINESS_KEY;
+    const text = ownerReport.buildOwnerReport({
+        businessName: (envConfig.business && envConfig.business.name) || 'tu negocio',
+        stats: ownerStatsStore.getToday(businessKey),
+        waiting: waitingHumanStore.listWaiting(businessKey)
+    });
+    if (!text) { logger.info('Informe de la dueña omitido: hoy no hubo movimiento'); return false; }
+    await notificationService.notifyAdmin(sock, ctx, text);
+    logger.info('Informe del día enviado a la dueña');
+    return true;
+}
+
+/** Se envía al cerrar el día (OWNER_REPORT_HOUR, 22 por defecto), una sola vez. Activo con OWNER_REPORT=1. */
+function startOwnerReportJob(sock, ctx) {
+    const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+    const targetHour = parseInt(process.env.OWNER_REPORT_HOUR, 10);
+    const hour = Number.isFinite(targetHour) ? targetHour : 22;
+
+    setInterval(() => {
+        const now = new Date();
+        if (now.getHours() !== hour) return;
+        const key = todayKey(now);
+        if (ctx._ownerReportLastRun === key) return;
+        ctx._ownerReportLastRun = key;
+        runOwnerReport(sock, ctx).catch(e => logger.error(`dailySummaryScheduler: error enviando el informe de la dueña: ${e.message}`));
+    }, CHECK_INTERVAL_MS);
+
+    logger.info(`dailySummaryScheduler: informe de la dueña iniciado (se envía a las ${hour}:00, revisa cada 15 min)`);
+}
+
 function startDailySummaryJob(sock, ctx) {
+    // Con el informe de la dueña activo, reemplaza al resumen diario de las 7 am (que contaba un día recién empezado).
+    if (process.env.OWNER_REPORT === '1') { startOwnerReportJob(sock, ctx); return; }
     const CHECK_INTERVAL_MS = 15 * 60 * 1000;
     const targetHour = parseInt(process.env.DAILY_SUMMARY_HOUR, 10);
     const hour = Number.isFinite(targetHour) ? targetHour : 7;
@@ -78,4 +118,4 @@ function startDailySummaryJob(sock, ctx) {
     logger.info(`dailySummaryScheduler: iniciado (envia resumen diario a las ${hour}:00, revisa cada 15 min)`);
 }
 
-module.exports = { startDailySummaryJob, runDailySummary };
+module.exports = { startDailySummaryJob, startOwnerReportJob, runDailySummary, runOwnerReport };
