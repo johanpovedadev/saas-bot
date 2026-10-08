@@ -35,7 +35,7 @@ function check(cond, msg) {
     else { failures++; console.log('❌', msg); }
 }
 
-const origNotify = notificationService.notifySystemAlert;
+const origNotify = notificationService.notifyHumanNeeded;
 
 function makeCheckoutSession() {
     return {
@@ -56,7 +56,7 @@ async function send(text) {
     try {
         await botCore.loadAllProductsCache(ctx).catch(e => console.log('cache fail:', e.message));
         let notified = null;
-        notificationService.notifySystemAlert = async (s, c, emoji, title, body) => { notified = { emoji, title, body }; };
+        notificationService.notifyHumanNeeded = async (s, c, p) => { notified = { kind: p.kind, body: p.address || '' }; };
 
         // Caso 1: pregunta SIN dirección, YA en el resumen final (confirm_order)
         // -> pide la dirección, NO cae en "opción no válida", NO cambia de fase.
@@ -78,7 +78,7 @@ async function send(text) {
             const s = ctx.sessions[JID]; // sigue pendiente del caso 1
             notified = null;
             const joined = await send('Cra 45 #12-30');
-            check(!!notified, 'se avisa al equipo (notifySystemAlert) al recibir la dirección');
+            check(!!notified, 'se avisa a quien atiende (notifyHumanNeeded, tipo domicilio) al recibir la dirección');
             check(notified && /Cra 45 #12-30/.test(notified.body), `el aviso incluye la dirección exacta (${notified && notified.body})`);
             check(s.phase === PHASE.CONFIRM_ORDER, `la fase sigue en confirm_order (${s.phase})`);
             check(s.pendingDomicilioQuery === false, 'ya no queda pendiente la dirección');
@@ -115,7 +115,7 @@ async function send(text) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
-        notificationService.notifySystemAlert = origNotify;
+        notificationService.notifyHumanNeeded = origNotify;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

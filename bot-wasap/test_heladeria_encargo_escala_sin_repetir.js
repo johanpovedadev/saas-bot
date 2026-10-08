@@ -77,9 +77,9 @@ const MENSAJES = [
     const originalNotify = notificationService.notifyAdminsAboutCustomerIssue;
     let notified = 0;
     notificationService.notifyAdminsAboutCustomerIssue = async () => { notified++; };
-    // El pase directo a una persona (descripción libre del evento) avisa por notifySystemAlert, con el enlace al chat
-    const originalAlert = notificationService.notifySystemAlert;
-    notificationService.notifySystemAlert = async () => { notified++; };
+    // El pase directo a una persona (descripción libre del evento) avisa con notifyHumanNeeded (nombre, número y enlace al chat)
+    const originalAlert = notificationService.notifyHumanNeeded;
+    notificationService.notifyHumanNeeded = async () => { notified++; };
     try {
         // ==== 1) Caso real: mensajes libres en ENCARGO → escala, no repite 14 veces ====
         {
@@ -145,7 +145,7 @@ const MENSAJES = [
         process.exitCode = 1;
     } finally {
         notificationService.notifyAdminsAboutCustomerIssue = originalNotify;
-        notificationService.notifySystemAlert = originalAlert;
+        notificationService.notifyHumanNeeded = originalAlert;
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();
