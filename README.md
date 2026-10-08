@@ -11,6 +11,8 @@
 
 ---
 
+> **Contribuir:** ramas, commits, PRs y pruebas siguen [CONTRIBUTING.md](CONTRIBUTING.md) (Gitflow, CI obligatoria, pruebas con IA simulada).
+
 ## 📋 Tabla de Contenidos
 
 - [Arquitectura](#-arquitectura)
