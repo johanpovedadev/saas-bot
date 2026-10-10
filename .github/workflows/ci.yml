@@ -36,6 +36,12 @@ jobs:
           if [ -f package-lock.json ] ; then npm ci ; else npm install ; fi
           npm test
 
+      - name: Install admin-panel deps and run its tests
+        run: |
+          cd admin-panel
+          if [ -f package-lock.json ] ; then npm ci ; else npm install ; fi
+          for t in test_*.js ; do echo "== $t" ; node "$t" || exit 1 ; done
+
       - name: Run gitleaks
         uses: zricethezav/gitleaks-action@v2
         env:
