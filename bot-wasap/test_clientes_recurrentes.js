@@ -37,6 +37,14 @@ try {
     check(/Calle 25/.test(store.get('heladeria', JID, T0 + 9500).address) && recoge.orderCount === 3, 'un pedido para recoger no pisa la dirección de entrega guardada');
     check(store.get('heladeria', JID, T0 + store.MAX_AGE_MS + 99999) === null, 'un perfil de hace más de 6 meses ya no se ofrece');
     check(store.get('heladeria', '573160000999@c.us', T0) === null && store.get('otro', JID, T0) === null, 'el perfil es de ese chat y de ese negocio');
+    // Retención: un perfil caducado no solo deja de ofrecerse, también se borra del archivo al guardar otro pedido.
+    const VIEJO = '573160000777@c.us';
+    store.saveFromOrder('heladeria', VIEJO, { order: { name: 'Pedro Caducado', telefono: '3109998888', address: 'Carrera 9 #9-9' }, carrito: pedido.carrito, total: 5000 }, T0);
+    const despues = T0 + store.MAX_AGE_MS + 5000;
+    store.saveFromOrder('heladeria', '573160000888@c.us', pedido, despues);
+    const enDisco = fs.readFileSync(process.env.CUSTOMER_PROFILES_PATH, 'utf8');
+    check(!/Pedro Caducado|3109998888|Carrera 9/.test(enDisco) && /573160000888@c.us/.test(enDisco), 'al guardar un pedido se borran del archivo los perfiles caducados (y el nuevo queda)');
+    store.forget('heladeria', '573160000888@c.us');
     check(store.saveFromOrder('heladeria', JID, { order: {}, carrito: [], total: 0 }, T0).orderCount === 0, 'sin productos no se guarda nada');
     check(store.forget('heladeria', JID) === true && store.get('heladeria', JID, T0) === null && store.forget('heladeria', JID) === false, 'borrar de verdad: después no queda nada');
     const disco = fs.existsSync(process.env.CUSTOMER_PROFILES_PATH) ? fs.readFileSync(process.env.CUSTOMER_PROFILES_PATH, 'utf8') : '';

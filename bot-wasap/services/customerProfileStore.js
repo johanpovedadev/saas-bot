@@ -54,6 +54,24 @@ function snapshotItems(carrito) {
 }
 
 /**
+ * Borra de verdad los perfiles que ya caducaron. `get` ya no los ofrece, pero sin esto los datos (nombre, teléfono,
+ * dirección) se quedarían en el archivo para siempre: no se guarda más de lo que se usa.
+ * @returns {number} cuántos perfiles se borraron
+ */
+function purgeExpired(all, now = Date.now()) {
+    let removed = 0;
+    for (const biz of Object.keys(all)) {
+        const perfiles = all[biz] || {};
+        for (const jid of Object.keys(perfiles)) {
+            const p = perfiles[jid];
+            if (!p || now - (p.lastOrderAt || 0) > MAX_AGE_MS) { delete perfiles[jid]; removed++; }
+        }
+        if (!Object.keys(perfiles).length) delete all[biz];
+    }
+    return removed;
+}
+
+/**
  * Guarda (o actualiza) el perfil a partir de un pedido confirmado.
  * @returns {{orderCount:number, returning:boolean}} cuántos pedidos lleva y si ya había comprado antes
  */
@@ -62,6 +80,7 @@ function saveFromOrder(businessKey, jid, { order = {}, carrito = [], total = 0 }
     const items = snapshotItems(carrito);
     if (!items.length) return { orderCount: 0, returning: false };
     const all = readAll();
+    purgeExpired(all, now);
     const biz = all[businessKey] = all[businessKey] || {};
     const prev = biz[jid];
     const orderCount = (prev && prev.orderCount ? prev.orderCount : 0) + 1;
@@ -97,4 +116,4 @@ function forget(businessKey, jid) {
     return true;
 }
 
-module.exports = sharedJsonFile.lockedExports(STORE_PATH, { saveFromOrder, get, forget, snapshotItems, MAX_AGE_MS }, ['saveFromOrder', 'forget']);
+module.exports = sharedJsonFile.lockedExports(STORE_PATH, { saveFromOrder, get, forget, snapshotItems, purgeExpired, MAX_AGE_MS }, ['saveFromOrder', 'forget']);
