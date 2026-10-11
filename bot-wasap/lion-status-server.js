@@ -10,6 +10,7 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const net = require('net');
 const healthMonitor = require('./services/healthMonitor');
 const mutedStore = require('./services/mutedStore');
 const waitingHumanStore = require('./services/waitingHumanStore');
@@ -305,6 +306,16 @@ function startStatusServer({ botName, businessSlug, port } = {}) {
     server.listen(resolvedPort, host, () => {
         console.log(`[lion-status-server] escuchando en http://${host}:${resolvedPort} (health pública, el resto requiere Bearer token)`);
     });
+
+    // "localhost" puede resolver a ::1 (Node 18 y varios clientes lo prueban primero): sin este segundo oyente esos
+    // clientes recibirían ECONNREFUSED. Solo se abre si el servidor está en el loopback por defecto, y si esta máquina
+    // no tiene IPv6 se ignora el error: el 127.0.0.1 sigue funcionando.
+    if (host === '127.0.0.1') {
+        const loopback6 = net.createServer((socket) => server.emit('connection', socket));
+        loopback6.on('error', () => { /* sin IPv6 en loopback: nada que hacer */ });
+        loopback6.listen(resolvedPort, '::1');
+        server.on('close', () => { try { loopback6.close(); } catch (_) { /* ya cerrado */ } });
+    }
 
     return server;
 }

@@ -55,6 +55,9 @@ const listening = (server) => new Promise((r) => (server.listening ? r() : serve
         check(addr.address === '127.0.0.1', `escucha solo en 127.0.0.1 (${addr.address})`);
 
         const health = await request('GET', '/health');
+        // "localhost" puede resolver a ::1 (Node 18 en la CI): ahí también debe contestar, y con la misma protección.
+        const porIpv6 = await new Promise((r) => { const q = http.request({ host: '::1', port: PORT, path: '/status', method: 'GET' }, (res) => { res.resume(); r(res.statusCode); }); q.on('error', () => r('sin-ipv6')); q.end(); });
+        check(porIpv6 === 401 || porIpv6 === 'sin-ipv6', `por ::1 también contesta y exige token (${porIpv6})`);
         check(health.status === 200, '/health responde sin token');
         check((await request('GET', '/status', { token: TOKEN })).status === 401, 'sin token configurado en el servidor, /status responde 401');
         check((await request('GET', '/status', { token: '' })).status === 401, 'un token vacío tampoco entra cuando no hay token configurado');
