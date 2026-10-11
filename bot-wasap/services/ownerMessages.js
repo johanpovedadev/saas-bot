@@ -32,11 +32,15 @@ const chatLink = (jid) => (isPhoneJid(jid) ? `https://wa.me/${onlyDigits(jid)}` 
 
 function customerName(session) {
     const s = session || {};
-    return (s.order && s.order.name) || s.nombre || s.telegramFirstName || null;
+    // userName: el nombre que dio al saludar (negocios que lo piden al empezar, p. ej. Ricuras del Pacífico).
+    return (s.order && s.order.name) || s.nombre || s.userName || s.telegramFirstName || null;
 }
 
 function cartLine(session) {
-    const items = (session && Array.isArray(session.carrito) ? session.carrito : []).filter((i) => i && (i.nombre || i.producto));
+    // Carrito agrupado (heladería, agentes) o, si no hay, el de reglas (una entrada por unidad), unificado.
+    const own = session && Array.isArray(session.carrito) ? session.carrito : [];
+    const legacy = !own.length && session && session.order && Array.isArray(session.order.items) ? require('../utils/cartItems').mergeEquivalentItems(session.order.items) : [];
+    const items = (own.length ? own : legacy).filter((i) => i && (i.nombre || i.producto));
     if (!items.length) return null;
     const total = items.reduce((n, i) => n + (Number(i.precio) || 0) * (Number(i.cantidad) || 1), 0);
     const list = items.slice(0, 4).map((i) => `${i.cantidad || 1}x ${i.nombre || i.producto}`).join(', ');
