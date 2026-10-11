@@ -35,14 +35,19 @@ try {
     check(r.orderCount === 2 && r.returning === true && store.get('heladeria', JID, T0 + 6000).address.includes('Calle 25'), 'el segundo pedido cuenta como recurrente y conserva los datos que no cambiaron');
     const recoge = store.saveFromOrder('heladeria', JID, { ...pedido, order: { ...pedido.order, pickup: true, address: 'Recoge en el local' } }, T0 + 9000);
     check(/Calle 25/.test(store.get('heladeria', JID, T0 + 9500).address) && recoge.orderCount === 3, 'un pedido para recoger no pisa la dirección de entrega guardada');
-    check(store.get('heladeria', JID, T0 + store.MAX_AGE_MS + 99999) === null, 'un perfil de hace más de 6 meses ya no se ofrece');
+    const DOS_ANOS = 2 * 365 * 24 * 60 * 60 * 1000;
+    check(store.get('heladeria', JID, T0 + DOS_ANOS) !== null, 'por defecto el perfil no caduca: quien reaparece años después sigue teniendo "lo de siempre"');
+    process.env.CUSTOMER_PROFILE_RETENTION_DAYS = '180';
+    const MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+    check(store.get('heladeria', JID, T0 + MAX_AGE_MS + 99999) === null, 'con retención de 180 días, un perfil más viejo ya no se ofrece');
     check(store.get('heladeria', '573160000999@c.us', T0) === null && store.get('otro', JID, T0) === null, 'el perfil es de ese chat y de ese negocio');
     // Retención: un perfil caducado no solo deja de ofrecerse, también se borra del archivo al guardar otro pedido.
     const VIEJO = '573160000777@c.us';
     store.saveFromOrder('heladeria', VIEJO, { order: { name: 'Pedro Caducado', telefono: '3109998888', address: 'Carrera 9 #9-9' }, carrito: pedido.carrito, total: 5000 }, T0);
-    const despues = T0 + store.MAX_AGE_MS + 5000;
+    const despues = T0 + MAX_AGE_MS + 5000;
     store.saveFromOrder('heladeria', '573160000888@c.us', pedido, despues);
-    check(store.get('heladeria', '573160000888@c.us', despues) !== null && store.count('heladeria') === 2, 'al guardar un pedido se borran los perfiles caducados (quedan el nuevo y el que sigue vigente)');
+    check(store.get('heladeria', '573160000888@c.us', despues) !== null && store.count('heladeria') === 2, 'con retención, al guardar un pedido se borran los perfiles caducados (quedan el nuevo y el que sigue vigente)');
+    delete process.env.CUSTOMER_PROFILE_RETENTION_DAYS;
     store.close(); // checkpoint del WAL: ahora el archivo refleja todo
     const bytesCaducado = fs.readFileSync(store.dbPath()).toString('utf8');
     check(!/Pedro Caducado|3109998888|Carrera 9/.test(bytesCaducado), 'el perfil caducado ya no está ni en los bytes del archivo');
