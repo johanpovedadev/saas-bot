@@ -15,6 +15,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
   cargador del bot, y una prueba que corre los seis simuladores en la CI.
 - **Cliente recurrente** («¿lo de siempre?») y **punto de referencia** en la entrega (PR #34).
 
+### Cambiado
+
+- **Historial de conversaciones en SQLite con retención de 30 días** por negocio (`CONVERSATION_RETENTION_DAYS`, 0 = sin
+  límite), con barrido automático, importación única del log anterior y borrado real con «borra mis datos». Reemplaza a
+  `logs/<negocio>-conversations.log` (sin tope, texto de clientes en claro). El panel y el replay leen la misma base.
+- **Perfiles del cliente recurrente en SQLite** (antes un JSON que se reescribía entero en cada pedido).
+
 ### Corregido
 
 - Precios del catálogo con decimales (`"30000.000"`): el menú y el agente mostraban $30.000.000 por $30.000.
