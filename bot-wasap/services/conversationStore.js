@@ -5,11 +5,12 @@
  *
  * Antes cada mensaje se agregaba a logs/<negocio>-conversations.log (JSON por línea): sin tope ni rotación (heladería: 32 MB,
  * 76.000 líneas en 67 días), con el teléfono y el texto de los clientes en claro y leído línea por línea por el panel.
- * Decisión de Johan (11 oct 2026): base de datos, 30 días por negocio y barrido automático.
+ * Decisión de Johan (11 oct 2026): base de datos con índices; la retención se deja SIN LÍMITE por defecto porque hay
+ * clientes que reaparecen mucho después, y cada negocio puede ponerse un tope con CONVERSATION_RETENTION_DAYS.
  *
  *  - Un archivo por negocio: data/<negocio>-conversations.db (aislamiento por archivo, como users.db).
- *  - Retención: CONVERSATION_RETENTION_DAYS (30 por defecto; 0 = sin límite). El barrido corre al abrir y, como mucho cada
- *    6 horas, al escribir: no necesita temporizadores ni procesos aparte.
+ *  - Retención: CONVERSATION_RETENTION_DAYS (sin definir o 0 = sin límite; p. ej. 30 para borrar lo de más de 30 días). El
+ *    barrido corre al abrir y, como mucho cada 6 horas, al escribir: no necesita temporizadores ni procesos aparte.
  *  - Borrado a pedido del cliente (forgetJid) y secure_delete: lo borrado no queda en el archivo.
  *  - El texto no sale del bot: Lion Platform lo consulta en vivo (/messages) y no lo guarda (ADR-014, §3.3 del estudio).
  *  - Si existe el log anterior se importan solo los mensajes dentro de la retención y el archivo queda renombrado
@@ -29,12 +30,10 @@ const LOGS_DIR = path.join(__dirname, '..', 'logs');
 
 const safeKey = (k) => String(k || 'default').replace(/[^a-z0-9_-]/gi, '') || 'default';
 
-/** Días que se conservan los mensajes; 0 = sin límite. */
+/** Días que se conservan los mensajes; 0 = sin límite (por defecto). */
 function retentionDays() {
-    const raw = process.env.CONVERSATION_RETENTION_DAYS;
-    if (raw === undefined || raw === '') return 30;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 30;
+    const n = Number(process.env.CONVERSATION_RETENTION_DAYS);
+    return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /** ¿Este negocio es el del proceso actual? (el panel abre las bases de varios negocios) */

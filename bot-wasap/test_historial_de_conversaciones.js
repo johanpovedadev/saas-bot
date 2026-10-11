@@ -47,10 +47,14 @@ const BETO = '573160000002@c.us';
         check(store.tail(10, BETO).length === 1 && store.tail(2).length === 2, 'se filtra por chat y se respeta el límite');
         check(store.record({ jid: '', text: 'x' }) === false && store.record({ jid: ANA, text: 123 }) === false, 'un mensaje sin chat o sin texto no se guarda ni lanza');
 
-        // 2. Retención
+        // 2. Retención: por defecto NO se borra nada (hay clientes que reaparecen meses después)
+        store.record({ jid: BETO, fromMe: false, text: 'mensaje de hace un año', ts: NOW - 365 * DAY });
+        check(store.sweep(NOW) === 0 && store.tail(50).some((m) => /hace un año/.test(m.text)), 'sin configurar retención no se borra nada, ni lo de hace un año');
+        check(conv.retentionDays() === 0, 'el valor por defecto es sin límite');
+        process.env.CONVERSATION_RETENTION_DAYS = '30';
         store.record({ jid: BETO, fromMe: false, text: 'mensaje de hace 40 días con mi dirección Calle 9', ts: NOW - 40 * DAY });
         store.record({ jid: BETO, fromMe: false, text: 'mensaje de hace 29 días', ts: NOW - 29 * DAY });
-        check(store.sweep(NOW) === 1, 'el barrido de 30 días borra solo lo que pasó del plazo');
+        check(store.sweep(NOW) === 2, 'con retención de 30 días el barrido borra solo lo que pasó del plazo');
         check(!store.tail(50).some((m) => /hace 40 días/.test(m.text)) && store.tail(50).some((m) => /hace 29 días/.test(m.text)), 'queda lo de 29 días y no lo de 40');
         check(!/Calle 9/.test(bytes()), 'lo barrido ya no está ni en los bytes del archivo');
         process.env.CONVERSATION_RETENTION_DAYS = '0';
@@ -67,7 +71,8 @@ const BETO = '573160000002@c.us';
         check(store.tail(50).every((m) => !m.jid.startsWith('573160000001')) && store.tail(50).filter((m) => m.jid === BETO).length === antes, 'no se toca a los demás clientes');
         check(!/hola quiero un cono|mismo número/.test(bytes()), 'lo borrado a pedido no queda en el archivo');
 
-        // 4. Importación única del log anterior
+        // 4. Importación única del log anterior (con retención de 30 días: lo más viejo no se importa)
+        process.env.CONVERSATION_RETENTION_DAYS = '30';
         store.removeFiles();
         const legacy = process.env.CONVERSATION_LOG_PATH;
         fs.writeFileSync(legacy, [
@@ -85,6 +90,7 @@ const BETO = '573160000002@c.us';
         check(!fs.existsSync(legacy) && fs.existsSync(`${legacy}.migrado`), 'el log anterior queda renombrado y no se importa dos veces');
         store.close();
         check(conv.forBusiness('uno').tail(50).length === 3, 'al abrir de nuevo no duplica lo importado');
+        delete process.env.CONVERSATION_RETENTION_DAYS;
 
         // 5. Logger y panel usan el mismo historial
         const { logConversation, logUserError } = require('./utils/logger');
