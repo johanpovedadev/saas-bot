@@ -84,6 +84,7 @@ function setupEnv(aiMode, T) {
         LION_AI_STUBBED: '1', // la IA es simulada (simAi): los servicios la ven disponible, pero el SDK sigue bloqueado
         GEMINI_API_KEY: 'SIMULACION-NO-VA-A-LA-RED-0000000000',
         CONVERSATION_LOG_PATH: path.join(tmp, 'conv.log'),
+        CONVERSATION_DB_PATH: path.join(tmp, 'conv.db'),
         WAITING_HUMAN_STORE_PATH: path.join(tmp, 'wh.json'),
         DAILY_ACTIVITY_STORE_PATH: path.join(tmp, 'da.json'),
         MUTED_STORE_PATH: path.join(tmp, 'mu.json'),

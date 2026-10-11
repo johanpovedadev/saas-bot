@@ -138,8 +138,11 @@ async function tryHandle(sock, jid, text, session, ctx) {
     // Borrar mis datos: en cualquier fase, siempre.
     if (FORGET.test(norm(text))) {
         const had = profiles.forget(biz, jid);
+        // También su historial de conversación (el que ve la dueña en el panel): "mis datos" incluye lo que escribió.
+        let hadChat = 0;
+        try { hadChat = require('../../services/conversationStore').forBusiness(biz).forgetJid(jid); } catch (e) { logger.warn(`recurringCustomer: no se pudo borrar el historial: ${e.message}`); }
         session.repeatOffer = null;
-        await say(sock, jid, had
+        await say(sock, jid, (had || hadChat)
             ? '🗑️ Listo, borré tus datos guardados (nombre, dirección y tu último pedido). La próxima vez empezamos desde cero. 🙏'
             : 'No tenía datos tuyos guardados. 🙏', ctx);
         return true;

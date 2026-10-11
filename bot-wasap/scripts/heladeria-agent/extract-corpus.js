@@ -41,11 +41,17 @@ function isRealJid(j) {
     return /^57\d{10}@c\.us$/.test(j) && !SYNTHETIC.test(j);
 }
 
-const lines = fs.readFileSync(LOG, 'utf8').split(/\r?\n/).filter(Boolean);
+// Fuente: el log anterior (o el .migrado que deja la importación, con TODO el historial) y, si no hay, la base SQLite
+// (solo los últimos días de la retención).
+function readRecords() {
+    const legacy = [LOG, `${LOG}.migrado`].find((f) => fs.existsSync(f));
+    if (legacy) {
+        return fs.readFileSync(legacy, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } });
+    }
+    return require('../../services/conversationStore').forBusiness('heladeria').rows();
+}
 const byJid = new Map();
-for (const l of lines) {
-    let o;
-    try { o = JSON.parse(l); } catch (_) { continue; }
+for (const o of readRecords()) {
     if (!o || !o.jid || typeof o.text !== 'string' || !isRealJid(o.jid)) continue;
     if (o.isBot && SYSTEM_BOT_TEXT.test(o.text)) continue;
     if (!byJid.has(o.jid)) byJid.set(o.jid, []);

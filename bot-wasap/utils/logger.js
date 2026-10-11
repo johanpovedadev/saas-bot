@@ -7,13 +7,7 @@ const pino = require('pino');
 // ISSUE 52: Per-business log files based on BUSINESS_KEY
 const BUSINESS_KEY = (process.env.BUSINESS_KEY || 'default').replace(/[^a-z0-9_-]/gi, '');
 const LOG_FILE_PATH = process.env.LOG_FILE_PATH || `./logs/${BUSINESS_KEY}.log`;
-const CONVERSATION_LOG_PATH = process.env.CONVERSATION_LOG_PATH || `./logs/${BUSINESS_KEY}-conversations.log`;
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
-
-// Resolve to absolute path (inside project by default)
-const conversationLogDest = path.isAbsolute(CONVERSATION_LOG_PATH) ? CONVERSATION_LOG_PATH : path.resolve(__dirname, '..', CONVERSATION_LOG_PATH);
-// Ensure parent directory exists
-try { fs.mkdirSync(path.dirname(conversationLogDest), { recursive: true }); } catch (e) { /* ignore */ }
 
 // Fields that often contain binary keys or sensitive buffers from WhatsApp auth/session objects
 const REDACT_PATHS = [
@@ -50,25 +44,24 @@ const logger = pino(Object.assign({}, pinoOptions, {
     }
 }));
 
-const conversationLogger = pino(Object.assign({}, pinoOptions, {
-    transport: {
-        target: 'pino/file',
-        options: {
-            destination: conversationLogDest,
-            mkdir: true,
-            append: true
-        }
-    }
-}),
-pino.destination({ sync: false, minLength: 4096, dest: conversationLogDest }));
+// Historial de conversaciones: SQLite por negocio con retención (services/conversationStore.js). Respeta el nivel de
+// log como antes (con LOG_LEVEL=fatal en las pruebas no se registra nada). Un fallo del historial nunca tumba al bot.
+const levelAllows = (name) => {
+    const configured = pino.levels.values[String(LOG_LEVEL).toLowerCase()];
+    return configured === undefined || pino.levels.values[name] >= configured;
+};
 
 function logConversation(jid, text, isBot = false) {
-    const prefix = isBot ? '🤖 Bot' : '👤 Usuario';
-    conversationLogger.info({ jid, isBot, text }, `${prefix} (${jid}): ${text}`);
+    if (!levelAllows('info')) return;
+    require('../services/conversationStore').forBusiness(BUSINESS_KEY).record({ jid, fromMe: !!isBot, text: String(text) });
 }
 
 function logUserError(jid, phase, message, errorMsg) {
-    conversationLogger.error({ jid, phase, message, errorMsg }, `❌ ERROR (${jid}) - Fase: ${phase} - Mensaje recibido: "${message}" - Error: ${errorMsg}`);
+    if (!levelAllows('error')) return;
+    require('../services/conversationStore').forBusiness(BUSINESS_KEY).record({
+        jid, fromMe: false, kind: 'error',
+        text: `ERROR - Fase: ${phase} - Mensaje recibido: "${message}" - Error: ${errorMsg}`
+    });
 }
 
 // --- Filtering wrapper -------------------------------------------------
@@ -159,7 +152,6 @@ const filteredLogger = {
 
 module.exports = {
     logger: filteredLogger,
-    conversationLogger,
     logConversation,
     logUserError
 };
