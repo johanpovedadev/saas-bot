@@ -42,13 +42,35 @@ try {
     store.saveFromOrder('heladeria', VIEJO, { order: { name: 'Pedro Caducado', telefono: '3109998888', address: 'Carrera 9 #9-9' }, carrito: pedido.carrito, total: 5000 }, T0);
     const despues = T0 + store.MAX_AGE_MS + 5000;
     store.saveFromOrder('heladeria', '573160000888@c.us', pedido, despues);
-    const enDisco = fs.readFileSync(process.env.CUSTOMER_PROFILES_PATH, 'utf8');
-    check(!/Pedro Caducado|3109998888|Carrera 9/.test(enDisco) && /573160000888@c.us/.test(enDisco), 'al guardar un pedido se borran del archivo los perfiles caducados (y el nuevo queda)');
+    check(store.get('heladeria', '573160000888@c.us', despues) !== null && store.count('heladeria') === 2, 'al guardar un pedido se borran los perfiles caducados (quedan el nuevo y el que sigue vigente)');
+    store.close(); // checkpoint del WAL: ahora el archivo refleja todo
+    const bytesCaducado = fs.readFileSync(store.dbPath()).toString('utf8');
+    check(!/Pedro Caducado|3109998888|Carrera 9/.test(bytesCaducado), 'el perfil caducado ya no está ni en los bytes del archivo');
     store.forget('heladeria', '573160000888@c.us');
     check(store.saveFromOrder('heladeria', JID, { order: {}, carrito: [], total: 0 }, T0).orderCount === 0, 'sin productos no se guarda nada');
     check(store.forget('heladeria', JID) === true && store.get('heladeria', JID, T0) === null && store.forget('heladeria', JID) === false, 'borrar de verdad: después no queda nada');
-    const disco = fs.existsSync(process.env.CUSTOMER_PROFILES_PATH) ? fs.readFileSync(process.env.CUSTOMER_PROFILES_PATH, 'utf8') : '';
-    check(!/Lucía|3100000000|Calle 25/.test(disco), 'tras borrar, el archivo ya no contiene sus datos');
+    store.close();
+    const bytes = fs.readFileSync(store.dbPath()).toString('utf8');
+    check(!/Lucía|3100000000|Calle 25/.test(bytes), 'tras borrar, el archivo ya no contiene sus datos (secure_delete)');
+
+    // Un perfil tiene que sobrevivir a un reinicio del bot (queda en disco, no en memoria)
+    store.saveFromOrder('heladeria', JID, pedido, T0);
+    store.close();
+    check(store.get('heladeria', JID, T0 + 1000).name === 'Lucía Prueba', 'el perfil sigue ahí después de cerrar y volver a abrir la base');
+    store.forget('heladeria', JID);
+
+    // Migración del JSON anterior: se importa una sola vez y el archivo queda renombrado
+    store.close();
+    const viejoJson = path.join(os.tmpdir(), `profiles-legacy-${process.pid}.json`);
+    process.env.CUSTOMER_PROFILES_PATH = viejoJson;
+    fs.writeFileSync(viejoJson, JSON.stringify({ heladeria: { [JID]: { name: 'Ana Vieja', phone: '3100000001', address: 'Calle 1 #2-3', paymentMethod: 'efectivo',
+        items: [{ codigo: 'H-CONO-S', nombre: 'Cono Sencillo', cantidad: 1, precio: 5000, sabores: [], toppings: [] }], lastTotal: 5000, orderCount: 3, firstOrderAt: T0 - 5000, lastOrderAt: T0 }, otro: { items: 'no es lista' } } }));
+    const migrado = store.get('heladeria', JID, T0 + 1000);
+    check(migrado && migrado.name === 'Ana Vieja' && migrado.orderCount === 3, 'el perfil del JSON anterior se importa a SQLite con sus datos');
+    check(!fs.existsSync(viejoJson) && fs.existsSync(`${viejoJson}.migrado`), 'el JSON anterior queda renombrado (no se importa dos veces)');
+    store.close();
+    store.removeDatabaseFiles(store.dbPath());
+    try { fs.unlinkSync(`${viejoJson}.migrado`); } catch (_) { /* ya no existe */ }
 
     // Solo un sí claro repite el pedido
     for (const s of ['sí', 'Si', 'sii', 'dale', 'claro que sí', 'lo mismo', 'lo de siempre', 'ok', 'listo, gracias', 'si por favor']) check(recurring.isYes(s), `"${s}" es un sí`);
@@ -71,7 +93,8 @@ try {
     check(/\*3 pedidos fueron de clientes\* que ya te habían comprado/.test(informe), 'el informe cuenta los pedidos de clientes que volvieron');
     check(!/que ya te habían comprado/.test(ownerReport.buildOwnerReport({ businessName: 'Mundo Helados', stats: { orders: { count: 1, total: 5000, returning: 0 }, chatsInHours: 1, chatsAfterHours: 0 } })), 'sin clientes recurrentes la línea no aparece');
 } finally {
-    try { fs.unlinkSync(process.env.CUSTOMER_PROFILES_PATH); } catch (_) { /* ya no existe */ }
+    store.close();
+    store.removeDatabaseFiles(store.dbPath());
 }
 console.log(failures ? `\n❌ ${failures} fallos` : '\n✅ TODOS LOS CHECKS PASARON');
 process.exit(failures ? 1 : 0);
