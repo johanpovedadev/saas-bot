@@ -73,6 +73,9 @@ function buildOwnerReport({ businessName, stats, waiting = [], date = new Date()
     if (stats.orders.count) lines.push(`💰 Vendiste *${money(stats.orders.total)}* en *${plural(stats.orders.count, 'pedido', 'pedidos')}* confirmados.`);
     else lines.push('💰 Hoy no se confirmó ningún pedido.');
 
+    if (stats.orders.returning) {
+        lines.push(`⭐ *${plural(stats.orders.returning, 'pedido fue de un cliente', 'pedidos fueron de clientes')}* que ya te habían comprado: te están volviendo a elegir.`);
+    }
     if (stats.chatsAfterHours) {
         lines.push(`🌙 *${plural(stats.chatsAfterHours, 'cliente te escribió', 'clientes te escribieron')}* fuera de tu horario y los atendí yo: sin el bot habrían encontrado el local cerrado.`);
     }

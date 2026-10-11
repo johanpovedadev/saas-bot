@@ -37,7 +37,9 @@ function setupEnv(aiMode) {
         BOT_REGISTRY_PATH: path.join(tmp, 'reg.json'),
         ONBOARDING_STORE_PATH: path.join(tmp, 'ob.json'),
         HOURS_STORE_PATH: path.join(tmp, 'hours.json'),
-        AUDIT_LOG_PATH: path.join(tmp, 'audit.jsonl')
+        AUDIT_LOG_PATH: path.join(tmp, 'audit.jsonl'),
+        CUSTOMER_PROFILES_PATH: path.join(tmp, 'customer_profiles.json'),
+        OWNER_STATS_STORE_PATH: path.join(tmp, 'owner_stats.json')
     });
     return tmp;
 }

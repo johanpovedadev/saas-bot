@@ -44,6 +44,7 @@ const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
 const cartInfoQuestions = require('./modules/cartInfoQuestions');
+const recurringCustomer = require('./modules/recurringCustomer');
 const { say } = require('./modules/handler.utils');
 const { sendTypingIndicator, loadAllProductsCache } = require('../services/bot_core');
 const axios = require('axios');
@@ -594,6 +595,13 @@ async function processIncomingMessageCore(sock, messageData, ctx) {
                 await say(sock, jid, securityGuard.replyFor(sec.category), ctx);
                 return;
             }
+        }
+
+        // Cliente recurrente: si ya compró y saluda, se le ofrece "lo de siempre" con sus datos guardados; "borra mis
+        // datos" funciona en cualquier fase. Solo en negocios con carrito (ver handlers/modules/recurringCustomer.js).
+        if (!adminHandler.isAdmin(jid, ctx) && userSession.phase !== PHASE.WAITING_HUMAN
+            && await recurringCustomer.tryHandle(sock, jid, text, userSession, ctx)) {
+            return;
         }
 
         // Agente IA de Mundo Helados (handlers/flows/heladeria.agent.js):
