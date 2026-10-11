@@ -9,6 +9,8 @@
 // control-plane de Forja: sin token configurado, todo responde 401 (fail-closed).
 
 const http = require('http');
+const crypto = require('crypto');
+const net = require('net');
 const healthMonitor = require('./services/healthMonitor');
 const mutedStore = require('./services/mutedStore');
 const waitingHumanStore = require('./services/waitingHumanStore');
@@ -32,7 +34,14 @@ function isAuthorized(req) {
     const header = req.headers['authorization'] || '';
     const match = /^Bearer\s+(.+)$/i.exec(header);
     if (!match) return false;
-    return match[1].trim() === expected;
+    return tokensMatch(match[1].trim(), expected);
+}
+
+/** Comparación en tiempo constante: no deja adivinar el token por cuánto tarda en responder. */
+function tokensMatch(given, expected) {
+    const a = crypto.createHash('sha256').update(String(given)).digest();
+    const b = crypto.createHash('sha256').update(String(expected)).digest();
+    return crypto.timingSafeEqual(a, b);
 }
 
 function normalizePhoneToJid(rawNumber) {
@@ -291,9 +300,22 @@ function startStatusServer({ botName, businessSlug, port } = {}) {
         console.error(`[lion-status-server] no se pudo levantar en el puerto ${resolvedPort}: ${err.message}`);
     });
 
-    server.listen(resolvedPort, () => {
-        console.log(`[lion-status-server] escuchando en http://localhost:${resolvedPort} (health pública, /status requiere Bearer token)`);
+    // Solo esta máquina: el backend de Lion Platform y el relevo del kill switch viven aquí. Con el token por defecto
+    // de ecosystem.config.js escuchando en todas las interfaces, cualquiera en la red podía usar /send del negocio.
+    const host = process.env.LION_STATUS_HOST || '127.0.0.1';
+    server.listen(resolvedPort, host, () => {
+        console.log(`[lion-status-server] escuchando en http://${host}:${resolvedPort} (health pública, el resto requiere Bearer token)`);
     });
+
+    // "localhost" puede resolver a ::1 (Node 18 y varios clientes lo prueban primero): sin este segundo oyente esos
+    // clientes recibirían ECONNREFUSED. Solo se abre si el servidor está en el loopback por defecto, y si esta máquina
+    // no tiene IPv6 se ignora el error: el 127.0.0.1 sigue funcionando.
+    if (host === '127.0.0.1') {
+        const loopback6 = net.createServer((socket) => server.emit('connection', socket));
+        loopback6.on('error', () => { /* sin IPv6 en loopback: nada que hacer */ });
+        loopback6.listen(resolvedPort, '::1');
+        server.on('close', () => { try { loopback6.close(); } catch (_) { /* ya cerrado */ } });
+    }
 
     return server;
 }

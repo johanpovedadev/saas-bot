@@ -21,7 +21,7 @@ function requireBusinessScope(req, res, next) {
     const user = req.session.user;
     if (!user) return res.status(401).json({ error: 'No autenticado' });
     if (user.role === 'super' || user.businessKey === key) return next();
-    return res.status(403).json({ error: 'No tenés permiso para este negocio.' });
+    return res.status(403).json({ error: 'No tienes permiso para este negocio.' });
 }
 
 /** Solo super-admin (ej. gestión de cuentas, que no pertenece a ningún negocio). */
