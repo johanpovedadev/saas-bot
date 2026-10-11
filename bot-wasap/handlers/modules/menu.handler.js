@@ -18,6 +18,7 @@ const { logger } = require('../../utils/logger');
 const PHASE = require('../../utils/phases');
 const { say, resetChat } = require('../../services/bot_core');
 const { money } = require('../../utils/util');
+const { parseCatalogPrice } = require('../../utils/price');
 const envConfig = require('../../config/env.loader');
 const frustrationService = require('../../services/frustrationService');
 
@@ -197,7 +198,7 @@ async function handleVerMenuOption(sock, jid, userSession, ctx) {
         productos.forEach((p, idx) => {
             const nombre = String(p.NombreProducto || p.nombre || p.name || p.productName || 'Producto').trim();
             const precio = p.Precio_Venta || p.precio || p.price || p.productPrice || 0;
-            const precioTexto = menuFlow ? money(Number(String(precio).replace(/[^0-9]/g, '')) || 0) : `${precio}`;
+            const precioTexto = menuFlow ? money(parseCatalogPrice(precio)) : `${precio}`;
             msg += `${idx + 1}. 🍽️ *${nombre}* - ${precioTexto}\n`;
         });
         msg += '\n_Escribe el número del producto para seleccionarlo rápidamente._';
@@ -316,7 +317,7 @@ async function handleEncargoOption(sock, jid, userSession, ctx) {
         if (items.length > 0) {
             const lines = items.map(p => {
                 const nombre = String(p[dbFields.productName] || '').trim();
-                const precio = parseFloat(String(p[dbFields.productPrice] || '').replace(/[^0-9]/g, '')) || 0;
+                const precio = parseCatalogPrice(p[dbFields.productPrice]);
                 const desc = p.Descripcion || p.descripcion || '';
                 return `🎁 *${nombre}* — ${money(precio)}\n_${desc}_`;
             }).join('\n\n');

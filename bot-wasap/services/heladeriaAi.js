@@ -292,7 +292,7 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/ogg; codecs=opus')
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-    const prompt = `Eres un asistente de transcripción de una heladería. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz, en español. No agregues nada, no interpretes, solo transcribe. Incluye cantidades y nombres de productos tal cual los dijo. Ejemplo: "Un cono sencillo de lulo maracuya con arequipe"`;
+    const prompt = `Eres un asistente de transcripción de un negocio de comida (heladería, restaurante). Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz, en español. No agregues nada, no interpretes, solo transcribe. Incluye cantidades y nombres de productos tal cual los dijo. Ejemplos: "Un cono sencillo de lulo maracuya con arequipe", "Dos mojarras fritas con patacón"`;
 
     const mime = String(mimeType || 'audio/ogg; codecs=opus').split(';')[0].trim();
     const candidateModels = [MODELS.audio, MODELS.audioFallback];

@@ -40,6 +40,8 @@ const TEST_STORE_ENV = {
     CUSTOMER_PROFILES_PATH: path.join(TEST_DATA_DIR, 'customer_profiles.json'),
     AUDIT_LOG_PATH: path.join(TEST_DATA_DIR, 'audit.jsonl')
 };
+// Historial de conversaciones de las pruebas: una base temporal, nunca bot-wasap/data/<negocio>-conversations.db.
+const CONV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lion-tests-conv-'));
 // --with-ai: corre SOLO los tests que dependen de Gemini de verdad (con la clave real y gastando cuota).
 // Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
 const WITH_AI = process.argv.includes('--with-ai');
@@ -112,7 +114,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase, API_BASE_OVERRIDE: fakeBackend.apiBase, ...TEST_STORE_ENV }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase, API_BASE_OVERRIDE: fakeBackend.apiBase, CONVERSATION_DB_PATH: path.join(CONV_DIR, 'conversations.db'), ...TEST_STORE_ENV }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');
@@ -136,4 +138,5 @@ console.log('='.repeat(60));
 
 if (fakeBackend) fakeBackend.child.kill();
 try { fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch (_) { /* temporal */ }
+try { fs.rmSync(CONV_DIR, { recursive: true, force: true }); } catch (_) { /* temporal */ }
 process.exit(failedFiles.length > 0 ? 1 : 0);

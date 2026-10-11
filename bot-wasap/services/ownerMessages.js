@@ -32,11 +32,15 @@ const chatLink = (jid) => (isPhoneJid(jid) ? `https://wa.me/${onlyDigits(jid)}` 
 
 function customerName(session) {
     const s = session || {};
-    return (s.order && s.order.name) || s.nombre || s.telegramFirstName || null;
+    // userName: el nombre que dio al saludar (negocios que lo piden al empezar, p. ej. Ricuras del Pacífico).
+    return (s.order && s.order.name) || s.nombre || s.userName || s.telegramFirstName || null;
 }
 
 function cartLine(session) {
-    const items = (session && Array.isArray(session.carrito) ? session.carrito : []).filter((i) => i && (i.nombre || i.producto));
+    // Carrito agrupado (heladería, agentes) o, si no hay, el de reglas (una entrada por unidad), unificado.
+    const own = session && Array.isArray(session.carrito) ? session.carrito : [];
+    const legacy = !own.length && session && session.order && Array.isArray(session.order.items) ? require('../utils/cartItems').mergeEquivalentItems(session.order.items) : [];
+    const items = (own.length ? own : legacy).filter((i) => i && (i.nombre || i.producto));
     if (!items.length) return null;
     const total = items.reduce((n, i) => n + (Number(i.precio) || 0) * (Number(i.cantidad) || 1), 0);
     const list = items.slice(0, 4).map((i) => `${i.cantidad || 1}x ${i.nombre || i.producto}`).join(', ');
@@ -66,8 +70,9 @@ function interpretLegacyReason(raw) {
  * @param {string} [p.reason]   por qué se avisa (ya en lenguaje de negocio)
  * @param {string} [p.address]  dirección (consulta de domicilio)
  * @param {number} [p.more]     mensajes que escribió mientras no se avisaba
+ * @param {number} [p.orderCount] pedidos que lleva el cliente (si ya compró antes, es un cliente de siempre)
  */
-function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason, address, more = 0 }) {
+function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason, address, more = 0, orderCount = 0 }) {
     const name = customerName(session);
     const phone = phoneLabel(jid);
     const who = [name, phone].filter(Boolean).join(' · ') || 'Un contacto con la privacidad activada (no muestra su número)';
@@ -79,6 +84,7 @@ function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason,
         sensible: '🔒 *Un cliente intentó enviar datos sensibles*'
     };
     const lines = [titles[kind] || titles.ayuda, '', `👤 ${who}`];
+    if (orderCount > 1) lines.push(`⭐ Cliente de siempre: lleva ${orderCount} pedidos`);
     if (kind === 'sensible') {
         lines.push('⚠️ Eran datos de tarjeta, cédula o clave. No los guardé ni los muestro aquí; pídele que no los comparta por el chat.');
     } else {
