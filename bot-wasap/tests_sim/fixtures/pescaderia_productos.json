@@ -1,0 +1,384 @@
+{
+ "matches": [
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC1",
+   "NombreProducto": "Pargo Rojo",
+   "Descripcion": "Un pargo rojo fresco y de carne firme, preparado a la perfección. Servido entero o en filete, es un clásico del sabor costero.",
+   "NumeroEntrada": "1",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC2",
+   "NombreProducto": "Bagre a la Marinera",
+   "Descripcion": "Delicado bagre sumergido en una salsa marinera cremosa y llena de sabor, con especias y hierbas de la región.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC3",
+   "NombreProducto": "Camarones al Ajillo",
+   "Descripcion": "Camarones jugosos salteados en una mezcla de ajo dorado, mantequilla y aceite de oliva, ideal para los amantes del sabor intenso.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC4",
+   "NombreProducto": "Cazuela Mixta",
+   "Descripcion": "Un festín de sabores en un solo plato: una cazuela rebosante de una selección de mariscos y pescados frescos.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC5",
+   "NombreProducto": "Cazuela de Mariscos",
+   "Descripcion": "Un icónico plato colombiano, un guiso espeso y cremoso de mariscos frescos cocinados en una base de leche de coco y fumet de pescado, servido en una tradicional cazuela de barro.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC6",
+   "NombreProducto": "Cazuela de Camarones",
+   "Descripcion": "Exquisita cazuela monoplato que destaca el sabor dulce y suave de los camarones, cocinados en una salsa de coco y especias.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC7",
+   "NombreProducto": "Arroz a la Marinera",
+   "Descripcion": "Arroz cremoso y aromático, cocinado con una rica selección de mariscos, evocando el sabor del mar en cada bocado.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC8",
+   "NombreProducto": "Arroz con Camarones",
+   "Descripcion": "Una preparación clásica de arroz con el sabor inconfundible de los camarones, preparado con un sofrito de vegetales.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC9",
+   "NombreProducto": "Arroz Endiablado",
+   "Descripcion": "Un vibrante arroz con un toque ligeramente picante y un color rojizo intenso, preparado con mariscos y un guiso con tomate y cebolla. Es un plato tradicional del Pacífico, servido con plátano tostado.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC10",
+   "NombreProducto": "Bagre a el Ajillo",
+   "Descripcion": "Tiernos trozos de bagre cocinados al ajillo con hierbas, para un sabor delicado y memorable.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC11",
+   "NombreProducto": "Trucha",
+   "Descripcion": "Trucha fresca preparada según la especialidad del día, un plato ligero y lleno de sabor.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC12",
+   "NombreProducto": "Bagre Frito o en Salsa",
+   "Descripcion": "Elige tu preparación: bagre frito para una textura crujiente o bañado en una rica salsa de la casa.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC13",
+   "NombreProducto": "Bocachico en Salsa",
+   "Descripcion": "Bocachico entero en salsa, un pescado típico de la región con un sabor muy característico.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC14",
+   "NombreProducto": "Viudo de Capaz",
+   "Descripcion": "Un plato tradicional de la región, un viudo preparado con capaz, un pescado de agua dulce, con una salsa exquisita.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC15",
+   "NombreProducto": "Mojarra Frita",
+   "Descripcion": "Crujiente y dorada mojarra frita, un clásico para los amantes de la comida de mar simple pero deliciosa.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC16",
+   "NombreProducto": "Sancocho de Bagre",
+   "Descripcion": "Un sancocho reconfortante, con bagre y tubérculos, perfecto para cualquier día de la semana.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AC17",
+   "NombreProducto": "Filete de Robalo Frito",
+   "Descripcion": "Filete de robalo frito a la perfección, jugoso por dentro y crujiente por fuera.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC18",
+   "NombreProducto": "Chuleta",
+   "Descripcion": "Delicada chuleta preparada con un toque especial, para quienes buscan una opción fuera del mar.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC19",
+   "NombreProducto": "Pollo",
+   "Descripcion": "Jugoso pollo preparado al estilo de la casa, una opción para todos los gustos.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC20",
+   "NombreProducto": "Carne",
+   "Descripcion": "Tierna carne de res, un plato de comida tradicional.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC21",
+   "NombreProducto": "Pechuga",
+   "Descripcion": "Una pechuga de pollo jugosa, una opción más ligera y saludable.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC22",
+   "NombreProducto": "Carne Desmechada",
+   "Descripcion": "Carne de res desmechada, cocida a fuego lento con especias, para una textura suave y un sabor profundo.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Corrientes",
+   "CodigoProducto": "AC23",
+   "NombreProducto": "Churrasco",
+   "Descripcion": "Un corte de churrasco preparado a la parrilla, para un sabor ahumado y una textura inigualable.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "1",
+   "Precio_Venta": "15000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE1",
+   "NombreProducto": "Pasta con Camarones",
+   "Descripcion": "Pasta fresca en una salsa cremosa de la casa, con camarones salteados y hierbas frescas.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE2",
+   "NombreProducto": "Paella Original",
+   "Descripcion": "Paella al estilo de la casa, con una generosa porción de mariscos, arroz y azafrán.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE3",
+   "NombreProducto": "Salmon a la Marinera",
+   "Descripcion": "Un filete de salmón fresco preparado a la marinera, un clásico que nunca falla.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE4",
+   "NombreProducto": "Salmon en Salsa de Camarones",
+   "Descripcion": "Exquisito salmón, bañado en una salsa cremosa de camarones, una combinación perfecta de sabores del mar.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE5",
+   "NombreProducto": "Ceviche en Camarones",
+   "Descripcion": "Un ceviche fresco y vibrante de camarones, con un toque cítrico y un ligero picor.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE6",
+   "NombreProducto": "Filete de Robalo en Salsa",
+   "Descripcion": "Delicado filete de robalo bañado en una salsa de la casa, para un sabor más complejo y sofisticado.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Almuerzos Ejecutivos",
+   "CodigoProducto": "AE7",
+   "NombreProducto": "Filete en Robalo a la Marinera",
+   "Descripcion": "Filete de robalo en salsa marinera, un plato elegante para una comida especial.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Especiales del Chef",
+   "CodigoProducto": "ES1",
+   "NombreProducto": "Ceviche de Camarón",
+   "Descripcion": "Nuestro ceviche de la casa, preparado con camarones frescos, un toque de limón y cilantro.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Especiales del Chef",
+   "CodigoProducto": "ES2",
+   "NombreProducto": "Filete de Robalo",
+   "Descripcion": "Un filete de robalo preparado con la receta especial del chef, un plato que destaca por su frescura y sabor.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Especiales del Chef",
+   "CodigoProducto": "ES3",
+   "NombreProducto": "Sierra Frita",
+   "Descripcion": "Una sierra frita dorada y crujiente, un clásico de la cocina costeña que siempre agrada.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Especiales del Chef",
+   "CodigoProducto": "ES4",
+   "NombreProducto": "Picuda Frita",
+   "Descripcion": "Jugosa picuda frita, una delicia del mar, perfecta para acompañar con arroz y patacones.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Especiales del Chef",
+   "CodigoProducto": "ES5",
+   "NombreProducto": "Azulejo en Salsa",
+   "Descripcion": "Azulejo fresco cocinado en una salsa, un plato tradicional con un sabor intenso y memorable.",
+   "NumeroEntrada": "0",
+   "SopaTrae": "0",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": "99"
+  },
+  {
+   "Categoria": "Sopas",
+   "CodigoProducto": "S1",
+   "NombreProducto": "Sopa de menudencias",
+   "Descripcion": "",
+   "NumeroEntrada": "",
+   "SopaTrae": "",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": ""
+  },
+  {
+   "Categoria": "Sopas",
+   "CodigoProducto": "S2",
+   "NombreProducto": "Sancocho de Pescado",
+   "Descripcion": "",
+   "NumeroEntrada": "",
+   "SopaTrae": "",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": ""
+  },
+  {
+   "Categoria": "Entradas",
+   "CodigoProducto": "E1",
+   "NombreProducto": "Frijiol",
+   "Descripcion": "",
+   "NumeroEntrada": "",
+   "SopaTrae": "",
+   "Precio_Venta": "30000.000",
+   "Stock_Actual": ""
+  }
+ ]
+}

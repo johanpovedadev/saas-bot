@@ -13,6 +13,7 @@
  */
 
 const { similarityScore } = require('../../utils/fuzzySearch');
+const { parseCatalogPrice } = require('../../utils/price');
 
 function norm(s) {
     return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -26,7 +27,7 @@ function norm(s) {
 function catalogAccessors(fields) {
     const f = () => (typeof fields === 'function' ? fields() : fields) || {};
     return {
-        priceOf: (p) => parseFloat(String((p && p[f().productPrice]) || '').replace(/[^0-9]/g, '')) || 0,
+        priceOf: (p) => parseCatalogPrice(p && p[f().productPrice]),
         nameOf: (p) => (p && (p[f().productName] || p.NombreProducto)) || '',
         codeOf: (p) => (p && (p[f().productCode] || p.CodigoProducto)) || ''
     };
