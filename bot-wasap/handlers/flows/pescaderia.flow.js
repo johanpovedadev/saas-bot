@@ -25,6 +25,9 @@ const reservationsHandler = require('../modules/reservations.handler');
 const { money } = require('../../utils/util');
 const { textAfterGreeting } = require('../../utils/textAfterGreeting');
 const businessHours = require('../../utils/businessHours');
+const heladeriaAi = require('../../services/heladeriaAi'); // detección de datos sensibles y mensajes automáticos (no dependen del negocio)
+const editableConfig = require('../../services/editableConfig');
+const paymentProof = require('../modules/paymentProof');
 
 const FLOW_TYPE = 'RESTAURANT';
 
@@ -204,28 +207,13 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
         case 'help':
             await menuHandler.sendMainMenu(sock, jid, ctx);
             return true;
-        case 'human': {
-            userSession.phase = PHASE.WAITING_HUMAN;
-            const notificationService = require('../../services/notificationService');
-            try {
-                await notificationService.notifySystemAlert(sock, ctx, '💬', 'CLIENTE PIDE ATENCIÓN HUMANA',
-                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
-            } catch (e) { /* ignore */ }
-            await say(sock, jid, '👨‍🍳 Claro, te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden. 🐟', ctx);
+        case 'human':
+            await handOffToHuman(sock, jid, text, userSession, ctx, { kind: 'persona', reason: 'Pidió hablar con una persona' });
             return true;
-        }
-        case 'off_topic': {
-            // Mensaje sin nada que ver con la pescadería -> se corta de una,
-            // mismo mecanismo de escalada que "human".
-            userSession.phase = PHASE.WAITING_HUMAN;
-            const notificationService = require('../../services/notificationService');
-            try {
-                await notificationService.notifySystemAlert(sock, ctx, '💬', 'MENSAJE FUERA DE TEMA',
-                    `Cliente: ${jid}\nMensaje: "${text}"\nHora: ${new Date().toLocaleString('es-CO')}`);
-            } catch (e) { /* ignore */ }
-            await say(sock, jid, '🐟 Te conecto con un asesor humano. Ya le avisé al equipo, en un momento te atienden.', ctx);
+        case 'off_topic':
+            // Mensaje sin nada que ver con la pescadería -> se corta de una, mismo mecanismo que "human".
+            await handOffToHuman(sock, jid, text, userSession, ctx, { kind: 'ayuda', reason: 'Escribió algo que no tiene que ver con el restaurante' });
             return true;
-        }
         case 'chat':
             // NO cuenta como "resuelto" para efectos de delegateToAI: es la
             // respuesta de charla genérica, no una pregunta real contestada.
@@ -265,6 +253,12 @@ async function routeIntent(sock, jid, result, text, userSession, ctx) {
  */
 async function handleNotUnderstood(sock, jid, text, userSession, ctx) {
     userSession.productsCache = getProducts(ctx);
+
+    // Un mensaje masivo o publicitario de un tercero no es un cliente: no se responde ni se escala (igual que en Mundo Helados).
+    if (await heladeriaAi.isAutomatedBroadcast(text)) {
+        logger.info(`[${jid}] -> Mensaje automático/publicitario detectado, no se responde: "${String(text).slice(0, 80)}..."`);
+        return true;
+    }
     const recentOrders = restaurantStore.getRecentOrders(jid, 3);
 
     const result = await restaurantAi.interpret(text, userSession, recentOrders);
@@ -396,6 +390,92 @@ async function persistOrder(jid, order, total, ctx) {
     }
 }
 
+/**
+ * Pasa al cliente a una persona: deja el chat en espera, avisa a quien atiende los pedidos con un mensaje que se
+ * entiende sin abrir nada más (nombre, número, qué dijo, link al chat; ver services/ownerMessages.js) y le responde al
+ * cliente. Antes esto se mandaba como alerta técnica solo a Johan y sin decir qué había pasado.
+ * @param {{ kind?: 'persona'|'ayuda'|'sensible', reason?: string }} [opts]
+ */
+async function handOffToHuman(sock, jid, text, userSession, ctx, { kind = 'persona', reason } = {}) {
+    userSession.phase = PHASE.WAITING_HUMAN;
+    const notificationService = require('../../services/notificationService');
+    try {
+        await notificationService.notifyHumanNeeded(sock, ctx, kind === 'sensible' ? { jid, kind } : { jid, kind, said: text, reason });
+    } catch (e) { logger.error(`[${jid}] pescaderia.flow: no se pudo avisar a la administración: ${e.message}`); }
+    await say(sock, jid, kind === 'sensible'
+        ? '🔒 Por tu seguridad, no compartas datos sensibles (números de tarjeta, claves, documentos) por este chat. Ya avisé a una persona del equipo para que te atienda. 🐟'
+        : '👨‍🍳 Claro, ya le avisé a una persona del equipo para que te atienda, en un momento te escriben por aquí. 🐟', ctx);
+}
+
+/**
+ * REGLA DE SEGURIDAD: un número de tarjeta, una cédula o una clave nunca se procesa como pedido ni se guarda: se pasa
+ * a una persona de inmediato. El handler lo consulta en todas las fases (capacidad opcional del flow).
+ * @returns {Promise<boolean>} true si ya se escaló y el mensaje no debe seguir
+ */
+async function escalateIfSensitive(sock, jid, text, userSession, ctx) {
+    if (!heladeriaAi.detectSensitiveData(text)) return false;
+    logger.warn(`[${jid}] -> DATOS SENSIBLES detectados — escalando a humano (contenido NO se muestra ni se guarda)`);
+    await handOffToHuman(sock, jid, text, userSession, ctx, { kind: 'sensible' });
+    return true;
+}
+
+/** Productos pedibles del menú (los que tienen precio): lo que el cliente de Ricuras puede agregar. */
+function getMenuProducts(ctx) {
+    const price = envConfig.backend.fields.productPrice;
+    return getProducts(ctx).filter(p => parseFloat(String(p[price] || 0)) > 0);
+}
+
+/**
+ * Dirección y horario REALES de las preguntas frecuentes que edita el negocio. null si no están: entonces se usa la
+ * configuración técnica, sin valores de relleno (ver menu.handler#handleDireccionOption).
+ */
+function getLocationInfo(ctx) {
+    const faqs = editableConfig.getEditableFaqs(ctx) || [];
+    const norm = (v) => stripAccents(String(v || '')).toLowerCase();
+    const find = (re) => faqs.find(f => re.test(norm(f.Pregunta || f.pregunta)) && String(f.Respuesta || f.respuesta || '').trim());
+    const ubic = find(/ubicad|direccion|donde estan/);
+    const hora = find(/horario/);
+    if (!ubic && !hora) return null;
+    let out = '🐟 *Nuestra Ubicación* 🐟';
+    if (ubic) out += `\n\n🏠 *Dirección:*\n${String(ubic.Respuesta || ubic.respuesta).trim()}`;
+    if (hora) out += `\n\n🕐 *Horarios:*\n${String(hora.Respuesta || hora.respuesta).trim()}`;
+    return out;
+}
+
+/**
+ * Datos para pagar por transferencia, de la configuración que edita el negocio (Cuenta Nequi/Daviplata, Titular,
+ * Cuenta Bancolombia...). null si no hay ninguno: nunca se inventa una cuenta.
+ */
+function getPaymentInstructions(ctx) {
+    const cfg = (ctx && ctx.editableConfig) || {};
+    const get = (k) => (typeof cfg[k] === 'string' && cfg[k].trim()) ? cfg[k].trim() : '';
+    const nequi = get('Cuenta Nequi/Daviplata');
+    const nequiTitular = get('Titular Nequi');
+    const banco = get('Cuenta Bancolombia');
+    const bancoTitular = get('Titular Bancolombia');
+    if (!nequi && !banco) return null;
+    const lineas = ['💳 *Datos para tu transferencia:*'];
+    if (nequi) lineas.push(`• Nequi / Daviplata: *${nequi}*${nequiTitular ? ` (${nequiTitular})` : ''}`);
+    if (banco) lineas.push(`• Bancolombia: *${banco}*${bancoTitular ? ` (${bancoTitular})` : ''}`);
+    lineas.push('Cuando pagues, envíanos el comprobante por aquí 📝');
+    return lineas.join('\n');
+}
+
+/**
+ * Capacidad opcional para handlers/modules/cartInfoQuestions.js: datos reales del menú para responder preguntas
+ * informativas (qué cuesta, qué trae, qué opciones hay) sin inventar nada.
+ */
+function getInfoCatalog(ctx) {
+    const products = getMenuProducts(ctx);
+    return {
+        fields: envConfig.backend.fields,
+        products,
+        mainProducts: products,
+        faqs: editableConfig.getEditableFaqs(ctx) || [],
+        optionLists: {}
+    };
+}
+
 module.exports = {
     config: {
         business: {
@@ -420,6 +500,16 @@ module.exports = {
     persistOrder,
     transcribeAudio,
     transcribeImage,
+    // Política de multimedia (6-7 oct 2026, igual que Mundo Helados): el audio se transcribe y sigue como texto; de una
+    // imagen solo importa el comprobante de pago, que se reenvía a la dueña. El bot no valida pagos.
+    handleMedia: paymentProof.handleMedia,
+    escalateIfSensitive,
+    getMenuProducts,
+    getLocationInfo,
+    getPaymentInstructions,
+    getInfoCatalog,
+    // Confirmar con 1/2/3 (sin la palabra "confirmar"), como en Mundo Helados.
+    getCheckoutConfig: () => ({ numericConfirm: true }),
     getInitialPhase: () => PHASE.SELECCION_OPCION,
     isFlowPhase: (phase) => RESTAURANT_PHASES.includes(phase),
     getPhases: () => RESTAURANT_PHASES

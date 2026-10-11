@@ -394,4 +394,60 @@ function fallbackInterpret(message, userSession, recentOrders) {
     };
 }
 
-module.exports = { interpret, interpretAudio, interpretAudioIntent, interpretImage, fallbackInterpret };
+/**
+ * Responde una duda del cliente (ingredientes, qué trae un plato, cómo se paga, tiempos...) con la voz de Ricuras.
+ * Solo usa lo que está en el menú y en las preguntas frecuentes del negocio: no inventa precios, tiempos ni platos.
+ * Primero busca la respuesta EXACTA en las FAQs editables (sin IA); si no hay, una llamada de IA a temperatura baja.
+ * @param {string} doubt
+ * @param {{ products?: string[], faqs?: Array<{Pregunta?:string,Respuesta?:string}>, lastMentioned?: string[], tone?: string, info?: string[] }} [contextInfo]
+ * @param {{ deterministic?: boolean }} [opts]
+ * @returns {Promise<string|null>}
+ */
+async function answerDoubt(doubt, contextInfo = {}, opts = {}) {
+    if (!doubt) return null;
+
+    const norm = (t) => stripAccents(String(t || '')).toLowerCase().replace(/\s+/g, ' ').trim();
+    const target = norm(doubt);
+    const faqs = Array.isArray(contextInfo.faqs) ? contextInfo.faqs : [];
+    for (const faq of faqs) {
+        const q = norm(faq && (faq.Pregunta || faq.pregunta));
+        const a = String((faq && (faq.Respuesta || faq.respuesta)) || '').trim();
+        if (q && a && (q === target || (q.length >= 8 && (target.includes(q) || q.includes(target))))) return a;
+    }
+
+    if (!hasValidKey()) return null;
+
+    const businessName = envConfig.business.name || 'Ricuras del Pacífico';
+    const products = (contextInfo.products || []).join('\n') || '(menú no disponible)';
+    const info = (contextInfo.info || []).filter(Boolean).join('\n');
+    const lastMentioned = (contextInfo.lastMentioned || []).join(', ');
+    const faqLines = faqs.map((f) => `P: ${f.Pregunta || f.pregunta || ''}\nR: ${f.Respuesta || f.respuesta || ''}`).join('\n');
+    const tone = String(contextInfo.tone || '').trim();
+
+    const systemInstruction = `Eres el camarero marino de *${businessName}*, restaurante de pescados y mariscos del Pacífico en Colombia: cercano, cálido y breve. ` +
+        'Responde la duda del cliente SOLO con lo que está en el menú, los datos del negocio y las preguntas frecuentes de abajo. ' +
+        'Si el dato no está ahí, di que no lo tienes y que lo confirma una persona del equipo; NUNCA inventes precios, tiempos, ingredientes ni platos. ' +
+        `Máximo 3 oraciones, con 1 o 2 emojis (🐟🍤). Sin listas largas.${tone ? ` Tono definido por el negocio: ${tone}` : ''}`;
+    const prompt = `Menú (código | nombre | precio | categoría):\n${products}\n` +
+        `${info ? `\nDatos del negocio:\n${info}\n` : ''}` +
+        `${lastMentioned ? `\nPlatos mencionados hace poco (priorízalos si la duda es sobre "ese" o "el otro"): ${lastMentioned}\n` : ''}` +
+        `${faqLines ? `\nPreguntas frecuentes (si la duda coincide, responde con la respuesta EXACTA):\n${faqLines}\n` : ''}` +
+        `\nDuda del cliente: "${String(doubt).slice(0, 400)}"\n\nResponde SOLO con el texto de la respuesta, sin comillas ni prefijos.`;
+
+    const model = new GoogleGenerativeAI(process.env.GEMINI_API_KEY).getGenerativeModel(
+        opts.deterministic ? { model: MODELS.intent, generationConfig: { temperature: 0 } } : { model: MODELS.intent }
+    );
+    try {
+        const result = await Promise.race([
+            model.generateContent([systemInstruction, prompt]),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 25000))
+        ]);
+        const text = (await result.response).text().trim();
+        return text || null;
+    } catch (e) {
+        logger.warn(`restaurantAi answerDoubt: ${e.message}`);
+        return null;
+    }
+}
+
+module.exports = { interpret, interpretAudio, interpretAudioIntent, interpretImage, fallbackInterpret, answerDoubt };
