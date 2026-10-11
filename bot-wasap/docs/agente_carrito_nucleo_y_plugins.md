@@ -11,6 +11,8 @@ Estado al 30 sep 2026. Piloto: heladería (Mundo Helados), **apagado por defecto
 | Grounding | `handlers/agent/grounding.js` | Funciones puras: resolver nombres contra el catálogo, cantidad dicha por el cliente, confirmación explícita, datos del cliente escritos por él, cifras de respuestas libres contra la fuente de verdad. |
 | Núcleo | `handlers/agent/cartAgent.core.js` | Bucle del turno, activación por flag/canario, 20 herramientas genéricas, candados por efecto, escalamiento a humano, cierre del turno. |
 | Plugin heladería | `handlers/flows/heladeria.agent.js` | 9 herramientas propias (sabores, toppings, unidades, encargo), motor de casillas, grounding de su dominio, prompt y estado. |
+| Plugin pescadería | `handlers/flows/pescaderia.agent.js` | Restaurante (Ricuras del Pacífico): 4 herramientas propias (plato, complemento, cantidad, encargo), presentador conversacional. Ver `docs/agente_ricuras_pescaderia.md`. |
+| Registro | `handlers/agent/agentRegistry.js` | Qué negocio tiene qué agente y con qué variable de entorno se enciende (`HELADERIA_AI_AGENT`, `PESCADERIA_AI_AGENT`). Un negocio nuevo = una línea. |
 
 ## Qué hereda gratis un negocio nuevo (núcleo)
 
