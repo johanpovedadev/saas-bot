@@ -11,7 +11,8 @@
  * Privacidad (ADR-014): NO se guarda ningún mensaje del cliente, solo los datos de un pedido CONFIRMADO, que el negocio ya
  * conserva en sus registros (hoja y backend). Es de ese cliente y de nadie más: se consulta solo con su propio chat. El
  * cliente puede pedir que se borre ("borra mis datos") y se borra de verdad. Un perfil sin pedidos en 180 días no se ofrece
- * y se elimina al guardar el siguiente pedido de cualquier cliente.
+ * y se elimina al guardar el siguiente pedido de cualquier cliente, SOLO si el negocio configuró una retención
+ * (CUSTOMER_PROFILE_RETENTION_DAYS); por defecto se conserva.
  */
 
 const fs = require('fs');
@@ -19,8 +20,18 @@ const path = require('path');
 const { logger } = require('../utils/logger');
 const { openDatabase, removeDatabaseFiles } = require('../utils/sqlite');
 
-/** Un perfil que lleva más de este tiempo sin pedidos se considera olvidado y no se ofrece. */
-const MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Cuánto se conserva un perfil sin pedidos nuevos. Por defecto SIN LÍMITE (decisión de Johan, 11 oct 2026: hay clientes que
+ * reaparecen mucho después y "lo de siempre" les sirve igual). CUSTOMER_PROFILE_RETENTION_DAYS=180 vuelve a caducar a los
+ * 180 días (se deja de ofrecer y se borra al guardar el siguiente pedido). "Borra mis datos" siempre borra de verdad.
+ * @returns {number} milisegundos; 0 = sin límite
+ */
+function retentionMs() {
+    const n = Number(process.env.CUSTOMER_PROFILE_RETENTION_DAYS);
+    return Number.isFinite(n) && n > 0 ? n * DAY_MS : 0;
+}
 
 // La ruta se resuelve al abrir (no al cargar el módulo): las pruebas fijan el entorno antes de usarlo.
 const legacyJsonPath = () => process.env.CUSTOMER_PROFILES_PATH || path.join(__dirname, '..', 'data', 'customer_profiles.json');
@@ -119,7 +130,9 @@ function rowToProfile(r) {
  * @returns {number} cuántos perfiles se borraron
  */
 function purgeExpired(now = Date.now()) {
-    return getDb().prepare('DELETE FROM customer_profiles WHERE last_order_at < ?').run(now - MAX_AGE_MS).changes;
+    const ms = retentionMs();
+    if (!ms) return 0;
+    return getDb().prepare('DELETE FROM customer_profiles WHERE last_order_at < ?').run(now - ms).changes;
 }
 
 /**
@@ -165,7 +178,8 @@ function get(businessKey, jid, now = Date.now()) {
     if (!r) return null;
     const p = rowToProfile(r);
     if (!Array.isArray(p.items) || !p.items.length) return null;
-    if (now - (p.lastOrderAt || 0) > MAX_AGE_MS) return null;
+    const ms = retentionMs();
+    if (ms && now - (p.lastOrderAt || 0) > ms) return null;
     return p;
 }
 
@@ -189,4 +203,4 @@ function close() {
     openedAt = null;
 }
 
-module.exports = { saveFromOrder, get, forget, count, snapshotItems, purgeExpired, close, dbPath, MAX_AGE_MS, removeDatabaseFiles };
+module.exports = { saveFromOrder, get, forget, count, snapshotItems, purgeExpired, close, dbPath, retentionMs, removeDatabaseFiles };
