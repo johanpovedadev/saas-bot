@@ -1,0 +1,50 @@
+name: Desplegar al servidor de pruebas
+
+# Solo manual (workflow_dispatch): nada se despliega solo al hacer push ni al integrar un PR.
+# Requiere los secretos del repositorio: PRUEBAS_HOST, PRUEBAS_USER, PRUEBAS_SSH_KEY (y opcional PRUEBAS_PORT).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Rama o etiqueta a desplegar (por defecto develop)'
+        required: false
+        default: 'develop'
+
+concurrency:
+  group: deploy-pruebas
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: pruebas
+    steps:
+      - name: Comprobar secretos
+        run: |
+          for v in PRUEBAS_HOST PRUEBAS_USER PRUEBAS_SSH_KEY; do
+            if [ -z "${!v}" ]; then echo "Falta el secreto $v"; exit 1; fi
+          done
+        env:
+          PRUEBAS_HOST: ${{ secrets.PRUEBAS_HOST }}
+          PRUEBAS_USER: ${{ secrets.PRUEBAS_USER }}
+          PRUEBAS_SSH_KEY: ${{ secrets.PRUEBAS_SSH_KEY }}
+
+      - name: Desplegar por SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PRUEBAS_HOST }}
+          username: ${{ secrets.PRUEBAS_USER }}
+          key: ${{ secrets.PRUEBAS_SSH_KEY }}
+          port: ${{ secrets.PRUEBAS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/lion-bot
+            git fetch --all --prune
+            git checkout --quiet "${{ github.event.inputs.ref }}"
+            git pull --ff-only origin "${{ github.event.inputs.ref }}" || true
+            cd deploy
+            docker compose -f docker-compose.pruebas.yml up -d --build
+            sleep 20
+            docker compose -f docker-compose.pruebas.yml ps
+            docker inspect --format '{{.State.Health.Status}}' lion-bot-pruebas

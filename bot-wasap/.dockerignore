@@ -1,0 +1,16 @@
+node_modules
+auth
+auth_*
+.wwebjs_cache
+data
+logs
+.env
+.env.*
+*.log
+*.png
+*.jpg
+*.jpeg
+test_*.js
+_test_*.js
+tests_sim
+docs
