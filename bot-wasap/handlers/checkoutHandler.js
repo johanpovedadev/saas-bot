@@ -172,8 +172,12 @@ function generateCartSummary(userSession) {
  * en userSession.order.paymentMethod y el chequeo exacto "=== 'transferencia'"
  * (que dispara el QR de pago) nunca coincidía.
  */
+// Nequi, Daviplata, Bancolombia, PSE, QR... son transferencias: el cliente de un restaurante contesta "nequi", no "transferencia".
+const WALLET_PAYMENT_RE = /\b(nequi|daviplata|bancolombia|pse|qr|llave|bre-?b|transfiya|consignaci[oó]n)\b/i;
+
 function normalizePaymentMethod(cleanInput) {
     if (['transferencia', 'efectivo'].includes(cleanInput)) return cleanInput;
+    if (WALLET_PAYMENT_RE.test(cleanInput)) return 'transferencia';
     if (similarityScore(cleanInput, 'transferencia') >= 0.75) return 'transferencia';
     if (similarityScore(cleanInput, 'efectivo') >= 0.75) return 'efectivo';
     return null;
@@ -319,6 +323,9 @@ async function handleCartSummary(sock, jid, userSession, ctx) {
             _fromCarrito: true
         }));
         userSession.order.items = existing.concat(carritoItems);
+    }
+    if (userSession && userSession.order && Array.isArray(userSession.order.items)) {
+        userSession.order.items = require('../utils/cartItems').mergeEquivalentItems(userSession.order.items);
     }
     
     if (!userSession.order || userSession.order.items.length === 0) {
@@ -479,7 +486,7 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     if (cleanInput === '2' || cleanInput === 'seguir') {
         logger.info(`[${jid}] -> Usuario eligió SEGUIR COMPRANDO.`);
         userSession.phase = PHASE.SELECCION_OPCION;
-        await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
+        await say(sock, jid, `${require('../utils/businessEmoji').cartEmoji()} ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.`, ctx);
         return;
     }
     
@@ -1513,7 +1520,7 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             let savedProfile = { orderCount: 0, returning: false };
             try {
                 if (require('./flowRegistry').getTenantFlowWithCapability('getMenuProducts')) {
-                    savedProfile = require('../services/customerProfileStore').saveFromOrder(process.env.BUSINESS_KEY, jid, { order: userSession.order, carrito: userSession.carrito, total: orderTotal });
+                    savedProfile = require('../services/customerProfileStore').saveFromOrder(process.env.BUSINESS_KEY, jid, { order: userSession.order, carrito: (Array.isArray(userSession.carrito) && userSession.carrito.length) ? userSession.carrito : require('../utils/cartItems').mergeEquivalentItems(userSession.order && userSession.order.items), total: orderTotal });
                 }
             } catch (profileErr) { logger.warn(`customerProfileStore.saveFromOrder: ${profileErr.message}`); }
             try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal, Date.now(), savedProfile.returning); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
@@ -1768,5 +1775,6 @@ module.exports = {
     looksLikePickup,
     looksLikeQuestion,
     captureSideChannelFields,
-    handleFieldCorrection
+    handleFieldCorrection,
+    normalizePaymentMethod
 };

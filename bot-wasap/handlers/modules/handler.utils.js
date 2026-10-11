@@ -110,7 +110,7 @@ function validateInput(input, type, options = {}) {
 async function sendAfterAddOptions(sock, jid, ctx) {
     const message = `¿Qué deseas hacer ahora?
 
-*1)* 🍨 Seguir comprando
+*1)* ${require('../../utils/businessEmoji').cartEmoji()} Seguir comprando
 *2)* 💳 Ir a pagar
 *3)* 📋 Ver menú principal
 

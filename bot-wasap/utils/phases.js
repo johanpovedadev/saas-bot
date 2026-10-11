@@ -12,6 +12,7 @@ const PHASE = {
     // Fases de personalización del producto
     SELECT_DETAILS: 'select_details',
     SELECT_QUANTITY: 'select_quantity',
+    POST_ADD: 'post_add', // Producto agregado: 1) seguir, 2) pagar, 3) menú (negocios que no tienen su propia fase, p. ej. restaurante)
 
     // Fases del proceso de pago (Checkout)
     CHECK_DIR: 'checkout_dir',

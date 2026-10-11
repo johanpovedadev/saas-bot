@@ -5,8 +5,9 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const { logger } = require('../utils/logger');
 
-const DB_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'pescaderia.db');
+// RESTAURANT_STORE_PATH: las pruebas y el simulador usan su propia base; nunca la historia real de pedidos.
+const DB_PATH = process.env.RESTAURANT_STORE_PATH || path.join(__dirname, '..', 'data', 'pescaderia.db');
+const DB_DIR = path.dirname(DB_PATH);
 
 let db = null;
 
