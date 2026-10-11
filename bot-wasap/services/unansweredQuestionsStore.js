@@ -42,10 +42,13 @@ function writeAll(data) {
  * Encola una pregunta sin responder. Evita duplicar la misma pregunta
  * (normalizada) si ya está pendiente en la cola de ese negocio.
  */
-function recordUnanswered(businessKey, jid, question, reason) {
+function recordUnanswered(businessKey, jid, question, reason, context) {
     if (!businessKey || !question || typeof question !== 'string') return;
     const normalized = question.trim();
     if (!normalized) return;
+    // "mejor no", "sí", "a", "2" son respuestas a algo que el bot preguntó: un fallo de comprensión, no una pregunta
+    // frecuente que la dueña pueda contestar (11 oct 2026: a Isa le llegó "un cliente preguntó 'mejor no'").
+    if (!isFaqCandidate(normalized)) return;
     const all = readAll();
     if (!Array.isArray(all[businessKey])) all[businessKey] = [];
     const list = all[businessKey];
@@ -56,10 +59,32 @@ function recordUnanswered(businessKey, jid, question, reason) {
         jid,
         question: normalized,
         reason: reason || null,
+        // Para que la dueña entienda de qué chat y de qué momento viene: qué le había dicho el bot, cómo se llama y qué llevaba.
+        context: context && typeof context === 'object' ? {
+            botSaid: context.botSaid ? String(context.botSaid).slice(0, 300) : null,
+            name: context.name ? String(context.name).slice(0, 60) : null,
+            cart: context.cart ? String(context.cart).slice(0, 200) : null
+        } : null,
         status: 'pendiente',
         createdAt: Date.now()
     });
     writeAll(all);
+}
+
+const REPLY_ONLY_WORDS = new Set(['si', 'sii', 'no', 'nop', 'ok', 'okay', 'dale', 'listo', 'mejor', 'nada', 'asi', 'eso', 'esa', 'ese', 'bueno',
+    'gracias', 'hola', 'buenas', 'claro', 'vale', 'porfa', 'favor', 'por', 'tengo', 'se', 'sé', 'a', 'y', 'el', 'la', 'de']);
+
+/**
+ * ¿Vale la pena preguntarle esto a la dueña como pregunta frecuente? Una pregunta lleva signo de interrogación o es una
+ * frase de varias palabras con contenido propio. Respuestas sueltas, números y relleno ("mejor no", "no se", "1") no.
+ */
+function isFaqCandidate(text) {
+    const t = String(text || '').trim();
+    if (t.includes('?') || t.includes('¿')) return true;
+    const words = t.toLowerCase().split(' ').filter(Boolean);
+    if (words.length === 0) return false;
+    if (words.every((w) => REPLY_ONLY_WORDS.has(w) || !Number.isNaN(Number(w)))) return false;
+    return words.length >= 3;
 }
 
 /** Primera pregunta pendiente en la cola (FIFO), o null si no hay ninguna. */
@@ -109,5 +134,6 @@ module.exports = sharedJsonFile.lockedExports(STORE_PATH, {
     recordUnanswered,
     getNextPending,
     markAnswered,
-    skip
+    skip,
+    isFaqCandidate
 }, ['recordUnanswered', 'markAnswered', 'skip']);

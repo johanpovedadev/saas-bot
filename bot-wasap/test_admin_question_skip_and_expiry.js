@@ -60,7 +60,7 @@ const ADMIN_JID = process.env.ADMIN_JID;
             const ctx = makeCtx();
             const sent = [];
             const sock = makeSock(sent);
-            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientex@c.us', 'hola', 'errorCount=2');
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientex@c.us', '¿tienen opciones sin lactosa para niños?', 'errorCount=2');
             const q = unansweredQuestionsStore.getNextPending(process.env.BUSINESS_KEY);
             pendingAdminQuestion.setPending(process.env.BUSINESS_KEY, 'unanswered_question', { id: q.id, question: q.question });
 
@@ -111,7 +111,7 @@ const ADMIN_JID = process.env.ADMIN_JID;
             const ctx = makeCtx();
             const sent = [];
             const sock = makeSock(sent);
-            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientey@c.us', 'hola', 'errorCount=2');
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, '573clientey@c.us', '¿tienen opciones sin lactosa para niños?', 'errorCount=2');
             const q = unansweredQuestionsStore.getNextPending(process.env.BUSINESS_KEY);
             pendingAdminQuestion.setPending(process.env.BUSINESS_KEY, 'unanswered_question', { id: q.id, question: q.question });
             backdatePending(4); // 4 horas atrás — pasa el límite de 3
@@ -121,7 +121,7 @@ const ADMIN_JID = process.env.ADMIN_JID;
             configUpdateAi.interpretUpdateInstruction = async () => { aiCalled = true; return { isUpdate: false }; };
 
             // Mensaje real y no relacionado — antes se hubiera guardado como
-            // "la respuesta" a la pregunta vieja de "hola".
+            // "la respuesta" a la pregunta vieja de la pregunta sobre lactosa.
             await send(sock, ctx, ADMIN_JID, 'Cra 23 #10-05, Juan Pérez, 3139848800, efectivo');
 
             check(!pendingAdminQuestion.getPending(process.env.BUSINESS_KEY), 'la pregunta vieja se limpió sola (expiró)');

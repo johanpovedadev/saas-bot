@@ -119,4 +119,32 @@ function shouldNotify(kind, jid, now = Date.now()) {
 
 function _resetThrottle() { lastSent.clear(); }
 
-module.exports = { buildHumanNeededMessage, interpretLegacyReason, shouldNotify, phoneLabel, chatLink, customerName, cartLine, THROTTLE_MS, _resetThrottle };
+const clip = (t, n) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+
+/**
+ * Pregunta de un cliente que el bot no supo responder, para pasársela a la dueña (opcional): quién la hizo, qué dijo, qué
+ * le había dicho el bot justo antes y cómo abrir el chat. Antes decía solo `un cliente preguntó "mejor no"`, sin chat ni
+ * contexto, y ella no podía hacer nada (11 oct 2026).
+ * @param {{ jid?: string, question: string, reason?: string, createdAt?: number, context?: { botSaid?: string, name?: string, cart?: string } | null }} entry
+ */
+function buildUnansweredQuestionMessage(entry) {
+    const e = entry || {};
+    const ctx = e.context || {};
+    const who = [ctx.name, phoneLabel(e.jid)].filter(Boolean).join(' · ') || 'un cliente (WhatsApp no mostró su número)';
+    const link = chatLink(e.jid);
+    const lines = [
+        '❓ *Un cliente hizo una pregunta que no supe responder*',
+        '',
+        `👤 ${who}`,
+        `💬 Escribió: "${clip(e.question, 200)}"`
+    ];
+    if (ctx.botSaid) lines.push(`🤖 Yo le había dicho: "${clip(ctx.botSaid, 160)}"`);
+    if (ctx.cart) lines.push(`🛒 Llevaba: ${ctx.cart}`);
+    if (link) lines.push('', `👉 Abrir el chat: ${link}`);
+    lines.push('',
+        '_Responder es opcional._ Si quieres, dime aquí la respuesta correcta y la guardo para la próxima vez que pregunten esto.',
+        '_Escribe *2* (o "otra cosa") si no quieres actualizarla: se descarta sola._');
+    return lines.join('\n');
+}
+
+module.exports = { buildHumanNeededMessage, buildUnansweredQuestionMessage, interpretLegacyReason, shouldNotify, phoneLabel, chatLink, customerName, cartLine, THROTTLE_MS, _resetThrottle };

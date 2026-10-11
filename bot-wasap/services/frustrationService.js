@@ -217,7 +217,12 @@ async function handleFrustration(sock, jid, userSession, ctx, reason = 'frustrac
         // que el dueño la responda luego por chat (ver Parte 2 del resumen
         // diario/preguntas graduales) - no rompe nada si falla, es best-effort.
         try {
-            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, jid, userSession.lastMessageText || reason, reason);
+            const ownerMessages = require('./ownerMessages');
+            unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, jid, userSession.lastMessageText || reason, reason, {
+                botSaid: (ctx && ctx.lastSent && ctx.lastSent[jid]) || userSession.lastBotReply || null,
+                name: ownerMessages.customerName(userSession),
+                cart: ownerMessages.cartLine(userSession)
+            });
         } catch (_) { /* no crítico */ }
 
         // Resetear contadores de error para evitar múltiples notificaciones
