@@ -37,8 +37,9 @@ cargador REAL del bot. Encontró cosas que ya estaban rotas para Ricuras:
 
 1. Integrar este PR (y el #34 de clientes recurrentes) a `develop`.
 2. En `.env.pescaderia`: `PESCADERIA_AI_AGENT=1` (y `OWNER_REPORT=1` si se quiere el informe de las 22:00).
-3. Arrancar con el ecosystem para que el servidor de estado quede en su puerto y con su token:
-   `npx pm2 startOrReload ecosystem.config.js --only bot-pescaderia --update-env`.
+3. Arrancar primero su backend (el bot lee el menú de ahí: hoy `django-pescaderia` está detenido) y después el bot, con el
+   ecosystem para que el servidor de estado quede en su puerto y con su token:
+   `npx pm2 startOrReload ecosystem.config.js --only django-pescaderia,bot-pescaderia --update-env`.
 4. Primero con el número de Johan solamente: `PESCADERIA_AI_AGENT_JIDS=<número>`.
 
 Apagarlo: `PESCADERIA_AI_AGENT=0` (o quitar la línea) y reiniciar; vuelve al flujo de reglas de siempre.
