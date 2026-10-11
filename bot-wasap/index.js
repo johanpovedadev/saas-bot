@@ -525,8 +525,10 @@ const startBot = async () => {
         }),
         authTimeoutMs: 600000,
         puppeteer: {
-            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            headless: false,
+            // En el servidor (Docker/Linux) el Chrome es otro y no hay pantalla: CHROME_PATH y WA_HEADLESS=1. Sin esas
+            // variables queda exactamente lo de siempre (Chrome de Windows con ventana).
+            executablePath: process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            headless: process.env.WA_HEADLESS === '1' || process.env.WA_HEADLESS === 'true',
             args: [
                 '--no-sandbox', '--disable-setuid-sandbox',
                 '--disable-gpu', '--disable-dev-shm-usage',

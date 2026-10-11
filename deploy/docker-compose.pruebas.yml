@@ -1,0 +1,29 @@
+# Servidor de PRUEBAS: un negocio por contenedor, con su propio número de WhatsApp de prueba.
+# Uso (en el servidor):  cp .env.pruebas.example .env.pruebas  →  completar  →  docker compose -f docker-compose.pruebas.yml up -d --build
+# NO usar el mismo número que el bot de producción: dos sesiones del mismo WhatsApp se pelean y una cierra la otra.
+services:
+  bot:
+    build:
+      context: ../bot-wasap
+    image: lion-bot:pruebas
+    container_name: lion-bot-pruebas
+    restart: unless-stopped
+    env_file: .env.pruebas
+    environment:
+      BUSINESS_KEY: ${BUSINESS_KEY:-heladeria}
+      LION_STATUS_PORT: "8096"
+      LOG_LEVEL: info
+      ALLOW_REAL_AI: "0"        # las pruebas con IA real las decide Johan
+    volumes:
+      - bot_auth:/app/auth      # sesión de WhatsApp (no pide QR otra vez al reconstruir)
+      - bot_data:/app/data      # perfiles, historial, preguntas pendientes
+      - bot_logs:/app/logs
+    ports:
+      - "127.0.0.1:8096:8096"   # estado/kill switch solo desde el propio servidor (túnel SSH para verlo)
+    mem_limit: 900m             # Chrome tiene picos; el límite evita que un bot tire a los demás
+    shm_size: "256m"
+
+volumes:
+  bot_auth:
+  bot_data:
+  bot_logs:
