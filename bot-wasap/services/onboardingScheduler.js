@@ -64,10 +64,8 @@ async function runOnboardingTick(sock, ctx) {
 
     const nextUnanswered = unansweredQuestionsStore.getNextPending(businessKey);
     if (nextUnanswered) {
-        await notificationService.notifyAdmin(sock, ctx,
-            `Te paso esta conversación (responder es *opcional*): un cliente preguntó "${nextUnanswered.question}" y no supimos responder. ` +
-            `Si quieres, dime cuál es la respuesta correcta y la guardo para la próxima vez que pregunten esto.\n\n` +
-            `_Escribe *2* (o dime "otra cosa" si quieres hablar de algo distinto) si no quieres actualizarla — sin problema, se descarta sola._`);
+        // Con quién habló, qué dijo y qué le había dicho el bot: sin eso la dueña no podía responder nada.
+        await notificationService.notifyAdmin(sock, ctx, require('./ownerMessages').buildUnansweredQuestionMessage(nextUnanswered));
         pendingAdminQuestion.setPending(businessKey, 'unanswered_question', { id: nextUnanswered.id, question: nextUnanswered.question });
         return;
     }
