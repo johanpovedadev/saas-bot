@@ -147,7 +147,9 @@ function rewriteUnitsPrompt(text, T) {
     const nombreDe = (x) => (x && (x.NombreProducto || x.nombre)) || String(x || '');
     const sabores = flow ? (flow.saboresSeleccionados || []).map(nombreDe).filter(Boolean) : [];
     const toppings = flow ? (flow.toppingsSeleccionados || []).map(nombreDe).filter(Boolean) : [];
-    const producto = (text.match(/de \*(.+?)\*\./) || [])[1] || (flow && flow.product ? nombreDe(flow.product) : 'tu pedido');
+    // El nombre sale del flujo; del texto solo el PRIMER negrito tras "de" (antes
+    // la regex perezosa llegaba hasta "*." y repetia sabores y toppings).
+    const producto = (flow && flow.product ? nombreDe(flow.product) : '') || (text.match(/de \*([^*]+)\*/) || [])[1] || 'tu pedido';
     if (qty && flow) {
         const eleccion = `${sabores.length ? `sabor${sabores.length > 1 ? 'es' : ''} *${sabores.join(', ')}*` : 'los sabores que elegiste'}${toppings.length ? ` y toppings *${toppings.join(', ')}*` : ' y sin toppings'}`;
         return `🔄 Vas a pedir *${qty} unidades* de *${producto}* con ${eleccion}.\n\n` +

@@ -112,6 +112,11 @@ function fastPathApplies(text, phase) {
     if (/^\d{1,3}$/.test(t)) return true;
     if ((phase === HP.HELADO_SABORES || phase === HP.HELADO_PER_UNIT_SABORES) && /^(s?\d{1,2}[\s,]*)+$/i.test(t)) return true;
     if ((phase === HP.HELADO_TOPPINGS || phase === HP.HELADO_PER_UNIT_TOPPINGS) && /^(t\d{1,2}[\s,]*)+$/i.test(t)) return true;
+    // Cerrar el paso ("bueno asi esta bien") o pedir los mismos toppings de la
+    // unidad anterior: las reglas lo resuelven exacto. Replay real 12-oct-2026:
+    // la IA respondia con otra herramienta y el bot repetia la pregunta.
+    if ((phase === HP.HELADO_TOPPINGS || phase === HP.HELADO_PER_UNIT_TOPPINGS) && I.isToppingDone(t)) return true;
+    if (phase === HP.HELADO_PER_UNIT_TOPPINGS && I.isSameAsPreviousToppings(t)) return true;
     return false;
 }
 
@@ -446,7 +451,13 @@ function toppingIsGrounded(name, T) {
  * "iguales"; de "Nucita frutos rojos" sacó "Veteado de mora" x3.
  */
 function modoIsGrounded(T) {
-    return /igual|mism[oa]s?|diferent|distint|cada un|variad/.test(norm(T.text));
+    const text = norm(T.text);
+    if (/igual|mism[oa]s?|diferent|distint|cada un|variad/.test(text)) return true;
+    // Respondiendo "¿las N llevan lo mismo?", "el otro/la otra de X" es pedir
+    // unidades diferentes. Replay real (12-oct-2026, Banana Split x2): "No el
+    // otro fresa vainilla y veteado de mora" se bloqueaba, los sabores nuevos
+    // pisaban los de la primera unidad y el bot entraba en bucle de toppings.
+    return T.startPhase === HP.HELADO_UNITS_MODE && /\b(el|la|los|las|y|un|una) otr[oa]s?\b|^otr[oa]s?\b/.test(text);
 }
 const SABOR_NAME_IGNORE = new Set(['con']);
 function saborIsGrounded(name, T) {
@@ -502,11 +513,17 @@ async function groundToppings(names, T) {
     const kept = [];
     const dropped = [];
     const flow = T.userSession.heladoFlow;
-    const yaPuestos = new Set(((flow && flow.toppingsSeleccionados) || []).map(t => norm(nameOf(t))));
+    // En el armado por unidad lo "ya puesto" es lo de la unidad ACTUAL, no lo
+    // de la primera (replay real: "de queso" en la unidad 2 se ignoraba porque
+    // la unidad 1 ya tenia queso, y el bot repetia la pregunta).
+    const perUnit = T.userSession.phase === HP.HELADO_PER_UNIT_TOPPINGS && flow && flow.customization;
+    const current = perUnit ? flow.customization.currentToppings : ((flow && flow.toppingsSeleccionados) || []);
+    const yaPuestos = new Set((current || []).map(t => norm(nameOf(t))));
     const toppingsList = optionLists(T.ctx).toppings;
+    T.toppingsAlreadySet = 0;
     for (const n of (names || [])) {
         const r = resolveIn(toppingsList, n);
-        if (r.item && yaPuestos.has(norm(nameOf(r.item)))) continue; // ya estaba: no-op, sin aviso
+        if (r.item && yaPuestos.has(norm(nameOf(r.item)))) { T.toppingsAlreadySet++; continue; } // ya estaba: no-op, sin aviso
         (toppingIsGrounded(n, T) ? kept : dropped).push(n);
     }
     if (dropped.length) {
@@ -794,8 +811,17 @@ const EXECUTORS = {
     async elegir_toppings(args, T) {
         const { sock, jid, userSession, ctx } = T;
         const names = await groundToppings(Array.isArray(args.toppings) ? args.toppings : [], T);
-        if (!names.length) return;
         const flow = userSession.heladoFlow;
+        if (!names.length) {
+            // Repitio un topping que ya estaba puesto ("de queso, como el
+            // anterior"): es confirmacion, se avanza en vez de volver a preguntar.
+            if (T.toppingsAlreadySet && flow && userSession.phase === HP.HELADO_TOPPINGS) {
+                await I.finishToppingsStep(sock, jid, userSession, ctx, false); markPrompted(T);
+            } else if (T.toppingsAlreadySet && flow && userSession.phase === HP.HELADO_PER_UNIT_TOPPINGS) {
+                await I.handlePerUnitToppings(sock, jid, 'no', userSession, ctx); markPrompted(T);
+            }
+            return;
+        }
         const toppingsList = optionLists(ctx).toppings;
         if (!flow && orphanCandidates(T).length) {
             await keepOrphan(T, { toppings: names }, `la adición *${names.join(', ')}*`);
