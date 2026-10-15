@@ -205,7 +205,7 @@ REGLAS:
 7. SABORES: "todos de fresa" para un producto de N sabores = repetir "Fresa" N veces. "2 de vainilla y 1 de lulo" = ["Vainilla","Vainilla","Lulo"] (usando nombres exactos). Los sabores se pueden repetir.
 8. TOPPINGS / ADICIONES: "con adición de queso" -> elegir_toppings(["<topping exacto de queso>"]). "sin adición"/"sin topping"/"quítale X": si el producto en armado ya tiene toppings elegidos -> quitar_topping (si tiene UNO solo y el cliente no dice cuál, es ese; si tiene varios y no dice cuál -> preguntar_aclaracion). Si aún no tiene ninguno y el bot está preguntando toppings -> sin_toppings. "sin X" donde X NO es un topping (ej: "sin fruta") -> notas en agregar_producto o elegir_toppings no aplica: usa responder_breve para confirmar que lo anotas SOLO si hay producto en armado; si no, ignóralo.
 9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte).
-10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
+10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
 11. HUMANO: si el cliente pide explícitamente una persona/asesor, reclama por un pedido ya entregado o en camino, un pago/reembolso, o pide algo que ninguna herramienta puede hacer -> escalar_a_humano. No escales por dudas normales del menú.
 12. Datos de entrega: dirección, nombre, teléfono y método de pago pueden llegar en cualquier fase y en cualquier orden, incluso todos en un solo mensaje separados por comas -> llama cada fijar_* que corresponda. Nequi/Daviplata/Bancolombia/QR = "transferencia".
 13. confirmar_pedido en FINALIZE_ORDER ENVÍA el pedido real al negocio: úsalo solo si el cliente confirma claramente ese resumen final.
@@ -485,6 +485,9 @@ function productIsGrounded(product, T) {
     const text = norm(T.text);
     const name = nameOf(product);
     if ((T.pendingBefore || []).some(o => norm(o) === norm(name))) return true;
+    // "¿Quieres pedir X?" -> "sí, toda de fresa": el sí fundamenta X (solo un
+    // mensaje que EMPIEZA aceptando; "tengo una pregunta" no).
+    if (T.pendingOffer && norm(T.pendingOffer) === norm(name) && G.startsWithYes(T.text)) return true;
     if (norm(codeOf(product)) && text.includes(norm(codeOf(product)))) return true;
     if (G.nameWordsInText(name, text, { ignore: GENERIC_WORDS })) return true;
     if (G.affirmsLastBotOffer(name, text, T.history())) return true;
@@ -1192,7 +1195,17 @@ const agent = core.createCartAgent({
     toolOrder: TOOL_ORDER,
     toolDescriptions: TOOL_DESCRIPTIONS,
     hooks,
-    texts
+    texts,
+    // Intención de compra (ver G.classifyBuyIntent): "quiero/para pedir una X"
+    // arranca X; "¿cuánto vale X?" da el precio y confirma Sí/No.
+    intent: {
+        addTool: 'agregar_producto',
+        texts: {
+            confirmAfterPrice: (name) => `🍦 ¿Quieres pedir *${name}*? Responde *Sí* o *No* 😊`,
+            chooseAfterPrice: '💰 Estos son los precios. ¿Cuál te preparo? 😊',
+            offerDeclined: 'Listo 👍 Cuando quieras me dices qué te provoca, o te muestro el *menú* 🍦'
+        }
+    }
 });
 
 module.exports = {

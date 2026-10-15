@@ -157,17 +157,87 @@ const tops = (it) => (it.toppings || []).map(x => x.nombre || x).join(',');
             check(c.length === 2 && tops(c[1]) === '', 'la unidad 2 queda sin toppings y el pedido se cierra con las 2 unidades');
         }
 
-        // ---- 6) Preguntó el precio y luego "¿qué sabores tienes?": sabores, NO el menú ----
+        // ---- 6) "Para pedir una banana split cuanto vale": lo pidió EXPLÍCITO -> arranca ----
         {
             const t = setup();
             await say(t, 'Para pedir una banana split cuanto vale', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
-            check(/Banana Split/.test(t.sent.join('\n')) && t.s().phase === PHASE.SELECCION_OPCION, 'el precio se responde sin arrancar todavía el pedido');
+            const out = t.sent.join('\n');
+            check(/16\.000/.test(out), 'le dice el precio real de la Banana Split');
+            check(t.s().phase === 'HELADO_SABORES' && t.s().heladoFlow && t.s().heladoFlow.product.NombreProducto === 'Banana Split',
+                'como dijo "para pedir", arranca la Banana Split y pide sabores sin volver a preguntar');
+            check(!/Responde \*S[ií]\*/.test(out), 'no le pregunta "¿la quieres?" porque ya lo dijo');
+        }
+
+        // ---- 6a) Solo pregunta el precio -> precio + "¿Quieres pedir? Sí / No" ----
+        {
+            const t = setup();
+            await say(t, 'Cuanto vale una banana split', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
+            const out = t.sent.join('\n');
+            check(/16\.000/.test(out) && /¿Quieres pedir \*Banana Split\*\?/.test(out), 'da el precio y confirma si la quiere');
+            check(t.s().phase === PHASE.SELECCION_OPCION && !t.s().heladoFlow, 'no arranca el pedido sin que diga que sí');
+            decideCalls = 0;
+            await say(t, 'Si la quiero', [{ name: 'responder_breve', args: { texto: 'x' } }]);
+            check(decideCalls === 0, '"Sí la quiero" lo resuelve el código (no depende de la IA)');
+            check(t.s().phase === 'HELADO_SABORES' && t.s().heladoFlow && t.s().heladoFlow.product.NombreProducto === 'Banana Split', 'con el sí arranca la Banana Split y pide sabores');
+        }
+
+        // ---- 6a2) La IA quiso agregarla con solo una pregunta de precio -> igual confirma ----
+        {
+            const t = setup();
+            await say(t, 'a como esta la banana split', [
+                { name: 'informar_precios', args: { productos: ['Banana Split'] } },
+                { name: 'agregar_producto', args: { producto: 'Banana Split' } }
+            ]);
+            check(!t.s().heladoFlow && /¿Quieres pedir/.test(t.sent.join('\n')), 'pregunta de precio: confirma primero aunque la IA quiera agregar');
+        }
+
+        // ---- 6a3) "No gracias" -> respuesta cálida, sin pedido, sin perder el chat ----
+        {
+            const t = setup();
+            await say(t, 'cuanto cuesta la banana split', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
+            decideCalls = 0;
+            await say(t, 'No gracias', null);
+            const out = t.sent.join('\n');
+            check(decideCalls === 0 && /cuando quieras/i.test(out) && !t.s().heladoFlow, '"No gracias" responde con calidez y no arranca nada');
+        }
+
+        // ---- 6a4) "Sí pero de fresa" no es un sí suelto: lo decide la IA con la oferta en el estado ----
+        {
+            const t = setup();
+            await say(t, 'cuanto vale la banana split', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
+            decideCalls = 0;
+            await say(t, 'si pero toda de fresa', [{ name: 'agregar_producto', args: { producto: 'Banana Split', sabores: ['Fresa', 'Fresa', 'Fresa'] } }]);
+            const f = t.s().heladoFlow;
+            check(decideCalls === 1, '"sí pero de fresa" pasa por la IA');
+            check(t.s().phase === 'HELADO_TOPPINGS' && f && (f.saboresSeleccionados || []).map(x => x.NombreProducto || x).join(',') === 'Fresa,Fresa,Fresa',
+                'arranca la Banana Split con los 3 sabores de fresa (la oferta fundamenta el producto)');
+        }
+
+        // ---- 6c) Precio y luego "¿qué sabores tienes?": sabores de ESA, NO el menú ----
+        {
+            const t = setup();
+            await say(t, 'Cuanto vale la banana split', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
             await say(t, 'Que sabores de helados tienes disponibles', [{ name: 'mostrar_opciones_del_paso', args: {} }]);
             const out = t.sent.join('\n');
             check(t.s().phase === 'HELADO_SABORES' && t.s().heladoFlow && t.s().heladoFlow.product.NombreProducto === 'Banana Split',
                 'arranca la Banana Split de la que se venía hablando y pasa a elegir sabores');
             check(/Vainilla/.test(out) && /Veteado de mora/.test(out), 'le muestra los sabores disponibles');
             check(!/men[uú]/i.test(out), 'NO vuelve a mandar el menú completo');
+        }
+
+        // ---- 6d) Intención: clasificador ----
+        {
+            const G = require('./handlers/agent/grounding');
+            const casos = [
+                ['Para pedir una banana split cuanto vale', 'order'], ['quiero una banana split', 'order'],
+                ['me regala una banana', 'order'], ['kiero 2 vanana split', 'order'],
+                ['cuanto vale la banana split', 'price'], ['a como esta la copa', 'price'],
+                ['quiero saber cuanto vale la banana', 'price'], ['hola buenas', null]
+            ];
+            for (const [txt, exp] of casos) check(G.classifyBuyIntent(txt) === exp, `intención de "${txt}" = ${exp}`);
+            const yn = [['Sí', 'yes'], ['si la quiero porfa', 'yes'], ['dale', 'yes'], ['no gracias', 'no'], ['ahorita no mija', 'no'],
+                ['si pero de fresa', null], ['no, mejor la copa osito', null], ['cuanto vale', null]];
+            for (const [txt, exp] of yn) check(G.classifyYesNo(txt) === exp, `sí/no de "${txt}" = ${exp}`);
         }
 
         // ---- 6b) "¿qué sabores hay?" sin producto previo: lista de sabores, sin menú ----
