@@ -2,6 +2,8 @@
 /**
  * Replay real (12-oct-2026, Mundo Helados): Banana Split x2, la segunda con
  * otros sabores. El cliente abandonó el pedido porque el bot:
+ *   0. Al preguntar "¿qué sabores tienes?" (tras preguntar el precio) reenviaba
+ *      el menú completo en vez de los sabores de la Banana Split.
  *   1. Bloqueaba "No el otro fresa vainilla y veteado de mora" (modo
  *      "diferentes" sin la palabra exacta) y los sabores nuevos pisaban los
  *      de la primera unidad.
@@ -153,6 +155,27 @@ const tops = (it) => (it.toppings || []).map(x => x.nombre || x).join(',');
             const c = t.s().carrito || [];
             check(decideCalls === 0, '"Bueno asi esta bien" en toppings lo resuelven las reglas (0 llamadas a la IA)');
             check(c.length === 2 && tops(c[1]) === '', 'la unidad 2 queda sin toppings y el pedido se cierra con las 2 unidades');
+        }
+
+        // ---- 6) Preguntó el precio y luego "¿qué sabores tienes?": sabores, NO el menú ----
+        {
+            const t = setup();
+            await say(t, 'Para pedir una banana split cuanto vale', [{ name: 'informar_precios', args: { productos: ['Banana Split'] } }]);
+            check(/Banana Split/.test(t.sent.join('\n')) && t.s().phase === PHASE.SELECCION_OPCION, 'el precio se responde sin arrancar todavía el pedido');
+            await say(t, 'Que sabores de helados tienes disponibles', [{ name: 'mostrar_opciones_del_paso', args: {} }]);
+            const out = t.sent.join('\n');
+            check(t.s().phase === 'HELADO_SABORES' && t.s().heladoFlow && t.s().heladoFlow.product.NombreProducto === 'Banana Split',
+                'arranca la Banana Split de la que se venía hablando y pasa a elegir sabores');
+            check(/Vainilla/.test(out) && /Veteado de mora/.test(out), 'le muestra los sabores disponibles');
+            check(!/men[uú]/i.test(out), 'NO vuelve a mandar el menú completo');
+        }
+
+        // ---- 6b) "¿qué sabores hay?" sin producto previo: lista de sabores, sin menú ----
+        {
+            const t = setup();
+            await say(t, 'que sabores tienen', [{ name: 'mostrar_opciones_del_paso', args: {} }]);
+            const out = t.sent.join('\n');
+            check(/Sabores disponibles/.test(out) && /Arequipe/.test(out) && !/men[uú]/i.test(out), 'sin producto previo muestra los sabores y pregunta para cuál producto');
         }
 
         // ---- 5) El cierre tolerante no se come mensajes con toppings ----

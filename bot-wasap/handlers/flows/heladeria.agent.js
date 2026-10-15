@@ -995,6 +995,35 @@ const EXECUTORS = {
             markPrompted(T);
             return;
         }
+        // Sin producto en armado pero pregunta por sabores/toppings: NO se
+        // reenvía el menú completo. Replay real (12-oct-2026): "Para pedir una
+        // banana split, ¿cuánto vale?" -> precio; "¿qué sabores tienes?" -> el
+        // bot mandaba otra vez el menú con imágenes. Si se acaba de hablar de
+        // UN producto con sabores, se arranca ese producto (pide sus sabores);
+        // si no, se muestra la lista de sabores/toppings y se pregunta para cuál.
+        if (!userSession.heladoFlow) {
+            const t = norm(T.text);
+            const asks = /sabor/.test(t) ? 'sabores' : /topp?ing|adicion|adiciones/.test(t) ? 'toppings' : null;
+            if (asks) {
+                const mencionados = (T.mentionedBefore || []).map(m => (typeof m === 'string' ? m : nameOf(m)));
+                const candidatos = [...new Set(mencionados.map(norm))]
+                    .map(n => orderableProducts(ctx).find(p => norm(nameOf(p)) === n)).filter(Boolean);
+                const producto = candidatos.length === 1 ? candidatos[0] : null;
+                const counts = producto ? I.getCounts(producto) : null;
+                if (producto && ((asks === 'sabores' && counts.sabores > 0) || (asks === 'toppings' && counts.sabores === 0 && counts.toppings > 0))) {
+                    await heladeriaFlow.handleProductOptions(sock, jid, producto, userSession, ctx);
+                    markPrompted(T);
+                    return;
+                }
+                const lista = optionLists(ctx)[asks].map(nameOf).filter(Boolean);
+                if (lista.length) {
+                    const titulo = asks === 'sabores' ? '🍦 *Sabores disponibles:*' : '🍓 *Toppings / adiciones* (tienen costo adicional):';
+                    await say(sock, jid, `${titulo} ${lista.join(', ')}.\n\n¿Para cuál producto los quieres? 😊`, ctx);
+                    markPrompted(T);
+                    return;
+                }
+            }
+        }
         await T.agentExecutors.mostrar_menu(args, T);
     },
 
