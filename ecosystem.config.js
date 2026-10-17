@@ -8,6 +8,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
@@ -23,6 +29,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'pescaderia',
@@ -38,6 +50,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
@@ -53,6 +71,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'mascotas',
@@ -68,6 +92,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'finance',
@@ -83,6 +113,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
@@ -99,6 +135,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'heladeria',
@@ -114,6 +156,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'finance'
@@ -127,6 +175,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'pilates',
@@ -142,6 +196,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production',
         BUSINESS_KEY: 'pilates_clientas',
@@ -157,6 +217,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'production'
       }
@@ -169,6 +235,12 @@ module.exports = {
       watch: false,
       max_restarts: 10,
       restart_delay: 5000,
+      // Una app que se cae antes de 20 s cuenta como inestable: a los 10 intentos PM2 la deja quieta en vez de
+      // reiniciarla para siempre (17 oct 2026: "agentes-redes" se reinició 3,5 millones de veces y tumbó a PM2).
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      // 78 = puerto ocupado / configuración inválida: no tiene sentido reintentar (ver scripts/check-ports.js).
+      stop_exit_codes: [78],
       env: {
         NODE_ENV: 'development',
         BUSINESS_KEY: 'dev'

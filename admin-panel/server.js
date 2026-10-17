@@ -55,7 +55,16 @@ const PORT = parseInt(process.env.PORT, 10) || 4000;
 // Por defecto solo esta máquina (el túnel de Cloudflare entra por localhost). Para abrirlo a la red local a propósito:
 // ADMIN_PANEL_HOST=0.0.0.0 en admin-panel/.env.
 const HOST = process.env.ADMIN_PANEL_HOST || '127.0.0.1';
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
     console.log(`✅ Panel de administración escuchando en http://${HOST}:${PORT}`);
     console.log(`   Local: http://localhost:${PORT}`);
+});
+// Puerto ocupado: mensaje claro y salida 78 (PM2 no reintenta, ver stop_exit_codes en ecosystem.config.js) en vez de
+// caerse y reiniciarse en bucle. Revisa con: node scripts/check-ports.js
+server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+        console.error(`❌ El puerto ${PORT} ya está en uso: el panel NO arrancó. Revisa: node scripts/check-ports.js`);
+        process.exit(78);
+    }
+    throw err;
 });
