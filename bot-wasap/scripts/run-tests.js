@@ -38,7 +38,10 @@ const TEST_STORE_ENV = {
     BOOKING_STORE_PATH: path.join(TEST_DATA_DIR, 'appointments.json'),
     USER_STORE_DB_PATH: path.join(TEST_DATA_DIR, 'users.db'),
     CUSTOMER_PROFILES_PATH: path.join(TEST_DATA_DIR, 'customer_profiles.json'),
-    AUDIT_LOG_PATH: path.join(TEST_DATA_DIR, 'audit.jsonl')
+    AUDIT_LOG_PATH: path.join(TEST_DATA_DIR, 'audit.jsonl'),
+    SAFETY_EVENTS_STORE_PATH: path.join(TEST_DATA_DIR, 'safety_events.json'),
+    FOLLOWUP_STORE_PATH: path.join(TEST_DATA_DIR, 'followups.json'),
+    DAILY_REVIEW_STORE_PATH: path.join(TEST_DATA_DIR, 'daily_review_sent.json')
 };
 // Historial de conversaciones de las pruebas: una base temporal, nunca bot-wasap/data/<negocio>-conversations.db.
 const CONV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lion-tests-conv-'));

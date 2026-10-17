@@ -27,6 +27,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const empathy = require('../utils/empathyMessages');
 const frustrationService = require('../services/frustrationService');
+const safetyNet = require('../services/safetyNet');
 const waitingHumanStore = require('../services/waitingHumanStore');
 
 // ===================================
@@ -520,6 +521,26 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
  * códigos: se presentan en tono conversacional, igual que los turnos del agente.
  */
 async function processIncomingMessage(sock, messageData, ctx) {
+    // Red de seguridad (services/safetyNet.js, SAFETY_NET=1): ve lo que el bot le respondió al cliente en este turno
+    // para detectar bucles y chats que no avanzan, y programa el seguimiento si el pedido queda abierto. Con la red
+    // apagada no hace nada (mismo camino de siempre).
+    const safeJid = messageData && messageData.from;
+    let snapshot = null;
+    try {
+        snapshot = safeJid && typeof messageData.text === 'string' ? safetyNet.beforeTurn(safeJid, ctx, messageData.text) : null;
+    } catch (e) {
+        logger.error(`[${safeJid}] safetyNet.beforeTurn: ${e.message}`);
+    }
+    if (!snapshot) return processIncomingMessageGuarded(sock, messageData, ctx);
+    const sentTexts = [];
+    try {
+        return await processIncomingMessageGuarded(safetyNet.tapSocket(sock, safeJid, sentTexts), messageData, ctx);
+    } finally {
+        await safetyNet.afterTurn(sock, safeJid, ctx, snapshot, sentTexts);
+    }
+}
+
+async function processIncomingMessageGuarded(sock, messageData, ctx) {
     const jid = messageData && messageData.from;
     const presentingAgent = jid && typeof (messageData && messageData.text) === 'string' ? agentRegistry.active() : null;
     if (presentingAgent) {
