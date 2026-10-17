@@ -243,6 +243,11 @@ function decisionForPendingOffer(plugin, userSession, text) {
     return null;
 }
 
+/** Registro para la revisión diaria (services/safetyNet.js; no hace nada con SAFETY_NET apagada). Nunca lanza. */
+function safetyEvent(type, jid, phase, detail) {
+    try { require('../../services/safetyNet').recordEvent(type, jid, phase, detail); } catch (_) { /* best-effort */ }
+}
+
 /** Fuente de verdad para las respuestas libres: la del plugin o, por defecto, el catálogo. */
 function answerSources(T) {
     if (typeof T.plugin.hooks.answerSources === 'function') return T.plugin.hooks.answerSources(T);
@@ -1087,6 +1092,7 @@ function createCartAgent(plugin) {
         // "¿Quieres pedir X?" pendiente: un sí/no claro se resuelve con código.
         const offerBefore = freshOffer(plugin, userSession);
         let decision = decisionForPendingOffer(plugin, userSession, text);
+        if (decision) safetyEvent(decision.model === 'offer-yes' ? 'offer_accepted' : 'offer_declined', jid, phase, offerBefore && offerBefore.producto);
         if (!decision) {
             try {
                 decision = await agentAi.decideTurn({
@@ -1197,6 +1203,7 @@ function createCartAgent(plugin) {
                 const g = GROUNDS[c.name] ? await GROUNDS[c.name](args, T) : { ok: true };
                 if (g && g.ok === false) {
                     logger.warn(`[${plugin.logTag}] ${jid} ${c.name} BLOQUEADA por grounding (${(EFFECTS[c.name] || []).join('/')}): ${g.reason}`);
+                    safetyEvent('grounding_blocked', jid, phase, c.name);
                     if (g.reply) await sendClarification(T, g.reply, null);
                     executed.push(`${c.name}!blocked`);
                     continue;
