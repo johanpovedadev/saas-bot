@@ -12,7 +12,7 @@
     { "name": "bot-pilates-clientas", "project": "saas-bot", "port": 8103, "env": "LION_STATUS_PORT" },
     { "name": "admin-panel", "project": "saas-bot", "port": 4000, "env": "PORT (admin-panel/.env)" },
     { "name": "agentes-redes", "project": "AGentVents", "port": 3100, "env": "SOCIAL_WEBHOOK_PORT", "manual": true },
-    { "name": "social-bot", "project": "social-bot", "port": 8300, "env": "PORT", "manual": true },
+    { "name": "social-bot", "project": "AGentVents (social-bot/)", "port": 8300, "env": "PORT", "manual": true },
     { "name": "lion-platform-api", "project": "lion-platform-api", "port": 8080, "env": "PORT", "manual": true },
     { "name": "lion-platform-api (prueba local)", "project": "lion-platform-api", "port": 8081, "env": "PORT", "manual": true },
     { "name": "lion-platform-web (vite)", "project": "lion-platform-web", "port": 5173, "env": "--port", "manual": true },
