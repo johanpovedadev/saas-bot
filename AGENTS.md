@@ -30,6 +30,18 @@ Los tokens reales los gasta Johan probando en la vida real; ninguna prueba, agen
 - Un agente, flujo o negocio nuevo se entrega con su prueba de IA simulada; la validación con IA real la corre Johan.
 - `test_regla_ia_simulada_en_pruebas.js` demuestra la regla con procesos reales: si falla, no se entrega.
 
+### 5. 🔌 Puertos libres ANTES de arrancar, en todos los proyectos (Johan, 17 oct 2026)
+
+**Origen:** el 7 de octubre, una app arrancada a mano en PM2 (`agentes-redes`) quedó apuntando a un archivo que ya no existía tras un cambio de rama. Desde entonces se reinició unas 370.000 veces al día, llenó 3 GB de logs, y el 17 de octubre PM2 se cayó con todos los bots, Mundo Helados incluido.
+
+- **Registro único:** `config/ports.json` tiene el puerto de cada servicio de **todos** los proyectos del equipo: saas-bot, AGentVents, lion-platform-api/web, social-bot, etc. Un servicio nuevo, de este o de otro proyecto, se registra AQUÍ antes de usar su puerto.
+- **Puerto nuevo:** `node scripts/check-ports.js --new <puerto>` (o `--suggest <desde>`). Tiene que estar libre y sin dueño.
+- **Arrancar:** `npm run start:safe -- <app> [<app>...]` en vez de `pm2 start` a mano. Valida el registro y ecosystem, y no arranca si el puerto está ocupado. Si la app ya corre, hace restart.
+- **Nada se arranca a mano en PM2:** toda app va en `ecosystem.config.js`, que trae `min_uptime: '20s'`, `max_restarts: 10` y `stop_exit_codes: [78]`. La salida 78 significa puerto ocupado o configuración inválida, y no se reintenta.
+- **Todo servidor nuevo** atiende `EADDRINUSE` con un mensaje claro y `process.exit(78)`. Ver `admin-panel/server.js`.
+- **Ver el estado de todos los puertos:** `npm run ports`.
+- `bot-wasap/test_puertos_libres.js` lo prueba: si falla, no se entrega.
+
 ## 🏗 Arquitectura
 
 - Un solo código (`bot-wasap/`) para varios negocios (tenants).
@@ -97,7 +109,7 @@ Si modificas `handlers/handler.js`, `config/env.loader.js`, `handlers/flowRegist
 ## 🔧 Checklist para agregar un negocio/bot nuevo
 
 1. Crea `config/businesses/<key>.json` o, si necesita lógica propia, `handlers/flows/<key>.flow.js` con `module.exports.config`.
-2. Agrega el tenant a `ecosystem.config.js` con su propio `BUSINESS_KEY`.
+2. Agrega el tenant a `ecosystem.config.js` con su propio `BUSINESS_KEY`. Si escucha en un puerto (`LION_STATUS_PORT`, `DJANGO_PORT`), regístralo primero en `config/ports.json` con `node scripts/check-ports.js --new <puerto>`.
 3. Si necesita variables propias, créale `.env.<BUSINESS_KEY>` en la raíz del proyecto (tiene prioridad sobre `.env` compartido).
 4. Corre el checklist de "Antes de tocar código compartido".
 
@@ -148,6 +160,10 @@ pm2 status
 # Logs en tiempo real
 pm2 logs bot-finance --lines 50
 pm2 logs bot-mascotas-prod --lines 50
+
+# Puertos: estado de todos / arrancar validando que estén libres
+npm run ports
+npm run start:safe -- bot-heladeria django-heladeria
 
 # Reiniciar
 pm2 restart bot-finance
