@@ -5,12 +5,40 @@
 > `AGENTS.md`) es más estricta, gana la del proyecto. Si se contradicen, se le pregunta a Johan.
 >
 > Este archivo es **el mismo en todos los repos**. Se cambia en todos a la vez; la copia de referencia vive en
-> `saas-bot/REGLAS_ECOSISTEMA.md`. Última actualización: 17 oct 2026.
+> `saas-bot/REGLAS_ECOSISTEMA.md`. Última actualización: 22 oct 2026.
+
+## 0. Quién hace qué (regla del 22 oct 2026)
+
+**Johan pide y prueba. Los agentes (Claude, Hermes) hacen el resto del proceso.**
+
+| Paso | Quién |
+|---|---|
+| Pedir el cambio (en Telegram con `/pedir`, en un chat o en un issue) | Johan |
+| Escribir el issue con criterio de aceptación | Agente |
+| Rama `feature/*` desde `develop`, código, pruebas, commits convencionales | Agente |
+| Revisión automática del diff contra estas reglas | Agente revisor |
+| Push de la rama y PR a `develop` con descripción clara | Agente |
+| **Probar a mano** con los pasos de "Cómo probar" del PR | **Johan** |
+| Merge del PR a `develop`, solo después del ✅ de Johan | Agente |
+| Pasar `develop` a `main` (producción) | **Johan** |
+
+Johan sigue decidiendo siempre, y ningún agente lo hace por su cuenta:
+- Pasar algo a producción (`main`/`master`, `pm2 restart` de bots en vivo).
+- Gastar tokens o plata reales, borrar datos, tocar un negocio que no se pidió.
+- Secretos y credenciales: los pone Johan en `.env`; los agentes nunca los ven ni los piden.
+
+Excepción: en las **pruebas técnicas de procesos de selección** (por ejemplo `trycore-evm-project`, `todo-api-hono`)
+mandan las reglas propias del repo: ahí los agentes no hacen commits, push ni merge, porque el trabajo lo evalúan como
+de Johan.
+
+Para que los repos sirvan de portafolio: commits `feat:`/`fix:`/`test:`/`docs:`, un PR por cambio con "Qué cambia",
+"Por qué" y "Cómo probar", CI en verde y un README que explique cómo correr el proyecto.
 
 ## 1. Trabajo con el código
 
 1. **Gitflow siempre.** Las ramas `feature/*`, `fix/*` y `docs/*` salen de `develop` y vuelven a `develop` por PR. Solo
-   `develop` pasa a `main`/`master`. Nunca se commitea directo a `main`/`master` ni a `develop`.
+   `develop` pasa a `main`/`master`. Nunca se commitea directo a `main`/`master` ni a `develop`. El merge a `develop`
+   lo hace el agente tras la prueba de Johan; el paso a `main` lo hace Johan (sección 0).
 2. **Pruebas antes de subir.** No se hace push sin correr la suite del proyecto en verde. Todo cambio trae su prueba.
    Toda falla real (un chat perdido, un error en producción) se vuelve primero una prueba que falla y después se
    corrige.
