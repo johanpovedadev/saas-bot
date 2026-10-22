@@ -6,7 +6,9 @@ const { logger } = require('../utils/logger');
 const financeCrypto = require('./financeCrypto');
 
 const DB_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'finance.db');
+// FINANCE_DB_PATH permite que las pruebas usen una base temporal: antes todas escribian en la
+// finance.db real y una prueba con el ID de Johan le dejo el nombre "Test" (oct 2026).
+const DB_PATH = process.env.FINANCE_DB_PATH || path.join(DB_DIR, 'finance.db');
 
 let db = null;
 
@@ -14,8 +16,9 @@ function getDb() {
     if (db) return db;
     try {
         const fs = require('fs');
-        if (!fs.existsSync(DB_DIR)) {
-            fs.mkdirSync(DB_DIR, { recursive: true });
+        const dbDir = path.dirname(DB_PATH);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
         }
         db = new Database(DB_PATH);
         db.pragma('journal_mode = WAL');
