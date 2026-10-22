@@ -62,6 +62,34 @@ const lastReport = () => sent[sent.length - 1] || '';
         assert.ok(!/RappiCard/.test(lastReport()), 'sin compras con tarjeta no menciona RappiCard');
         console.log('OK: sin compras a crédito, el informe queda igual que antes');
 
+        // --- Montos negativos: el signo va antes del símbolo ---
+        const { formatMoney } = require('./utils/financeMoney');
+        assert.strictEqual(formatMoney(-5500), '-$5.500', 'un monto negativo se escribe -$5.500, no $-5.500');
+        assert.strictEqual(formatMoney(280710), '$280.710');
+        assert.strictEqual(formatMoney(0), '$0');
+        assert.strictEqual(formatMoney(-1500, { currency: 'USD' }), '-US$1.500');
+        const finNegativo = { ...fin, transactions: [{ type: 'expense', amount: 5500, category: 'Comida', description: 'Tinto', date: today, timestamp: Date.now() }] };
+        await generateNightReport(sock, '573000009555@telegram', finNegativo, { sessions: {} });
+        assert.ok(/Balance del día: -\$5\.500/.test(lastReport()), `el balance del día negativo se lee bien (${lastReport()})`);
+        console.log('OK: los montos negativos se escriben -$5.500');
+
+        // --- Meta con el monto escrito solo con cifras ---
+        const goalSock = { sendMessage: async () => {}, getChatById: async () => null };
+        const { handleGoalOnboarding } = financeFlow._internal;
+        const casos = [
+            ['Inversiones y viajes 20000000', 'Inversiones y viajes', 20000000],
+            ['Comprar moto 8.500.000', 'Comprar moto', 8500000],
+            ['viaje 2 millones', 'viaje 2 millones', 2000000],
+            ['Casa del 2026', 'Casa del 2026', 0]
+        ];
+        for (const [texto, nombre, monto] of casos) {
+            const f = { name: 'Prueba', transactions: [], loans: [], referralCode: 'LEOPRUEBA', goalTarget: 0 };
+            await handleGoalOnboarding(goalSock, '573000009556@telegram', texto, { phase: 'x' }, { sessions: {} }, f);
+            assert.strictEqual(f.goalName, nombre, `nombre de la meta para "${texto}"`);
+            assert.strictEqual(f.goalTarget || 0, monto, `monto de la meta para "${texto}"`);
+        }
+        console.log('OK: el monto de la meta escrito solo con cifras se separa del nombre (y un año no cuenta como monto)');
+
         console.log('\nTodos los tests pasaron.');
     } catch (e) {
         console.error('Test failed:', e.stack || e.message);

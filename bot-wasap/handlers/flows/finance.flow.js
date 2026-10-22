@@ -882,6 +882,14 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
         if (/\bmillon(?:es)?\b/i.test(t)) val *= 1000000;
         else if (/\b(mil|k)\b/i.test(t)) val *= 1000;
         fin.goalTarget = val;
+    } else {
+        // Monto escrito solo con cifras ("Inversiones y viajes 20000000"): sin esto el número quedaba pegado
+        // al nombre de la meta y el informe decía "sin monto aún".
+        const bare = t.match(/(?:^|\s)\$?\s*(\d{1,3}(?:[.,]\d{3})+|\d{5,})(?=\s|$)/);
+        if (bare) {
+            fin.goalTarget = parseInt(bare[1].replace(/[.,]/g, ''), 10);
+            fin.goalName = t.replace(bare[0], ' ').replace(/\s+/g, ' ').trim() || t;
+        }
     }
     financeStore.saveFinance(jid, fin);
     // Momento critico: justo antes de esta pantalla es donde mas gente se
@@ -1896,5 +1904,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport }
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
 };
