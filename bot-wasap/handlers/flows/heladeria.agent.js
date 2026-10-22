@@ -112,6 +112,11 @@ function fastPathApplies(text, phase) {
     if (/^\d{1,3}$/.test(t)) return true;
     if ((phase === HP.HELADO_SABORES || phase === HP.HELADO_PER_UNIT_SABORES) && /^(s?\d{1,2}[\s,]*)+$/i.test(t)) return true;
     if ((phase === HP.HELADO_TOPPINGS || phase === HP.HELADO_PER_UNIT_TOPPINGS) && /^(t\d{1,2}[\s,]*)+$/i.test(t)) return true;
+    // Cerrar el paso ("bueno asi esta bien") o pedir los mismos toppings de la
+    // unidad anterior: las reglas lo resuelven exacto. Replay real 12-oct-2026:
+    // la IA respondia con otra herramienta y el bot repetia la pregunta.
+    if ((phase === HP.HELADO_TOPPINGS || phase === HP.HELADO_PER_UNIT_TOPPINGS) && I.isToppingDone(t)) return true;
+    if (phase === HP.HELADO_PER_UNIT_TOPPINGS && I.isSameAsPreviousToppings(t)) return true;
     return false;
 }
 
@@ -200,7 +205,7 @@ REGLAS:
 7. SABORES: "todos de fresa" para un producto de N sabores = repetir "Fresa" N veces. "2 de vainilla y 1 de lulo" = ["Vainilla","Vainilla","Lulo"] (usando nombres exactos). Los sabores se pueden repetir.
 8. TOPPINGS / ADICIONES: "con adición de queso" -> elegir_toppings(["<topping exacto de queso>"]). "sin adición"/"sin topping"/"quítale X": si el producto en armado ya tiene toppings elegidos -> quitar_topping (si tiene UNO solo y el cliente no dice cuál, es ese; si tiene varios y no dice cuál -> preguntar_aclaracion). Si aún no tiene ninguno y el bot está preguntando toppings -> sin_toppings. "sin X" donde X NO es un topping (ej: "sin fruta") -> notas en agregar_producto o elegir_toppings no aplica: usa responder_breve para confirmar que lo anotas SOLO si hay producto en armado; si no, ignóralo.
 9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte).
-10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
+10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
 11. HUMANO: si el cliente pide explícitamente una persona/asesor, reclama por un pedido ya entregado o en camino, un pago/reembolso, o pide algo que ninguna herramienta puede hacer -> escalar_a_humano. No escales por dudas normales del menú.
 12. Datos de entrega: dirección, nombre, teléfono y método de pago pueden llegar en cualquier fase y en cualquier orden, incluso todos en un solo mensaje separados por comas -> llama cada fijar_* que corresponda. Nequi/Daviplata/Bancolombia/QR = "transferencia".
 13. confirmar_pedido en FINALIZE_ORDER ENVÍA el pedido real al negocio: úsalo solo si el cliente confirma claramente ese resumen final.
@@ -446,7 +451,13 @@ function toppingIsGrounded(name, T) {
  * "iguales"; de "Nucita frutos rojos" sacó "Veteado de mora" x3.
  */
 function modoIsGrounded(T) {
-    return /igual|mism[oa]s?|diferent|distint|cada un|variad/.test(norm(T.text));
+    const text = norm(T.text);
+    if (/igual|mism[oa]s?|diferent|distint|cada un|variad/.test(text)) return true;
+    // Respondiendo "¿las N llevan lo mismo?", "el otro/la otra de X" es pedir
+    // unidades diferentes. Replay real (12-oct-2026, Banana Split x2): "No el
+    // otro fresa vainilla y veteado de mora" se bloqueaba, los sabores nuevos
+    // pisaban los de la primera unidad y el bot entraba en bucle de toppings.
+    return T.startPhase === HP.HELADO_UNITS_MODE && /\b(el|la|los|las|y|un|una) otr[oa]s?\b|^otr[oa]s?\b/.test(text);
 }
 const SABOR_NAME_IGNORE = new Set(['con']);
 function saborIsGrounded(name, T) {
@@ -474,6 +485,9 @@ function productIsGrounded(product, T) {
     const text = norm(T.text);
     const name = nameOf(product);
     if ((T.pendingBefore || []).some(o => norm(o) === norm(name))) return true;
+    // "¿Quieres pedir X?" -> "sí, toda de fresa": el sí fundamenta X (solo un
+    // mensaje que EMPIEZA aceptando; "tengo una pregunta" no).
+    if (T.pendingOffer && norm(T.pendingOffer) === norm(name) && G.startsWithYes(T.text)) return true;
     if (norm(codeOf(product)) && text.includes(norm(codeOf(product)))) return true;
     if (G.nameWordsInText(name, text, { ignore: GENERIC_WORDS })) return true;
     if (G.affirmsLastBotOffer(name, text, T.history())) return true;
@@ -502,11 +516,17 @@ async function groundToppings(names, T) {
     const kept = [];
     const dropped = [];
     const flow = T.userSession.heladoFlow;
-    const yaPuestos = new Set(((flow && flow.toppingsSeleccionados) || []).map(t => norm(nameOf(t))));
+    // En el armado por unidad lo "ya puesto" es lo de la unidad ACTUAL, no lo
+    // de la primera (replay real: "de queso" en la unidad 2 se ignoraba porque
+    // la unidad 1 ya tenia queso, y el bot repetia la pregunta).
+    const perUnit = T.userSession.phase === HP.HELADO_PER_UNIT_TOPPINGS && flow && flow.customization;
+    const current = perUnit ? flow.customization.currentToppings : ((flow && flow.toppingsSeleccionados) || []);
+    const yaPuestos = new Set((current || []).map(t => norm(nameOf(t))));
     const toppingsList = optionLists(T.ctx).toppings;
+    T.toppingsAlreadySet = 0;
     for (const n of (names || [])) {
         const r = resolveIn(toppingsList, n);
-        if (r.item && yaPuestos.has(norm(nameOf(r.item)))) continue; // ya estaba: no-op, sin aviso
+        if (r.item && yaPuestos.has(norm(nameOf(r.item)))) { T.toppingsAlreadySet++; continue; } // ya estaba: no-op, sin aviso
         (toppingIsGrounded(n, T) ? kept : dropped).push(n);
     }
     if (dropped.length) {
@@ -794,8 +814,17 @@ const EXECUTORS = {
     async elegir_toppings(args, T) {
         const { sock, jid, userSession, ctx } = T;
         const names = await groundToppings(Array.isArray(args.toppings) ? args.toppings : [], T);
-        if (!names.length) return;
         const flow = userSession.heladoFlow;
+        if (!names.length) {
+            // Repitio un topping que ya estaba puesto ("de queso, como el
+            // anterior"): es confirmacion, se avanza en vez de volver a preguntar.
+            if (T.toppingsAlreadySet && flow && userSession.phase === HP.HELADO_TOPPINGS) {
+                await I.finishToppingsStep(sock, jid, userSession, ctx, false); markPrompted(T);
+            } else if (T.toppingsAlreadySet && flow && userSession.phase === HP.HELADO_PER_UNIT_TOPPINGS) {
+                await I.handlePerUnitToppings(sock, jid, 'no', userSession, ctx); markPrompted(T);
+            }
+            return;
+        }
         const toppingsList = optionLists(ctx).toppings;
         if (!flow && orphanCandidates(T).length) {
             await keepOrphan(T, { toppings: names }, `la adición *${names.join(', ')}*`);
@@ -969,6 +998,35 @@ const EXECUTORS = {
             markPrompted(T);
             return;
         }
+        // Sin producto en armado pero pregunta por sabores/toppings: NO se
+        // reenvía el menú completo. Replay real (12-oct-2026): "Para pedir una
+        // banana split, ¿cuánto vale?" -> precio; "¿qué sabores tienes?" -> el
+        // bot mandaba otra vez el menú con imágenes. Si se acaba de hablar de
+        // UN producto con sabores, se arranca ese producto (pide sus sabores);
+        // si no, se muestra la lista de sabores/toppings y se pregunta para cuál.
+        if (!userSession.heladoFlow) {
+            const t = norm(T.text);
+            const asks = /sabor/.test(t) ? 'sabores' : /topp?ing|adicion|adiciones/.test(t) ? 'toppings' : null;
+            if (asks) {
+                const mencionados = (T.mentionedBefore || []).map(m => (typeof m === 'string' ? m : nameOf(m)));
+                const candidatos = [...new Set(mencionados.map(norm))]
+                    .map(n => orderableProducts(ctx).find(p => norm(nameOf(p)) === n)).filter(Boolean);
+                const producto = candidatos.length === 1 ? candidatos[0] : null;
+                const counts = producto ? I.getCounts(producto) : null;
+                if (producto && ((asks === 'sabores' && counts.sabores > 0) || (asks === 'toppings' && counts.sabores === 0 && counts.toppings > 0))) {
+                    await heladeriaFlow.handleProductOptions(sock, jid, producto, userSession, ctx);
+                    markPrompted(T);
+                    return;
+                }
+                const lista = optionLists(ctx)[asks].map(nameOf).filter(Boolean);
+                if (lista.length) {
+                    const titulo = asks === 'sabores' ? '🍦 *Sabores disponibles:*' : '🍓 *Toppings / adiciones* (tienen costo adicional):';
+                    await say(sock, jid, `${titulo} ${lista.join(', ')}.\n\n¿Para cuál producto los quieres? 😊`, ctx);
+                    markPrompted(T);
+                    return;
+                }
+            }
+        }
         await T.agentExecutors.mostrar_menu(args, T);
     },
 
@@ -1137,7 +1195,17 @@ const agent = core.createCartAgent({
     toolOrder: TOOL_ORDER,
     toolDescriptions: TOOL_DESCRIPTIONS,
     hooks,
-    texts
+    texts,
+    // Intención de compra (ver G.classifyBuyIntent): "quiero/para pedir una X"
+    // arranca X; "¿cuánto vale X?" da el precio y confirma Sí/No.
+    intent: {
+        addTool: 'agregar_producto',
+        texts: {
+            confirmAfterPrice: (name) => `🍦 ¿Quieres pedir *${name}*? Responde *Sí* o *No* 😊`,
+            chooseAfterPrice: '💰 Estos son los precios. ¿Cuál te preparo? 😊',
+            offerDeclined: 'Listo 👍 Cuando quieras me dices qué te provoca, o te muestro el *menú* 🍦'
+        }
+    }
 });
 
 module.exports = {
