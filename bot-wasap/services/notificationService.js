@@ -60,6 +60,16 @@ function getSystemAdminJids() {
  * configuró "orders_admin_jids" todavía, cae de vuelta a business_admin_jids
  * (mismo comportamiento de siempre, sin romper tenants sin el split).
  */
+/** Quién recibe los avisos de la red de seguridad: safety_net_admin_jids o, si no hay, la dueña (business). */
+function getSafetyNetAdminJids() {
+    const config = envConfig.admin?.safety_net_admin_jids;
+    if (config && Array.isArray(config) && config.length > 0) {
+        return config.map(normalizeJid).filter(Boolean);
+    }
+    return getBusinessAdminJids();
+}
+const SAFETY_NET_KINDS = new Set(['abandono', 'atascado', 'revisar']);
+
 function getOrdersAdminJids() {
     const config = envConfig.admin?.orders_admin_jids;
     if (config && Array.isArray(config) && config.length > 0) {
@@ -107,15 +117,15 @@ async function _sendToJids(sock, jids, msg, ctx) {
  * @param {string} [p.address]
  * @param {number} [p.now] solo para pruebas
  */
-async function notifyHumanNeeded(sock, ctx, { jid, kind = 'persona', said, reason, address, now }) {
+async function notifyHumanNeeded(sock, ctx, { jid, kind = 'persona', said, reason, address, now, botSaid, cartText }) {
     try {
         const gate = ownerMessages.shouldNotify(kind, jid, now);
         if (!gate.send) { logger.info(`Aviso a la administración omitido (ya se avisó hace poco por ${jid})`); return false; }
         const session = ctx && ctx.sessions && ctx.sessions[jid];
         let orderCount = 0;
         try { const profile = require('./customerProfileStore').get(process.env.BUSINESS_KEY, jid); orderCount = profile ? profile.orderCount || 0 : 0; } catch (_) { /* sin perfil: no pasa nada */ }
-        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more, orderCount });
-        const admins = getOrdersAdminJids();
+        const msg = ownerMessages.buildHumanNeededMessage({ jid, session, kind, said, reason, address, more: gate.more, orderCount, botSaid, cartText });
+        const admins = SAFETY_NET_KINDS.has(kind) ? getSafetyNetAdminJids() : getOrdersAdminJids();
         await _sendToJids(sock, admins, msg, ctx);
         if (admins.length === 0) logger.warn(`Cliente ${jid} necesita una persona pero no hay administradores de pedidos configurados`);
         return admins.length > 0;
@@ -338,6 +348,7 @@ module.exports = {
     getSystemAdminJids,
     getOrdersAdminJids,
     notifyHumanNeeded,
+    getSafetyNetAdminJids,
     notifyAdminsAboutCustomerIssue,
     notifyAdminsAboutMIAError,
     notifyAdminsAboutReservation,

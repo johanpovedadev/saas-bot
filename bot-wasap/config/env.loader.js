@@ -90,6 +90,9 @@ try {
                 // ayuda humana. Si un tenant no lo configura, cae de vuelta
                 // a business_admin_jids (comportamiento anterior, sin split).
                 orders_admin_jids: raw.orders_admin_jids || [],
+                // Avisos de la red de seguridad (services/safetyNet.js: cliente que no terminó el pedido, bot enredado,
+                // chat que no avanza). Si no se configura, van a business_admin_jids (la dueña).
+                safety_net_admin_jids: raw.safety_net_admin_jids || [],
                 jids: raw.business_admin_jids || []
             },
             backend: {

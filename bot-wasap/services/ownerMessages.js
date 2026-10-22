@@ -13,6 +13,9 @@
  * responderle. Lo técnico va solo al administrador de sistema.
  */
 
+/** Avisos en los que el bot NO deja de contestarle al cliente (no es un "pásalo a una persona"). */
+const BOT_KEEPS_ANSWERING = new Set(['abandono', 'revisar']);
+
 /** Mientras un mismo cliente espera, se avisa una vez y luego como mucho cada 10 minutos (con cuántos mensajes van). */
 const THROTTLE_MS = 10 * 60 * 1000;
 const lastSent = new Map(); // `${tipo}|${jid}` -> { at, skipped }
@@ -71,8 +74,10 @@ function interpretLegacyReason(raw) {
  * @param {string} [p.address]  dirección (consulta de domicilio)
  * @param {number} [p.more]     mensajes que escribió mientras no se avisaba
  * @param {number} [p.orderCount] pedidos que lleva el cliente (si ya compró antes, es un cliente de siempre)
+ * @param {string} [p.botSaid]  la última pregunta del bot (avisos de la red de seguridad: bucle, abandono)
+ * @param {string} [p.cartText] resumen del pedido cuando ya no hay sesión (el bot se reinició)
  */
-function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason, address, more = 0, orderCount = 0 }) {
+function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason, address, more = 0, orderCount = 0, botSaid = null, cartText = null }) {
     const name = customerName(session);
     const phone = phoneLabel(jid);
     const who = [name, phone].filter(Boolean).join(' · ') || 'Un contacto con la privacidad activada (no muestra su número)';
@@ -81,7 +86,11 @@ function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason,
         persona: '🙋 *Un cliente quiere hablar con una persona*',
         ayuda: '🙋 *Un cliente necesita tu ayuda*',
         domicilio: '🛵 *Un cliente pregunta cuánto cuesta el domicilio*',
-        sensible: '🔒 *Un cliente intentó enviar datos sensibles*'
+        sensible: '🔒 *Un cliente intentó enviar datos sensibles*',
+        // Red de seguridad (services/safetyNet.js)
+        abandono: '⏰ *Un cliente no terminó su pedido*',
+        atascado: '🙋 *El bot se enredó con un cliente: atiéndelo tú*',
+        revisar: '👀 *Un cliente no avanza con su pedido*'
     };
     const lines = [titles[kind] || titles.ayuda, '', `👤 ${who}`];
     if (orderCount > 1) lines.push(`⭐ Cliente de siempre: lleva ${orderCount} pedidos`);
@@ -90,14 +99,16 @@ function buildHumanNeededMessage({ jid, session, kind = 'persona', said, reason,
     } else {
         if (said) lines.push(`💬 Dijo: "${String(said).replace(/\s+/g, ' ').slice(0, 240)}"`);
         if (address) lines.push(`📍 Dirección: ${address}`);
-        const cart = cartLine(session);
+        if (botSaid) lines.push(`🤖 El bot le preguntó: "${clip(botSaid, 200)}"`);
+        const cart = cartLine(session) || cartText;
         if (cart) lines.push(`🛒 Lleva en su pedido: ${cart}`);
         if (reason) lines.push(`ℹ️ Por qué te aviso: ${reason}`);
         if (more > 0) lines.push(`➕ Escribió ${more} mensaje${more === 1 ? '' : 's'} más mientras esperaba.`);
     }
     lines.push('');
     lines.push(link ? `👉 Respóndele aquí: ${link}` : '👉 Búscalo en tus chats de WhatsApp para responderle (su número no es visible).');
-    if (kind !== 'domicilio') lines.push('_Mientras lo atiendes, el bot no le contesta. Cuando termines, escribe "reactivar mia" y su número para que el bot retome._');
+    if (kind === 'domicilio') { /* sin nota: la consulta de domicilio no cambia nada del chat */ } else if (BOT_KEEPS_ANSWERING.has(kind)) lines.push('_El bot sigue atento: si el cliente vuelve a escribir, continúa con su pedido._');
+    else lines.push('_Mientras lo atiendes, el bot no le contesta. Cuando termines, escribe "reactivar mia" y su número para que el bot retome._');
     return lines.join('\n');
 }
 
