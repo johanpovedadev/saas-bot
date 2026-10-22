@@ -10,6 +10,7 @@ const { generateCard, getNewMilestones, getGoalType } = require('../../services/
 const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
+const { todayInBogota } = require('../../utils/financeDate');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -1312,7 +1313,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         amount,
         category,
         description,
-        date: new Date().toISOString().split('T')[0],
+        date: todayInBogota(),
         timestamp: Date.now()
     };
     fin.transactions.push(tx);
@@ -1708,10 +1709,12 @@ async function generateNightReport(sock, jid, fin, ctx) {
     // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
     // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
     // mostraba $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto.
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInBogota();
     const todayTx = fin.transactions.filter(t => t.date === today);
     const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    // Compras a crédito (RappiCard importadas del correo): son gasto de hoy aunque se paguen a fin de mes.
+    const todayCredit = todayTx.filter(t => t.type === 'expense' && t.account === 'RappiCard').reduce((s, t) => s + t.amount, 0);
     const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
@@ -1726,6 +1729,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         `📊 *Hoy con Leo:*\n` +
         `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
+        (todayCredit > 0 ? `💳 De eso, con RappiCard (lo pagás a fin de mes): ${formatMoney(todayCredit, fin)}\n` : '') +
         `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
         (todayIncome - todayExpense !== 0
             ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
@@ -1892,5 +1896,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep }
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport }
 };
