@@ -3,14 +3,14 @@
  * Importa a Leo los movimientos que llegan por correo (RappiCard, tarjeta Binance, envíos de RappiCuenta y BBVA).
  *
  * Uso:
- *   node scripts/import_leo_emails.js <correos.json> [--jid <id@telegram>] [--dry-run] [--balance-from YYYY-MM-DD]
+ *   node scripts/import_leo_emails.js <correos.json> [--jid <id@telegram>] [--dry-run] [--balance-from YYYY-MM-DD[THH:MM]]
  *
  * <correos.json> es una lista de { id, from, subject, text } (asunto y cuerpo en texto plano del correo).
  * Sin --jid usa la cuenta de Telegram del admin (ADMIN_TELEGRAM_ID de .env.finance).
  * OWN_ACCOUNT_MARKERS (.env.finance) lista las llaves, últimos 4 dígitos y nombres propios: un envío a una
  * de ellas es plata que pasa de una cuenta tuya a otra y no cuenta como gasto.
- * --balance-from: los pagos con banco y envíos bajan el saldo solo desde esa fecha (sin él, nunca lo tocan,
- * útil para cargar historia). Es seguro correrlo varias veces: cada movimiento lleva su identificador.
+ * --balance-from (YYYY-MM-DD o YYYY-MM-DDTHH:MM, hora de Bogotá): los pagos con banco y envíos bajan el saldo
+ * solo desde ese momento (sin él, nunca lo tocan, útil para cargar historia). Es seguro correrlo varias veces: cada movimiento lleva su identificador.
  */
 process.env.BUSINESS_KEY = 'finance';
 require('../config/env.loader');
@@ -57,8 +57,8 @@ async function main() {
         console.error('No sé a qué cuenta importar: pasá --jid o definí ADMIN_TELEGRAM_ID en .env.finance');
         process.exit(1);
     }
-    if (balanceFrom && !/^\d{4}-\d{2}-\d{2}$/.test(balanceFrom)) {
-        console.error('--balance-from va como YYYY-MM-DD');
+    if (balanceFrom && !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(balanceFrom)) {
+        console.error('--balance-from va como YYYY-MM-DD o YYYY-MM-DDTHH:MM');
         process.exit(1);
     }
 
@@ -67,7 +67,7 @@ async function main() {
         dryRun,
         ownMarkers: listFromEnv('OWN_ACCOUNT_MARKERS'),
         usdRates: await fetchUsdRates(emails),
-        applyBalanceFrom: balanceFrom ? new Date(`${balanceFrom}T00:00:00-05:00`).getTime() : null
+        applyBalanceFrom: balanceFrom ? new Date(`${balanceFrom.includes('T') ? balanceFrom : `${balanceFrom}T00:00`}:00-05:00`).getTime() : null
     });
 
     console.log(`${dryRun ? '[SIMULACRO] ' : ''}Correos revisados: ${summary.total}`);
