@@ -52,8 +52,10 @@ const lastReport = () => sent[sent.length - 1] || '';
         await generateNightReport(sock, '573000009555@telegram', fin, { sessions: {} });
         const report = lastReport();
         assert.ok(/Compraste: \$\s*37\.500/.test(report), `suma las compras de hoy: tarjeta + efectivo, sin las de otros días (${report})`);
-        assert.ok(/con RappiCard \(lo pagás a fin de mes\): \$\s*33\.500/.test(report), 'separa cuánto de eso fue a crédito con RappiCard');
+        assert.ok(/Con tarjeta \(lo pagás a fin de mes\): \$\s*33\.500/.test(report), 'separa cuánto fue con tarjeta');
+        assert.ok(/En efectivo: \$\s*4\.000/.test(report), 'y cuánto en efectivo');
         assert.ok(/Te entró: \$\s*20\.000/.test(report));
+        assert.ok(/Te queda: \$\s*280\.710/.test(report), 'cierra con cuánto le queda');
         console.log('OK: el informe incluye las compras de RappiCard como gasto de hoy y marca cuánto fue a crédito');
 
         // --- Sin compras a crédito no aparece la línea extra ---
@@ -70,7 +72,12 @@ const lastReport = () => sent[sent.length - 1] || '';
         assert.strictEqual(formatMoney(-1500, { currency: 'USD' }), '-US$1.500');
         const finNegativo = { ...fin, transactions: [{ type: 'expense', amount: 5500, category: 'Comida', description: 'Tinto', date: today, timestamp: Date.now() }] };
         await generateNightReport(sock, '573000009555@telegram', finNegativo, { sessions: {} });
-        assert.ok(/Balance del día: -\$5\.500/.test(lastReport()), `el balance del día negativo se lee bien (${lastReport()})`);
+        assert.ok(!/Balance del día/.test(lastReport()), 'sin ingresos no muestra un "balance del día" negativo que confunde con el saldo');
+        assert.ok(/Te queda: \$\s*280\.710/.test(lastReport()));
+        assert.ok(!/En efectivo/.test(lastReport()), 'si todo fue en efectivo no repite el desglose');
+        // Con ingresos sí muestra el balance del día, con el signo bien puesto
+        await generateNightReport(sock, '573000009555@telegram', fin, { sessions: {} });
+        assert.ok(/Balance del día: -\$17\.500/.test(lastReport()), `con ingresos el balance del día se lee bien (${lastReport()})`);
         console.log('OK: los montos negativos se escriben -$5.500');
 
         // --- Meta con el monto escrito solo con cifras ---

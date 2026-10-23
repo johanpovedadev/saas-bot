@@ -11,6 +11,7 @@ const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
 const { todayInBogota } = require('../../utils/financeDate');
+const { MEDIUM, sumExpensesByMedium, bankAccountName } = require('../../utils/financeMedium');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -1721,8 +1722,16 @@ async function generateNightReport(sock, jid, fin, ctx) {
     const todayTx = fin.transactions.filter(t => t.date === today);
     const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    // Compras a crédito (RappiCard importadas del correo): son gasto de hoy aunque se paguen a fin de mes.
-    const todayCredit = todayTx.filter(t => t.type === 'expense' && t.account === 'RappiCard').reduce((s, t) => s + t.amount, 0);
+    // Con qué se pagó: las compras a crédito (RappiCard del correo) son gasto de hoy aunque se paguen a fin de mes.
+    const byMedium = sumExpensesByMedium(todayTx);
+    const hasNonCash = byMedium[MEDIUM.CARD] + byMedium[MEDIUM.BANK] + byMedium[MEDIUM.TRANSFER] > 0;
+    const bankName = bankAccountName(todayTx) || 'el banco';
+    const breakdown = hasNonCash
+        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${formatMoney(byMedium[MEDIUM.CARD], fin)}\n` : '') +
+          (byMedium[MEDIUM.BANK] > 0 ? `   🏦 Con ${bankName}: ${formatMoney(byMedium[MEDIUM.BANK], fin)}\n` : '') +
+          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${formatMoney(byMedium[MEDIUM.TRANSFER], fin)}\n` : '') +
+          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${formatMoney(byMedium[MEDIUM.CASH], fin)}\n` : '')
+        : '';
     const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
@@ -1737,12 +1746,13 @@ async function generateNightReport(sock, jid, fin, ctx) {
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         `📊 *Hoy con Leo:*\n` +
         `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
-        (todayCredit > 0 ? `💳 De eso, con RappiCard (lo pagás a fin de mes): ${formatMoney(todayCredit, fin)}\n` : '') +
+        breakdown +
         `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
-        (todayIncome - todayExpense !== 0
+        // Sin ingresos el "balance del día" solo repetía lo comprado en negativo y confundía con el saldo.
+        (todayIncome > 0
             ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
             : '') +
-        `💵 Saldo total: ${formatMoney((fin.balance || 0), fin)}\n` +
+        `💵 Te queda: ${formatMoney((fin.balance || 0), fin)}\n` +
         streakLine +
         goalLine +
         `\nVas bien, seguí contándome 🦁`,
