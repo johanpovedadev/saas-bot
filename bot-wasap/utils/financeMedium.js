@@ -32,10 +32,15 @@ function sumExpensesByMedium(transactions) {
     return totals;
 }
 
-/** Nombre de la cuenta bancaria de los gastos de hoy ("Bancolombia"), o null si no hay. */
-function bankAccountName(transactions) {
-    const bankTx = transactions.find((tx) => tx.type === 'expense' && mediumOf(tx) === MEDIUM.BANK && tx.account);
-    return bankTx ? bankTx.account : null;
+/** Gastos pagados con el banco, por cuenta: { Bancolombia: 20000, Binance: 36900 }. */
+function sumBankExpensesByAccount(transactions) {
+    const byAccount = {};
+    for (const tx of transactions) {
+        if (tx.type !== 'expense' || mediumOf(tx) !== MEDIUM.BANK) continue;
+        const account = tx.account || 'el banco';
+        byAccount[account] = (byAccount[account] || 0) + tx.amount;
+    }
+    return byAccount;
 }
 
-module.exports = { MEDIUM, mediumOf, sumExpensesByMedium, bankAccountName };
+module.exports = { MEDIUM, mediumOf, sumExpensesByMedium, sumBankExpensesByAccount };

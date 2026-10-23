@@ -11,7 +11,9 @@ const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
 const { todayInBogota } = require('../../utils/financeDate');
-const { MEDIUM, sumExpensesByMedium, bankAccountName } = require('../../utils/financeMedium');
+const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../../utils/financeMedium');
+const financeInsights = require('../../services/financeInsights');
+const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -724,6 +726,20 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Respuesta a "¿en qué fue este gasto?": solo vale si Leo mostró hace poco la lista por clasificar.
+    if (isReviewPromptActive(fin)) {
+        const reviewed = applyReviewReply(fin, t);
+        if (reviewed) {
+            financeStore.saveFinance(jid, fin);
+            return await confirmReview(sock, jid, ctx, reviewed);
+        }
+    }
+
+    // "resumen" / "informe" / "en qué se va mi plata": gastos agrupados con los datos reales, sin IA.
+    if (isSpendingReportRequest(t)) {
+        return await sendSpendingReport(sock, jid, ctx, fin);
+    }
+
     // Plan Gratis: menú numerado con opciones SIN IA (registrar, resumen, salud,
     // metas, referidos, planes). El parser determinista entiende textos naturales
     // sin consumir IA. Los planes con IA siguen el camino conversacional normal.
@@ -1205,12 +1221,9 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                     `_"Gané 300 mil por un trabajo"_`,
                     ctx);
                 return;
-            case '3': {
-                const res = await financeAi.interpret('resumen', userSession, true);
-                await say(sock, jid, res?.response ||
-                    `📊 *Tu estado, ${fin.name}:*\n\n💵 Saldo: ${formatMoney(fin.balance || 0, fin)}\n💸 Hoy: ${formatMoney(fin.todaySpending || 0, fin)}`, ctx);
+            case '3':
+                await sendSpendingReport(sock, jid, ctx, fin);
                 return;
-            }
             case '4':
                 await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
                 return;
@@ -1709,6 +1722,36 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     }
 }
 
+const SPENDING_REPORT_REQUEST = /^(resumen|reporte|informe)\b(?!.*prestamo)|^(como voy|cuanto llevo|estado|status|en que se va (mi|la) plata|mis gastos)\b/;
+
+function isSpendingReportRequest(text) {
+    const normalized = String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    return SPENDING_REPORT_REQUEST.test(normalized);
+}
+
+/** Los movimientos por clasificar se piden una vez y la respuesta "1 mercado urgente" vale por 48 horas. */
+function markReviewPrompted(fin) {
+    fin.reviewPromptedAt = Date.now();
+}
+
+/** "¿En qué se va tu plata?": gastos de los últimos 30 días agrupados, con sugerencias y lo que falta clasificar. */
+async function sendSpendingReport(sock, jid, ctx, fin) {
+    const report = financeInsights.buildSpendingReport(fin);
+    if (report.pendingReview.length > 0) {
+        markReviewPrompted(fin);
+        financeStore.saveFinance(jid, fin);
+    }
+    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx);
+}
+
+async function confirmReview(sock, jid, ctx, { tx, remaining }) {
+    await say(sock, jid,
+        `✅ Anotado: *${tx.description}* (${tx.category})${tx.necesidad ? ` · ${tx.necesidad}` : ''}. ` +
+        (remaining > 0 ? `Te quedan ${remaining} por clasificar.` : 'Ya no tenés nada por clasificar 🎉') +
+        (tx.necesidad ? '' : `\n_Tip: agregá urgente, necesario o prescindible para saber qué se puede recortar._`),
+        ctx);
+}
+
 /**
  * Genera el informe nocturno para un usuario y lo envía.
  * Llamar desde un scheduler externo o setInterval entre 7-8 PM.
@@ -1725,10 +1768,11 @@ async function generateNightReport(sock, jid, fin, ctx) {
     // Con qué se pagó: las compras a crédito (RappiCard del correo) son gasto de hoy aunque se paguen a fin de mes.
     const byMedium = sumExpensesByMedium(todayTx);
     const hasNonCash = byMedium[MEDIUM.CARD] + byMedium[MEDIUM.BANK] + byMedium[MEDIUM.TRANSFER] > 0;
-    const bankName = bankAccountName(todayTx) || 'el banco';
+    const bankLines = Object.entries(sumBankExpensesByAccount(todayTx))
+        .map(([account, total]) => `   🏦 Con ${account}: ${formatMoney(total, fin)}\n`).join('');
     const breakdown = hasNonCash
         ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${formatMoney(byMedium[MEDIUM.CARD], fin)}\n` : '') +
-          (byMedium[MEDIUM.BANK] > 0 ? `   🏦 Con ${bankName}: ${formatMoney(byMedium[MEDIUM.BANK], fin)}\n` : '') +
+          bankLines +
           (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${formatMoney(byMedium[MEDIUM.TRANSFER], fin)}\n` : '') +
           (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${formatMoney(byMedium[MEDIUM.CASH], fin)}\n` : '')
         : '';
@@ -1741,6 +1785,9 @@ async function generateNightReport(sock, jid, fin, ctx) {
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
+    const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
+    const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
+    if (pendingReview.length > 0) markReviewPrompted(fin);
 
     await say(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
@@ -1755,6 +1802,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
         `💵 Te queda: ${formatMoney((fin.balance || 0), fin)}\n` +
         streakLine +
         goalLine +
+        reviewBlock +
         `\nVas bien, seguí contándome 🦁`,
         ctx);
 }

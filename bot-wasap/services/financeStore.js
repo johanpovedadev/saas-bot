@@ -100,7 +100,8 @@ function rowToFinance(row) {
         invitedBy: extra.invitedBy || '',
         premiumUntil: extra.premiumUntil || 0,
         loans,
-        currency: extra.currency || 'COP'
+        currency: extra.currency || 'COP',
+        reviewPromptedAt: extra.reviewPromptedAt || 0
     };
 }
 
@@ -143,7 +144,8 @@ function financeToRow(jid, fin) {
             invitedBy: fin.invitedBy || '',
             premiumUntil: fin.premiumUntil || 0,
             loans: loansEnc,
-            currency: fin.currency || 'COP'
+            currency: fin.currency || 'COP',
+            reviewPromptedAt: fin.reviewPromptedAt || 0
         })
     };
 }
