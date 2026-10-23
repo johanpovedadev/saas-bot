@@ -14,6 +14,9 @@ const assert = require('assert');
 process.env.BUSINESS_KEY = 'finance';
 process.env.NODE_ENV = 'test';
 process.env.GEMINI_API_KEY = '';
+// Base temporal con clave propia: esta prueba ya no toca la finance.db real.
+process.env.FINANCE_DB_PATH = require('path').join(require('os').tmpdir(), 'leo_sweep_test_' + process.pid + '.db');
+process.env.FINANCE_ENCRYPTION_KEY = require('crypto').randomBytes(32).toString('base64');
 
 const financeFlow = require('./handlers/flows/finance.flow.js');
 const financeStore = require('./services/financeStore.js');
@@ -85,7 +88,7 @@ let realUsersSnapshot = [];
         // en la vida real (ver bug: generateNightReport comparaba esto contra
         // toDateString(), que nunca hace match, y el informe siempre mostraba
         // $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto).
-        const todayIso = new Date().toISOString().split('T')[0];
+        const todayIso = require('./utils/financeDate').todayInBogota(); // el informe cuenta el dia en hora de Bogota
         financeStore.saveFinance(JID_NO_SESSION, {
             name: 'SinSesion', balance: 50000, todaySpending: 10000,
             transactions: [{ type: 'expense', amount: 10000, category: 'Alimentacion', description: 'almuerzo', date: todayIso, timestamp: Date.now() }],
