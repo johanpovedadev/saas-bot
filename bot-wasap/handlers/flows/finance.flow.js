@@ -10,6 +10,10 @@ const { generateCard, getNewMilestones, getGoalType } = require('../../services/
 const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
+const { todayInBogota } = require('../../utils/financeDate');
+const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../../utils/financeMedium');
+const financeInsights = require('../../services/financeInsights');
+const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -722,6 +726,20 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleOnboarding(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Respuesta a "¿en qué fue este gasto?": solo vale si Leo mostró hace poco la lista por clasificar.
+    if (isReviewPromptActive(fin)) {
+        const reviewed = applyReviewReply(fin, t);
+        if (reviewed) {
+            financeStore.saveFinance(jid, fin);
+            return await confirmReview(sock, jid, ctx, reviewed);
+        }
+    }
+
+    // "resumen" / "informe" / "en qué se va mi plata": gastos agrupados con los datos reales, sin IA.
+    if (isSpendingReportRequest(t)) {
+        return await sendSpendingReport(sock, jid, ctx, fin);
+    }
+
     // Plan Gratis: menú numerado con opciones SIN IA (registrar, resumen, salud,
     // metas, referidos, planes). El parser determinista entiende textos naturales
     // sin consumir IA. Los planes con IA siguen el camino conversacional normal.
@@ -881,6 +899,14 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
         if (/\bmillon(?:es)?\b/i.test(t)) val *= 1000000;
         else if (/\b(mil|k)\b/i.test(t)) val *= 1000;
         fin.goalTarget = val;
+    } else {
+        // Monto escrito solo con cifras ("Inversiones y viajes 20000000"): sin esto el número quedaba pegado
+        // al nombre de la meta y el informe decía "sin monto aún".
+        const bare = t.match(/(?:^|\s)\$?\s*(\d{1,3}(?:[.,]\d{3})+|\d{5,})(?=\s|$)/);
+        if (bare) {
+            fin.goalTarget = parseInt(bare[1].replace(/[.,]/g, ''), 10);
+            fin.goalName = t.replace(bare[0], ' ').replace(/\s+/g, ' ').trim() || t;
+        }
     }
     financeStore.saveFinance(jid, fin);
     // Momento critico: justo antes de esta pantalla es donde mas gente se
@@ -1195,12 +1221,9 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                     `_"Gané 300 mil por un trabajo"_`,
                     ctx);
                 return;
-            case '3': {
-                const res = await financeAi.interpret('resumen', userSession, true);
-                await say(sock, jid, res?.response ||
-                    `📊 *Tu estado, ${fin.name}:*\n\n💵 Saldo: ${formatMoney(fin.balance || 0, fin)}\n💸 Hoy: ${formatMoney(fin.todaySpending || 0, fin)}`, ctx);
+            case '3':
+                await sendSpendingReport(sock, jid, ctx, fin);
                 return;
-            }
             case '4':
                 await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
                 return;
@@ -1312,7 +1335,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         amount,
         category,
         description,
-        date: new Date().toISOString().split('T')[0],
+        date: todayInBogota(),
         timestamp: Date.now()
     };
     fin.transactions.push(tx);
@@ -1699,6 +1722,37 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
     }
 }
 
+const SPENDING_REPORT_REQUEST = /^(resumen|reporte|informe)\b(?!.*prestamo)|^(como voy|cuanto llevo|estado|status|en que se va (mi|la) plata|mis gastos)\b/;
+
+function isSpendingReportRequest(text) {
+    const normalized = String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    return SPENDING_REPORT_REQUEST.test(normalized);
+}
+
+/** Los movimientos por clasificar se piden una vez y la respuesta "1 mercado urgente" vale por 48 horas. */
+function markReviewPrompted(fin) {
+    fin.reviewPromptedAt = Date.now();
+}
+
+/** "¿En qué se va tu plata?": gastos de los últimos 30 días agrupados, con sugerencias y lo que falta clasificar. */
+async function sendSpendingReport(sock, jid, ctx, fin) {
+    const report = financeInsights.buildSpendingReport(fin);
+    if (report.pendingReview.length > 0) {
+        markReviewPrompted(fin);
+        financeStore.saveFinance(jid, fin);
+    }
+    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx);
+}
+
+async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
+    await say(sock, jid,
+        `✅ Anotado: *${tx.description}* (${tx.category})${tx.necesidad ? ` · ${tx.necesidad}` : ''}. ` +
+        (autoApplied > 0 ? `También clasifiqué ${autoApplied} ${autoApplied === 1 ? 'movimiento igual' : 'movimientos iguales'} 🦁 y la próxima vez lo hago solo. ` : '') +
+        (remaining > 0 ? `Te quedan ${remaining} por clasificar.` : 'Ya no tenés nada por clasificar 🎉') +
+        (tx.necesidad ? '' : `\n_Tip: agregá urgente, necesario o prescindible para saber qué se puede recortar._`),
+        ctx);
+}
+
 /**
  * Genera el informe nocturno para un usuario y lo envía.
  * Llamar desde un scheduler externo o setInterval entre 7-8 PM.
@@ -1708,10 +1762,21 @@ async function generateNightReport(sock, jid, fin, ctx) {
     // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
     // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
     // mostraba $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto.
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInBogota();
     const todayTx = fin.transactions.filter(t => t.date === today);
     const todayIncome = todayTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const todayExpense = todayTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    // Con qué se pagó: las compras a crédito (RappiCard del correo) son gasto de hoy aunque se paguen a fin de mes.
+    const byMedium = sumExpensesByMedium(todayTx);
+    const hasNonCash = byMedium[MEDIUM.CARD] + byMedium[MEDIUM.BANK] + byMedium[MEDIUM.TRANSFER] > 0;
+    const bankLines = Object.entries(sumBankExpensesByAccount(todayTx))
+        .map(([account, total]) => `   🏦 Con ${account}: ${formatMoney(total, fin)}\n`).join('');
+    const breakdown = hasNonCash
+        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${formatMoney(byMedium[MEDIUM.CARD], fin)}\n` : '') +
+          bankLines +
+          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${formatMoney(byMedium[MEDIUM.TRANSFER], fin)}\n` : '') +
+          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${formatMoney(byMedium[MEDIUM.CASH], fin)}\n` : '')
+        : '';
     const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
@@ -1721,18 +1786,24 @@ async function generateNightReport(sock, jid, fin, ctx) {
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
+    const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
+    const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
+    if (pendingReview.length > 0) markReviewPrompted(fin);
 
     await say(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         `📊 *Hoy con Leo:*\n` +
         `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
+        breakdown +
         `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
-        (todayIncome - todayExpense !== 0
+        // Sin ingresos el "balance del día" solo repetía lo comprado en negativo y confundía con el saldo.
+        (todayIncome > 0
             ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
             : '') +
-        `💵 Saldo total: ${formatMoney((fin.balance || 0), fin)}\n` +
+        `💵 Te queda: ${formatMoney((fin.balance || 0), fin)}\n` +
         streakLine +
         goalLine +
+        reviewBlock +
         `\nVas bien, seguí contándome 🦁`,
         ctx);
 }
@@ -1892,5 +1963,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep }
+    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
 };

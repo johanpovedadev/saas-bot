@@ -6,7 +6,9 @@ const { logger } = require('../utils/logger');
 const financeCrypto = require('./financeCrypto');
 
 const DB_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'finance.db');
+// FINANCE_DB_PATH permite que las pruebas usen una base temporal: antes todas escribian en la
+// finance.db real y una prueba con el ID de Johan le dejo el nombre "Test" (oct 2026).
+const DB_PATH = process.env.FINANCE_DB_PATH || path.join(DB_DIR, 'finance.db');
 
 let db = null;
 
@@ -14,8 +16,9 @@ function getDb() {
     if (db) return db;
     try {
         const fs = require('fs');
-        if (!fs.existsSync(DB_DIR)) {
-            fs.mkdirSync(DB_DIR, { recursive: true });
+        const dbDir = path.dirname(DB_PATH);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
         }
         db = new Database(DB_PATH);
         db.pragma('journal_mode = WAL');
@@ -68,6 +71,10 @@ function rowToFinance(row) {
             ? JSON.parse(financeCrypto.decrypt(extra.loans) || '[]')
             : (Array.isArray(extra.loans) ? extra.loans : []))
         : [];
+    // Reglas que Leo aprendió de las respuestas del usuario (números y comercios): cifradas como los movimientos.
+    const learnedRules = extra.learnedRules && financeCrypto.isEncrypted(extra.learnedRules)
+        ? JSON.parse(financeCrypto.decrypt(extra.learnedRules) || '{}')
+        : {};
 
     return {
         name: row.name || '',
@@ -97,7 +104,9 @@ function rowToFinance(row) {
         invitedBy: extra.invitedBy || '',
         premiumUntil: extra.premiumUntil || 0,
         loans,
-        currency: extra.currency || 'COP'
+        currency: extra.currency || 'COP',
+        reviewPromptedAt: extra.reviewPromptedAt || 0,
+        learnedRules
     };
 }
 
@@ -107,7 +116,8 @@ function financeToRow(jid, fin) {
     const txsEnc = financeCrypto.encrypt(JSON.stringify(fin.transactions || []));
     const goalTargetEnc = financeCrypto.encryptAmount(fin.goalTarget || 0);
     const loansEnc = financeCrypto.encrypt(JSON.stringify(fin.loans || []));
-    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null) {
+    const rulesEnc = financeCrypto.encrypt(JSON.stringify(fin.learnedRules || {}));
+    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null) {
         logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
         return null;
     }
@@ -140,7 +150,9 @@ function financeToRow(jid, fin) {
             invitedBy: fin.invitedBy || '',
             premiumUntil: fin.premiumUntil || 0,
             loans: loansEnc,
-            currency: fin.currency || 'COP'
+            currency: fin.currency || 'COP',
+            reviewPromptedAt: fin.reviewPromptedAt || 0,
+            learnedRules: rulesEnc
         })
     };
 }
