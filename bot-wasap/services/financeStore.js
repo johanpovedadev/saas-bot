@@ -71,6 +71,10 @@ function rowToFinance(row) {
             ? JSON.parse(financeCrypto.decrypt(extra.loans) || '[]')
             : (Array.isArray(extra.loans) ? extra.loans : []))
         : [];
+    // Reglas que Leo aprendió de las respuestas del usuario (números y comercios): cifradas como los movimientos.
+    const learnedRules = extra.learnedRules && financeCrypto.isEncrypted(extra.learnedRules)
+        ? JSON.parse(financeCrypto.decrypt(extra.learnedRules) || '{}')
+        : {};
 
     return {
         name: row.name || '',
@@ -101,7 +105,8 @@ function rowToFinance(row) {
         premiumUntil: extra.premiumUntil || 0,
         loans,
         currency: extra.currency || 'COP',
-        reviewPromptedAt: extra.reviewPromptedAt || 0
+        reviewPromptedAt: extra.reviewPromptedAt || 0,
+        learnedRules
     };
 }
 
@@ -111,7 +116,8 @@ function financeToRow(jid, fin) {
     const txsEnc = financeCrypto.encrypt(JSON.stringify(fin.transactions || []));
     const goalTargetEnc = financeCrypto.encryptAmount(fin.goalTarget || 0);
     const loansEnc = financeCrypto.encrypt(JSON.stringify(fin.loans || []));
-    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null) {
+    const rulesEnc = financeCrypto.encrypt(JSON.stringify(fin.learnedRules || {}));
+    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null) {
         logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
         return null;
     }
@@ -145,7 +151,8 @@ function financeToRow(jid, fin) {
             premiumUntil: fin.premiumUntil || 0,
             loans: loansEnc,
             currency: fin.currency || 'COP',
-            reviewPromptedAt: fin.reviewPromptedAt || 0
+            reviewPromptedAt: fin.reviewPromptedAt || 0,
+            learnedRules: rulesEnc
         })
     };
 }

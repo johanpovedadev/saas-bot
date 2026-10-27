@@ -1744,9 +1744,10 @@ async function sendSpendingReport(sock, jid, ctx, fin) {
     await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx);
 }
 
-async function confirmReview(sock, jid, ctx, { tx, remaining }) {
+async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
     await say(sock, jid,
         `✅ Anotado: *${tx.description}* (${tx.category})${tx.necesidad ? ` · ${tx.necesidad}` : ''}. ` +
+        (autoApplied > 0 ? `También clasifiqué ${autoApplied} ${autoApplied === 1 ? 'movimiento igual' : 'movimientos iguales'} 🦁 y la próxima vez lo hago solo. ` : '') +
         (remaining > 0 ? `Te quedan ${remaining} por clasificar.` : 'Ya no tenés nada por clasificar 🎉') +
         (tx.necesidad ? '' : `\n_Tip: agregá urgente, necesario o prescindible para saber qué se puede recortar._`),
         ctx);
