@@ -3,6 +3,36 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones según
 [SemVer](https://semver.org/lang/es/). Los detalles de cada cambio están en el mensaje de su commit.
 
+## [Sin publicar]
+
+### Agregado
+
+- **Agente de IA de Ricuras del Pacífico** (restaurante) sobre el mismo núcleo de carrito que Mundo Helados, con
+  presentador conversacional, política de audio y comprobantes, avisos claros a la dueña y seguridad. Viene apagado
+  (`PESCADERIA_AI_AGENT`); ver `bot-wasap/docs/agente_ricuras_pescaderia.md`.
+- **Registro de agentes** (`handlers/agent/agentRegistry.js`): cada negocio enciende el suyo con su variable de entorno.
+- **Simulador de conversaciones de dos negocios** (`--tenant=pescaderia`), con el catálogo real de Ricuras cargado por el
+  cargador del bot, y una prueba que corre los seis simuladores en la CI.
+- **Cliente recurrente** («¿lo de siempre?») y **punto de referencia** en la entrega (PR #34).
+
+### Cambiado
+
+- **Historial de conversaciones en SQLite**, con retención configurable por negocio (`CONVERSATION_RETENTION_DAYS`; sin
+  definir o 0 = sin límite, que es el valor por defecto porque hay clientes que reaparecen meses después), barrido
+  automático, importación única del log anterior y borrado real con «borra mis datos». Reemplaza a
+  `logs/<negocio>-conversations.log` (sin tope, texto de clientes en claro). El panel y el replay leen la misma base.
+- **Perfiles del cliente recurrente en SQLite** (antes un JSON que se reescribía entero en cada pedido), sin caducidad por
+  defecto (`CUSTOMER_PROFILE_RETENTION_DAYS` para limitarla).
+
+### Corregido
+
+- Precios del catálogo con decimales (`"30000.000"`): el menú y el agente mostraban $30.000.000 por $30.000.
+- "Nequi", "Daviplata", "Bancolombia", "PSE" y "QR" se entienden como transferencia (antes: "No entendí").
+- Al dar su nombre, el cliente de un restaurante recibía "No entendí" en vez del menú.
+- Dos unidades iguales salen como una línea "2x" en el resumen y en el aviso a la dueña.
+- Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
+- El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
+
 ## [1.0.0] - 2026-10-08
 
 Primera versión publicada con Gitflow (`develop` → `release/1.0.0` → `main`). Reúne el trabajo de septiembre y octubre de

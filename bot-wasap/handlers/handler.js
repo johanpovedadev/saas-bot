@@ -27,6 +27,7 @@ const { logger } = require('../utils/logger');
 const PHASE = require('../utils/phases');
 const empathy = require('../utils/empathyMessages');
 const frustrationService = require('../services/frustrationService');
+const safetyNet = require('../services/safetyNet');
 const waitingHumanStore = require('../services/waitingHumanStore');
 
 // ===================================
@@ -44,6 +45,8 @@ const aiHandler = require('./modules/ai.handler');
 const handlerUtils = require('./modules/handler.utils');
 const checkoutHandler = require('./checkoutHandler');
 const cartInfoQuestions = require('./modules/cartInfoQuestions');
+const recurringCustomer = require('./modules/recurringCustomer');
+const agentRegistry = require('./agent/agentRegistry');
 const { say } = require('./modules/handler.utils');
 const { sendTypingIndicator, loadAllProductsCache } = require('../services/bot_core');
 const axios = require('axios');
@@ -94,6 +97,20 @@ function getAdminJids() {
 // ===================================
 
 /**
+ * Línea de ejemplo para "escribe el nombre del producto": dos platos REALES del menú del negocio (antes era un
+ * ejemplo fijo, "Empanada de pollo", que en un restaurante de pescados o una heladería no significaba nada).
+ */
+function exampleLineFor(ctx) {
+    try {
+        const menuFlow = flowRegistry.getTenantFlowWithCapability('getMenuProducts');
+        const list = menuFlow ? menuFlow.getMenuProducts(ctx) : ((ctx && (ctx.productsCache || ctx.cachedInventory)) || []);
+        const names = (list || []).map(p => String(p.NombreProducto || p.nombre || '').trim()).filter(Boolean).slice(0, 2);
+        if (names.length) return `_Ejemplo: ${names.map(n => `"${n}"`).join(', ')}_`;
+    } catch (_) { /* sin catálogo: ejemplo genérico */ }
+    return '_Ejemplo: escribe el nombre tal como aparece en el menú_';
+}
+
+/**
  * Maneja las opciones después de agregar un producto al carrito
  * Opciones: 1=seguir comprando, 2=ir a pagar, 3=menú principal
  * 
@@ -132,7 +149,7 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
         // IMPORTANTE: Enviar mensaje ANTES de cambiar fase para mantener consistencia
         await say(sock, jid, 
             '✅ Perfecto! Escribe el nombre del producto que deseas añadir.\n\n' +
-            '_Ejemplo: "Empanada de pollo", "Pastel de yuca"_', 
+            exampleLineFor(ctx), 
             ctx
         );
         
@@ -504,13 +521,33 @@ async function handleAdminSheetUpdate(sock, jid, text, ctx) {
  * códigos: se presentan en tono conversacional, igual que los turnos del agente.
  */
 async function processIncomingMessage(sock, messageData, ctx) {
+    // Red de seguridad (services/safetyNet.js, SAFETY_NET=1): ve lo que el bot le respondió al cliente en este turno
+    // para detectar bucles y chats que no avanzan, y programa el seguimiento si el pedido queda abierto. Con la red
+    // apagada no hace nada (mismo camino de siempre).
+    const safeJid = messageData && messageData.from;
+    let snapshot = null;
+    try {
+        snapshot = safeJid && typeof messageData.text === 'string' ? safetyNet.beforeTurn(safeJid, ctx, messageData.text) : null;
+    } catch (e) {
+        logger.error(`[${safeJid}] safetyNet.beforeTurn: ${e.message}`);
+    }
+    if (!snapshot) return processIncomingMessageGuarded(sock, messageData, ctx);
+    const sentTexts = [];
+    try {
+        return await processIncomingMessageGuarded(safetyNet.tapSocket(sock, safeJid, sentTexts), messageData, ctx);
+    } finally {
+        await safetyNet.afterTurn(sock, safeJid, ctx, snapshot, sentTexts);
+    }
+}
+
+async function processIncomingMessageGuarded(sock, messageData, ctx) {
     const jid = messageData && messageData.from;
-    if (jid && process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria' && typeof (messageData && messageData.text) === 'string') {
+    const presentingAgent = jid && typeof (messageData && messageData.text) === 'string' ? agentRegistry.active() : null;
+    if (presentingAgent) {
         try {
-            const heladeriaAgent = require('./flows/heladeria.agent');
             const session = ctx && ctx.sessions && ctx.sessions[jid];
-            if (heladeriaAgent.shouldPresentRules(messageData.text, session, jid)) {
-                return await heladeriaAgent.runWithPresentation(sock, jid, messageData.text, session, ctx, (bufferedSock) => processIncomingMessageCore(bufferedSock, messageData, ctx));
+            if (presentingAgent.shouldPresentRules(messageData.text, session, jid)) {
+                return await presentingAgent.runWithPresentation(sock, jid, messageData.text, session, ctx, (bufferedSock) => processIncomingMessageCore(bufferedSock, messageData, ctx));
             }
         } catch (e) {
             logger.error(`[${jid}] error preparando la presentación del agente, sigue por reglas: ${e.message}`);
@@ -596,6 +633,13 @@ async function processIncomingMessageCore(sock, messageData, ctx) {
             }
         }
 
+        // Cliente recurrente: si ya compró y saluda, se le ofrece "lo de siempre" con sus datos guardados; "borra mis
+        // datos" funciona en cualquier fase. Solo en negocios con carrito (ver handlers/modules/recurringCustomer.js).
+        if (!adminHandler.isAdmin(jid, ctx) && userSession.phase !== PHASE.WAITING_HUMAN
+            && await recurringCustomer.tryHandle(sock, jid, text, userSession, ctx)) {
+            return;
+        }
+
         // Agente IA de Mundo Helados (handlers/flows/heladeria.agent.js):
         // APAGADO por defecto. Solo corre con HELADERIA_AI_AGENT=1 en un
         // proceso con BUSINESS_KEY=heladeria - con el flag apagado este
@@ -603,9 +647,9 @@ async function processIncomingMessageCore(sock, messageData, ctx) {
         // siempre. Si el agente devuelve false (fase que no cubre, protocolo
         // numérico, o la IA no respondió) no tocó nada y el mensaje sigue por
         // las reglas de abajo como siempre.
-        if (process.env.HELADERIA_AI_AGENT === '1' && process.env.BUSINESS_KEY === 'heladeria') {
-            const heladeriaAgent = require('./flows/heladeria.agent');
-            if (await heladeriaAgent.processMessage(sock, jid, text, userSession, ctx)) {
+        const tenantAgent = agentRegistry.active();
+        if (tenantAgent) {
+            if (await tenantAgent.processMessage(sock, jid, text, userSession, ctx)) {
                 await checkGlobalFrustration(sock, jid, text, userSession, ctx);
                 return;
             }
@@ -948,7 +992,9 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
                 const currentFlow = getCurrentFlow();
                 if (currentFlow) {
                     userSession.phase = currentFlow.getInitialPhase();
-                    await currentFlow.showWelcome(sock, jid, ctx, text);
+                    // El texto de este turno es el NOMBRE, no un pedido: se pasa vacío para que la bienvenida no lo interprete
+                    // (antes el cliente recibía "No entendí bien lo que necesitas" justo después de darle su nombre).
+                    await currentFlow.showWelcome(sock, jid, ctx, '');
                 } else {
                     userSession.phase = PHASE.SELECCION_OPCION;
                     userSession.errorCount = 0;
@@ -967,7 +1013,9 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
             const currentFlow = getCurrentFlow();
             if (currentFlow) {
                 userSession.phase = currentFlow.getInitialPhase();
-                await currentFlow.showWelcome(sock, jid, ctx, text);
+                // El texto de este turno es el NOMBRE, no un pedido: se pasa vacío para que la bienvenida no lo interprete
+                    // (antes el cliente recibía "No entendí bien lo que necesitas" justo después de darle su nombre).
+                    await currentFlow.showWelcome(sock, jid, ctx, '');
             } else {
                 userSession.phase = PHASE.SELECCION_OPCION;
                 userSession.errorCount = 0;
@@ -1090,6 +1138,11 @@ async function delegateToPhaseHandler(sock, jid, text, userSession, ctx) {
         // FASE: FLUJO DE NEGOCIO (plugin)
         // Se delega al flow registrado según business_type
         // ===================================
+        // Producto agregado por el agente de un negocio sin fase propia (restaurante): 1) seguir, 2) pagar, 3) menú.
+        case PHASE.POST_ADD:
+            await handlePostAddOptions(sock, jid, text, userSession, ctx);
+            break;
+
         default: {
             const currentFlow = getCurrentFlow();
             if (currentFlow && currentFlow.isFlowPhase(phase)) {

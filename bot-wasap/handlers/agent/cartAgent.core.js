@@ -178,10 +178,74 @@ function describeDelivery(userSession) {
 
 /** Líneas genéricas de estado conversacional (opciones pendientes, productos mencionados). */
 function describePendingOptions(userSession) {
+    const offer = userSession._agentPendingOffer;
+    if (offer && offer.producto && Date.now() - (offer.at || 0) <= OFFER_TTL_MS) {
+        return `OFERTA PENDIENTE: el bot dio el precio y preguntó "¿Quieres pedir ${offer.producto}? Sí/No". Un sí (aunque traiga sabores/adiciones) = agregar_producto de ${offer.producto} con lo que dijo; otra cosa = atiéndela normal.`;
+    }
     if (Array.isArray(userSession._agentPendingOptions) && userSession._agentPendingOptions.length) {
         return `OPCIONES NUMERADAS QUE EL BOT ACABA DE OFRECER (si el cliente responde un número o "la primera"/"la otra", es de ESTA lista): ${userSession._agentPendingOptions.map((n, i) => `${i + 1}) ${n}`).join('  ')}`;
     }
     return null;
+}
+
+/**
+ * Qué hacer DESPUÉS de dar un precio (solo si el plugin activó `intent`):
+ *   - null: nada (hay un producto en armado, la IA ya lo agregó en este turno,
+ *     o lo consultado no es un producto pedible, ej. un topping).
+ *   - start: el cliente lo pidió explícito ("quiero / para pedir una X").
+ *   - confirm: solo preguntó el precio de UN producto -> "¿Quieres pedir X? Sí/No".
+ *   - choose: preguntó por varios -> lista numerada "¿cuál te preparo?".
+ */
+function priceOfferPlan(T, items) {
+    const intent = T.plugin.intent;
+    if (!intent || !items.length) return null;
+    if (T.plugin.hooks.hasItemInProgress(T.userSession)) return null;
+    const buy = G.classifyBuyIntent(T.text);
+    if ((T.callNames || []).includes(intent.addTool)) {
+        // La IA quiso agregar el producto, pero el cliente SOLO preguntó el
+        // precio: se le confirma primero (el agregar se descarta este turno).
+        if (buy !== 'price') return null;
+        T.priceOnlyTurn = true;
+    }
+    if (CHECKOUT_DATA_PHASES.has(T.userSession.phase) || T.userSession.phase === PHASE.CONFIRM_ORDER) return null;
+    const orderable = new Set(T.plugin.catalog.orderable(T.ctx));
+    const pedibles = items.filter(p => orderable.has(p));
+    if (!pedibles.length) return null;
+    if (pedibles.length > 1) return { kind: 'choose', items: pedibles.slice(0, 6) };
+    return { kind: buy === 'order' ? 'start' : 'confirm', items: pedibles };
+}
+
+// Una oferta "¿Quieres pedir X?" vale para la respuesta inmediata del cliente
+// (con margen por si se demora en contestar).
+const OFFER_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Respuesta a la oferta pendiente, resuelta con código ANTES de la IA: un
+ * "sí"/"dale" arranca el producto ofrecido y un "no"/"no gracias" se responde
+ * con calidez sin perder la conversación. Cualquier otra cosa ("sí pero de
+ * fresa", "no, mejor la copa") la decide la IA, que ve la oferta en el estado.
+ */
+function freshOffer(plugin, userSession) {
+    const offer = userSession._agentPendingOffer;
+    if (!plugin.intent || !offer || !offer.producto || Date.now() - (offer.at || 0) > OFFER_TTL_MS) return null;
+    return plugin.hooks.hasItemInProgress(userSession) ? null : offer;
+}
+function decisionForPendingOffer(plugin, userSession, text) {
+    const offer = freshOffer(plugin, userSession);
+    if (!offer) return null;
+    const answer = G.classifyYesNo(text);
+    if (answer === 'yes') {
+        return { calls: [{ name: plugin.intent.addTool, args: { producto: offer.producto } }], usage: {}, latencyMs: 0, model: 'offer-yes' };
+    }
+    if (answer === 'no') {
+        return { calls: [{ name: 'responder_breve', args: { texto: plugin.intent.texts.offerDeclined } }], usage: {}, latencyMs: 0, model: 'offer-no' };
+    }
+    return null;
+}
+
+/** Registro para la revisión diaria (services/safetyNet.js; no hace nada con SAFETY_NET apagada). Nunca lanza. */
+function safetyEvent(type, jid, phase, detail) {
+    try { require('../../services/safetyNet').recordEvent(type, jid, phase, detail); } catch (_) { /* best-effort */ }
 }
 
 /** Fuente de verdad para las respuestas libres: la del plugin o, por defecto, el catálogo. */
@@ -538,12 +602,28 @@ const CORE_EXECUTORS = {
             else notFound.push(String(n).slice(0, 40));
         }
         const unique = [...new Set(items)];
-        if (unique.length) {
+        const offer = priceOfferPlan(T, unique);
+        if (offer && offer.kind === 'choose') {
+            // Varios productos pedibles: precios numerados + "¿cuál te preparo?"
+            // (un "1"/"la primera" se resuelve contra ESTA lista).
+            await sendClarification(T, T.plugin.intent.texts.chooseAfterPrice, offer.items);
+        } else if (unique.length) {
             const lines = unique.map(p => `• *${nameOf(p)}* — ${money(priceOf(p))}`);
             await say(T.sock, T.jid, `💰 Precios:\n\n${lines.join('\n')}`, T.ctx);
             T.userSession.lastMentionedProducts = unique.map(nameOf);
         }
         if (notFound.length) await say(T.sock, T.jid, `😅 No encontré *${notFound.join(', ')}* en el menú.`, T.ctx);
+        if (!offer) return;
+        if (offer.kind === 'start') {
+            // "Para pedir una X, ¿cuánto vale?": lo pidió explícito -> se arranca.
+            await T.agentExecutors[T.plugin.intent.addTool]({ producto: nameOf(offer.items[0]) }, T);
+        } else if (offer.kind === 'confirm') {
+            // Solo preguntó el precio: se confirma, nunca se deja suelto.
+            const name = nameOf(offer.items[0]);
+            T.userSession._agentPendingOffer = { producto: name, at: Date.now() };
+            await say(T.sock, T.jid, T.plugin.intent.texts.confirmAfterPrice(name), T.ctx);
+            markPrompted(T);
+        }
     },
 
     async info_local(args, T) {
@@ -905,6 +985,15 @@ function createCartAgent(plugin) {
         throw new Error(`cartAgent(${plugin.id}): al plugin le faltan hooks [${missingHooks.join(', ')}] / textos [${missingTexts.join(', ')}]`);
     }
 
+    if (plugin.intent) {
+        const it = plugin.intent;
+        const okTexts = it.texts && typeof it.texts.confirmAfterPrice === 'function' &&
+            typeof it.texts.offerDeclined === 'string' && typeof it.texts.chooseAfterPrice === 'string';
+        if (!okTexts || !(plugin.tools || []).some(t => t.declaration.name === it.addTool)) {
+            throw new Error(`cartAgent(${plugin.id}): 'intent' necesita addTool (herramienta del plugin) y textos confirmAfterPrice(nombre), offerDeclined, chooseAfterPrice`);
+        }
+    }
+
     const acc = G.catalogAccessors(plugin.fields);
     const pluginTools = new Map(plugin.tools.map(t => [t.declaration.name, t]));
     const unguarded = plugin.tools.filter(t => !Array.isArray(t.effects) ||
@@ -980,7 +1069,8 @@ function createCartAgent(plugin) {
         if (typeof text !== 'string' || !text.trim()) return false;
         const phase = userSession.phase;
         if (!plugin.agentPhases.has(phase)) { emitTrace({ jid, text, path: 'legacy-phase', phase }); return false; }
-        const hasPendingOptions = Array.isArray(userSession._agentPendingOptions) && userSession._agentPendingOptions.length > 0;
+        const hasPendingOptions = (Array.isArray(userSession._agentPendingOptions) && userSession._agentPendingOptions.length > 0) ||
+            !!freshOffer(plugin, userSession);
         if (!hasPendingOptions && plugin.fastPathApplies(text, phase)) { emitTrace({ jid, text, path: 'fastpath', phase }); return false; }
 
         // Datos sensibles: mismo guard de siempre, ANTES de que el texto llegue a la IA.
@@ -999,22 +1089,28 @@ function createCartAgent(plugin) {
 
         const t0 = Date.now();
         userSession.productsCache = plugin.catalog.products(ctx);
-        let decision = null;
-        try {
-            decision = await agentAi.decideTurn({
-                systemInstruction: plugin.buildSystemInstruction(ctx),
-                userContent: buildUserContent(userSession, jid, text),
-                tools: TOOLS
-            });
-        } catch (e) {
-            logger.error(`[${plugin.logTag}] ${jid} error decidiendo: ${e.message}`);
-            decision = null;
+        // "¿Quieres pedir X?" pendiente: un sí/no claro se resuelve con código.
+        const offerBefore = freshOffer(plugin, userSession);
+        let decision = decisionForPendingOffer(plugin, userSession, text);
+        if (decision) safetyEvent(decision.model === 'offer-yes' ? 'offer_accepted' : 'offer_declined', jid, phase, offerBefore && offerBefore.producto);
+        if (!decision) {
+            try {
+                decision = await agentAi.decideTurn({
+                    systemInstruction: plugin.buildSystemInstruction(ctx),
+                    userContent: buildUserContent(userSession, jid, text),
+                    tools: TOOLS
+                });
+            } catch (e) {
+                logger.error(`[${plugin.logTag}] ${jid} error decidiendo: ${e.message}`);
+                decision = null;
+            }
         }
         const calls = decision ? decision.calls.filter(c => TOOL_NAMES.has(c.name)) : [];
         if (!decision || calls.length === 0) {
             // La IA no respondió: el mensaje sigue por el flujo de reglas, que
             // todavía no ha tocado nada de este turno.
             userSession._agentPendingOptions = null;
+            userSession._agentPendingOffer = null;
             emitTrace({ jid, text, path: 'fallback-legacy', phase, latencyMs: Date.now() - t0 });
             return false;
         }
@@ -1022,6 +1118,8 @@ function createCartAgent(plugin) {
         // turno; si hace falta otra aclaración, sendClarification las vuelve a fijar.
         const pendingBefore = Array.isArray(userSession._agentPendingOptions) ? userSession._agentPendingOptions : null;
         userSession._agentPendingOptions = null;
+        // La oferta vale para UNA respuesta: este turno la consume (sí, no u otra cosa).
+        userSession._agentPendingOffer = null;
 
         // Desde acá el agente es dueño del turno: mismos pasos de registro que
         // hace handler.js para cualquier mensaje.
@@ -1062,7 +1160,7 @@ function createCartAgent(plugin) {
             }
         });
         const T = {
-            sock: countingSock, jid, text, userSession, ctx, startPhase: phase, pendingBefore, callCount: calls.length,
+            sock: countingSock, jid, text, userSession, ctx, startPhase: phase, pendingBefore, callCount: calls.length, callNames: calls.map(c => c.name), pendingOffer: offerBefore ? offerBefore.producto : null,
             plugin, acc, agentExecutors: EXECUTORS, history: () => recentHistory(jid),
             mentionedBefore: Array.isArray(userSession.lastMentionedProducts) ? [...userSession.lastMentionedProducts] : [],
             plainAdds: [], prompted: false, checkoutNeedsAdvance: false, checkoutAdvanced: false,
@@ -1095,11 +1193,17 @@ function createCartAgent(plugin) {
             if ((EXEC_ORDER[c.name] ?? 50) >= NAVIGATION_ORDER && T.plainAdds.length) {
                 await flushPlainAdds(T, NAVIGATING_TOOLS.includes(c.name));
             }
+            if (T.priceOnlyTurn && plugin.intent && c.name === plugin.intent.addTool) {
+                logger.warn(`[${plugin.logTag}] ${jid} ${c.name} descartada: el cliente solo preguntó el precio (se le confirmó Sí/No)`);
+                executed.push(`${c.name}!price-only`);
+                continue;
+            }
             try {
                 const args = c.args || {};
                 const g = GROUNDS[c.name] ? await GROUNDS[c.name](args, T) : { ok: true };
                 if (g && g.ok === false) {
                     logger.warn(`[${plugin.logTag}] ${jid} ${c.name} BLOQUEADA por grounding (${(EFFECTS[c.name] || []).join('/')}): ${g.reason}`);
+                    safetyEvent('grounding_blocked', jid, phase, c.name);
                     if (g.reply) await sendClarification(T, g.reply, null);
                     executed.push(`${c.name}!blocked`);
                     continue;

@@ -10,6 +10,8 @@
  */
 const assert = require('assert');
 process.env.BUSINESS_KEY = 'heladeria';
+// Base temporal: antes esta prueba usaba el ID real de Johan contra la finance.db real y le dejo el nombre "Test".
+process.env.FINANCE_DB_PATH = require('path').join(require('os').tmpdir(), 'leo_panel_test_' + process.pid + '.db');
 
 const handler = require('./handlers/handler.js');
 const flowRegistry = require('./handlers/flowRegistry');
@@ -87,7 +89,7 @@ async function send(sock, ctx, jid, text) {
             flowRegistry.register(envConfig.business.type, financeFlow);
             const handlerFin = require('./handlers/handler.js');
             const ctx = makeCtx();
-            const jid = '5534032418@telegram';
+            const jid = '573000009888@telegram';
             ctx.sessions[jid] = { phase: 'fin_main', finance: { name: 'Test', transactions: [], loans: [] }, errorCount: 5 };
             const sock = makeSock([]);
             await handlerFin.processIncomingMessage(sock, { from: jid, text: 'asdkjasdkj' }, ctx);
@@ -103,7 +105,7 @@ async function send(sock, ctx, jid, text) {
     } finally {
         notificationService.notifyAdminsAboutCustomerIssue = originalNotify;
         for (let i = 1; i <= 3; i++) waitingHumanStore.clearWaiting('heladeria', testJid(i));
-        waitingHumanStore.clearWaiting('finance', '5534032418@telegram');
+        waitingHumanStore.clearWaiting('finance', '573000009888@telegram');
         setTimeout(() => process.exit(process.exitCode || 0), 50);
     }
 })();

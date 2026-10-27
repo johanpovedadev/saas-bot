@@ -172,8 +172,12 @@ function generateCartSummary(userSession) {
  * en userSession.order.paymentMethod y el chequeo exacto "=== 'transferencia'"
  * (que dispara el QR de pago) nunca coincidía.
  */
+// Nequi, Daviplata, Bancolombia, PSE, QR... son transferencias: el cliente de un restaurante contesta "nequi", no "transferencia".
+const WALLET_PAYMENT_RE = /\b(nequi|daviplata|bancolombia|pse|qr|llave|bre-?b|transfiya|consignaci[oó]n)\b/i;
+
 function normalizePaymentMethod(cleanInput) {
     if (['transferencia', 'efectivo'].includes(cleanInput)) return cleanInput;
+    if (WALLET_PAYMENT_RE.test(cleanInput)) return 'transferencia';
     if (similarityScore(cleanInput, 'transferencia') >= 0.75) return 'transferencia';
     if (similarityScore(cleanInput, 'efectivo') >= 0.75) return 'efectivo';
     return null;
@@ -319,6 +323,9 @@ async function handleCartSummary(sock, jid, userSession, ctx) {
             _fromCarrito: true
         }));
         userSession.order.items = existing.concat(carritoItems);
+    }
+    if (userSession && userSession.order && Array.isArray(userSession.order.items)) {
+        userSession.order.items = require('../utils/cartItems').mergeEquivalentItems(userSession.order.items);
     }
     
     if (!userSession.order || userSession.order.items.length === 0) {
@@ -479,7 +486,7 @@ async function handleConfirmOrderChoice(sock, jid, input, userSession, ctx) {
     if (cleanInput === '2' || cleanInput === 'seguir') {
         logger.info(`[${jid}] -> Usuario eligió SEGUIR COMPRANDO.`);
         userSession.phase = PHASE.SELECCION_OPCION;
-        await say(sock, jid, '🍨 ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.', ctx);
+        await say(sock, jid, `${require('../utils/businessEmoji').cartEmoji()} ¡Perfecto! ¿Qué más deseas agregar al pedido? Escribe el nombre del producto.`, ctx);
         return;
     }
     
@@ -920,11 +927,21 @@ async function handleFieldCorrection(sock, jid, text, userSession, ctx) {
  * primera parte es la dirección — antes, si el cliente mandaba los datos en
  * otro orden (ej. nombre primero), la dirección terminaba mal asignada.
  */
+/**
+ * Un punto de referencia ("a la vuelta de hielo bajo cero", "frente al parque", "Punto de referencia: casa azul"):
+ * ayuda a quien lleva el domicilio, no es el nombre de nadie ni una dirección con número.
+ */
+const REFERENCE_RE = /\b(a la vuelta|frente a|en frente|al frente|al lado|junto a|cerca de|cerca al|diagonal al?|detr[aá]s de|esquina|enseguida|punto de referencia|referencia)\b/i;
+function looksLikeReference(p) {
+    return REFERENCE_RE.test(p) && !/\d/.test(p);
+}
+
 function classifyDeliveryParts(parts, userSession) {
     let addrPart = null;
     let namePart = null;
     let phonePart = null;
     let paymentPart = null;
+    let referencePart = null;
     const extra = [];
 
     for (const p of parts) {
@@ -933,6 +950,8 @@ function classifyDeliveryParts(parts, userSession) {
         } else if (!paymentPart && looksLikePayment(p)) {
             const low = p.toLowerCase();
             paymentPart = canonicalPayment(low);
+        } else if (!referencePart && looksLikeReference(p)) {
+            referencePart = p.replace(/^(?:punto de referencia|referencia)\s*[:\-]?\s*/i, '').trim();
         } else if (!addrPart && looksLikeAddress(p)) {
             addrPart = p;
         } else if (!namePart) {
@@ -946,7 +965,8 @@ function classifyDeliveryParts(parts, userSession) {
     if (extra.length) namePart = [namePart, ...extra].filter(Boolean).join(' ');
 
     if (!userSession.order) userSession.order = {};
-    if (addrPart) userSession.order.address = addrPart;
+    // El punto de referencia viaja con la dirección: es lo que le sirve a quien lleva el pedido.
+    if (addrPart) userSession.order.address = referencePart ? `${addrPart} (${referencePart})` : addrPart;
     if (namePart) userSession.order.name = namePart;
     if (phonePart) userSession.order.telefono = phonePart;
     if (paymentPart) userSession.order.paymentMethod = paymentPart;
@@ -1496,7 +1516,14 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             }            // ✅ Notificar admins sobre pedido completado usando notificationService
             // Recuerda el pedido para asociarle el comprobante de pago que llegue después (ver paymentProof.js).
             // (en ctx, no en la sesión: resetChat() la borra al terminar el pedido)
-            try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
+            // Cliente recurrente: el pedido confirmado alimenta su perfil ("lo de siempre") y las cifras de la dueña.
+            let savedProfile = { orderCount: 0, returning: false };
+            try {
+                if (require('./flowRegistry').getTenantFlowWithCapability('getMenuProducts')) {
+                    savedProfile = require('../services/customerProfileStore').saveFromOrder(process.env.BUSINESS_KEY, jid, { order: userSession.order, carrito: (Array.isArray(userSession.carrito) && userSession.carrito.length) ? userSession.carrito : require('../utils/cartItems').mergeEquivalentItems(userSession.order && userSession.order.items), total: orderTotal });
+                }
+            } catch (profileErr) { logger.warn(`customerProfileStore.saveFromOrder: ${profileErr.message}`); }
+            try { require('../services/ownerStatsStore').recordOrder(process.env.BUSINESS_KEY, orderTotal, Date.now(), savedProfile.returning); } catch (statsErr) { logger.warn(`ownerStatsStore.recordOrder: ${statsErr.message}`); }
             if (ctx) {
                 ctx.lastConfirmedOrders = ctx.lastConfirmedOrders || {};
                 ctx.lastConfirmedOrders[jid] = { at: Date.now(), nombre: payload.nombre, productos: payload.producto, total: orderTotal, pago: payload.pago };
@@ -1505,6 +1532,10 @@ async function handleFinalizeOrder(sock, jid, input, userSession, ctx) {
             logger.info(`[${jid}] ✅ Admins notificados sobre pedido completado`);
 
             await say(sock, jid, '✅ ¡Tu pedido ha sido confirmado con éxito! Pronto estará en camino. 🛵', ctx);
+            if (savedProfile.orderCount === 1) {
+                // Transparencia: se le dice qué se guardó y cómo borrarlo (solo la primera vez).
+                await say(sock, jid, '💛 Guardé tu nombre, dirección y este pedido para que la próxima vez sea más rápido. Si no quieres, escribe *borra mis datos*.', ctx);
+            }
             // Solo envía algo si el negocio configuró un link de reseña de
             // Google — ver services/reviewRequestService.js. Nunca bloquea
             // ni rompe el flujo de checkout si falla.
@@ -1726,6 +1757,7 @@ async function handleCheckoutPhase(sock, jid, text, userSession, ctx) {
 
 module.exports = {
     sendTransferInfoIfPending,
+    showFinalSummary: showEditedSummary,
     handleCartSummary,
     handleEnterAddress,
     handleEnterName,
@@ -1743,5 +1775,6 @@ module.exports = {
     looksLikePickup,
     looksLikeQuestion,
     captureSideChannelFields,
-    handleFieldCorrection
+    handleFieldCorrection,
+    normalizePaymentMethod
 };

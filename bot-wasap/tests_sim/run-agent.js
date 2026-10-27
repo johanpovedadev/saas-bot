@@ -2,7 +2,7 @@
 
 /**
  * Simulador del AGENTE de heladería (HELADERIA_AI_AGENT=1), sin gastar tokens de Gemini.
- *   node tests_sim/run-agent.js [--filter=texto] [--verbose] [--run=ruta.json]
+ *   node tests_sim/run-agent.js [--tenant=heladeria|pescaderia] [--filter=texto] [--verbose] [--run=ruta.json]
  * El decisor de Gemini se cambia por tests_sim/simAgent.js (reglas del prompt sobre el catálogo real).
  * Además de los escenarios, en CADA turno que atendió el agente se verifica la regla de la dueña
  * ("si la persona tiene que leer y seguir instrucciones, no pega"): sin códigos S1/T1 ni "Escribe el número".
@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const args = Object.fromEntries(process.argv.slice(2).map(a => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v === undefined ? true : v]; }));
+const tenant = args.tenant === 'pescaderia' ? 'pescaderia' : 'heladeria';
 
 // Mensajes del flujo de reglas que el agente NO debe mostrar (solo en turnos atendidos por el agente).
 const INSTRUCCIONES = [
@@ -26,12 +27,12 @@ const EXENTAS = new Set(['saludar', 'mostrar_menu', 'info_local', 'pedido_por_en
 (async () => {
     const { createWorld } = require('./world');
     const { runScenario } = require('./runner');
-    const dir = path.join(__dirname, 'scenarios_agente');
+    const dir = path.join(__dirname, tenant === 'pescaderia' ? 'scenarios_agente_pescaderia' : 'scenarios_agente');
     const scenarios = fs.readdirSync(dir).filter(f => /^\d+_.*\.js$/.test(f)).sort().flatMap(f => require(path.join(dir, f)));
     const selected = scenarios.filter(s => !args.filter || (s.id + ' ' + s.nombre + ' ' + s.area).toLowerCase().includes(String(args.filter).toLowerCase()));
 
     const log = console.log;
-    const w = await createWorld({ ai: 'sim', agent: true });
+    const w = await createWorld({ ai: 'sim', agent: true, tenant });
     console.log = () => {}; console.warn = () => {}; console.error = () => {};
 
     // Envuelve customer(): tras cada turno revisa la regla de "sin instrucciones" si lo atendió el agente.
@@ -69,7 +70,7 @@ const EXENTAS = new Set(['saludar', 'mostrar_menu', 'info_local', 'pedido_por_en
     const byArea = {};
     for (const r of results) { const a = (byArea[r.scenario.area] = byArea[r.scenario.area] || { total: 0, ok: 0 }); a.total++; if (!r.failures.length) a.ok++; }
 
-    log('\nSIMULADOR DEL AGENTE DE MUNDO HELADOS — decisor simulado (cero tokens)');
+    log('\nSIMULADOR DEL AGENTE DE ' + (tenant === 'pescaderia' ? 'RICURAS DEL PACÍFICO' : 'MUNDO HELADOS') + ' — decisor simulado (cero tokens)');
     for (const r of results) {
         log(`${r.failures.length ? '❌' : '✅'} [${r.scenario.area}] ${r.scenario.id}: ${r.scenario.nombre}  (${r.steps} turnos, ${r.checks} verificaciones)`);
         for (const f of r.failures) log(`      ↳ ${f.msg}\n        ${f.detail || ''}`);

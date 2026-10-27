@@ -324,6 +324,27 @@ const TOPPING_SAME_WORDS = new Set([
     'cada', 'uno', 'unidad', 'unidades', 'helado', 'helados', 'copa', 'copas', 'ellos', 'ellas'
 ]);
 const TOPPING_DONE_REGEX = /^(eso (es|seria) todo|es todo|seria todo|eso seria todo|nada mas|asi esta bien)$/;
+// Variante tolerante del cierre del paso de toppings: admite muletillas antes
+// ("bueno", "ok", "si"...) y despues ("gracias", "porfa"). Replay real
+// (12-oct-2026): "Bueno asi esta bien" no calzaba con la regex exacta, la IA
+// llamo otra herramienta y el bot repitio la pregunta de toppings.
+const TOPPING_DONE_LOOSE_REGEX = /^((bueno|ok|okey|okay|si|listo|ya|dale|pues|entonces|perfecto|vale)[\s,.!]+)*(eso (es|seria) todo|es todo|seria todo|nada mas|asi esta bien|asi esta|asi quedo|asi queda|asi nomas|asi no mas|asi|ya esta|listo|ninguno mas|nada mas gracias)([\s,.!]+(gracias|porfa|por favor|pues|entonces))*[\s,.!]*$/;
+// "Los mismos del anterior" / "como el anterior" / "igual que la otra": en el
+// armado por unidad, copiar los toppings de la unidad previa.
+const TOPPING_SAME_AS_PREVIOUS_REGEX = /\b(los mismos|las mismas|lo mismo|igual(es)?( que)?( (el|la|los|las))? (anterior|otr[oa]s?|primer[oa]s?)|como (el|la|los|las) (a[mn]terior(es)?|otr[oa]s?|primer[oa]s?|de antes)|del a[mn]terior|de la otra|mism[oa]s? (del|de la|que (el|la)) (a[mn]terior|otr[oa]|primer[oa]))\b/;
+
+function normToppingInput(text) {
+    return stripAccents(String(text || '').toLowerCase().trim());
+}
+/** true si el cliente esta cerrando el paso de toppings ("bueno asi esta bien"). */
+function isToppingDone(text) {
+    const input = normToppingInput(text);
+    return TOPPING_DONE_REGEX.test(input) || TOPPING_DONE_LOOSE_REGEX.test(input);
+}
+/** true si pide los mismos toppings de la unidad anterior. */
+function isSameAsPreviousToppings(text) {
+    return TOPPING_SAME_AS_PREVIOUS_REGEX.test(normToppingInput(text));
+}
 
 /**
  * Interpreta "todo(s)" en el paso de toppings (ver TOPPING_ALL_WORDS arriba).
@@ -909,7 +930,12 @@ async function handleToppings(sock, jid, text, userSession, ctx) {
     let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
+    if ((noKeywordsRegex.test(input) || isToppingDone(input)) && flow.toppingsSeleccionados.length && !/^(sin|ninguno?|ninguna?|0)$/.test(input)) {
+        // "asi esta bien" / "no" con toppings ya elegidos: se conservan y se avanza.
+        await finishToppingsStep(sock, jid, userSession, ctx, false);
+        return;
+    }
+    if (noKeywordsRegex.test(input) || isToppingDone(input)) {
         userSession.phase = HELADO_QUANTITY;
         await say(sock, jid, `✅ Sin toppings.\n\n¿Cuántas unidades deseas?`, ctx);
         return;
@@ -1365,7 +1391,18 @@ async function handlePerUnitToppings(sock, jid, text, userSession, ctx) {
     let input = stripAccents(text.toLowerCase().trim());
     const noKeywordsRegex = /^(sin|no|ninguno?|ninguna?|nada|0)$/i;
 
-    if (noKeywordsRegex.test(input) || TOPPING_DONE_REGEX.test(input)) {
+    const prevUnit = customization.units[customization.units.length - 1];
+    if (prevUnit && isSameAsPreviousToppings(input)) {
+        for (const t of prevUnit.toppings || []) {
+            const code = t.CodigoProducto || t;
+            if (!customization.currentToppings.find(x => (x.CodigoProducto || x) === code)) customization.currentToppings.push(t);
+        }
+        const nombres = customization.currentToppings.map(t => t[dbFields.productName] || t).join(', ');
+        await say(sock, jid, nombres ? `✅ Mismos toppings de la unidad anterior: *${nombres}*.` : `✅ Igual que la anterior: sin toppings.`, ctx);
+        await pushPerUnit(sock, jid, userSession, ctx);
+        return;
+    }
+    if (noKeywordsRegex.test(input) || isToppingDone(input)) {
         await pushPerUnit(sock, jid, userSession, ctx);
         return;
     }
@@ -3510,6 +3547,8 @@ module.exports = {
     // de este flow cambia.
     _internal: {
         interpretToppingAllKeyword,
+        isToppingDone,
+        isSameAsPreviousToppings,
         afterAddToCarrito,
         isOutOfHoursOrderable,
         resolveProducts,

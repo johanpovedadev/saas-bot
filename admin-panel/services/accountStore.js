@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 
-const ACCOUNTS_PATH = path.join(__dirname, '..', 'data', 'accounts.json');
+const ACCOUNTS_PATH = process.env.ACCOUNTS_PATH || path.join(__dirname, '..', 'data', 'accounts.json');
 
 function readAll() {
     try {
@@ -42,11 +42,17 @@ function upsertAccount(username, plainPassword, role, businessKey) {
  * Verifica usuario/contraseña. Devuelve { username, role, businessKey } si
  * son correctos, o null si no.
  */
+// Hash de relleno: con un usuario que no existe se compara igual, para que la respuesta no tarde menos
+// y delate qué usuarios existen.
+const DUMMY_HASH = bcrypt.hashSync('relleno-sin-cuenta', 10);
+
 function verifyLogin(username, plainPassword) {
     const all = readAll();
-    const account = all[username];
-    if (!account) return null;
-    if (!bcrypt.compareSync(String(plainPassword || ''), account.passwordHash)) return null;
+    // hasOwnProperty: un usuario llamado "constructor" o "__proto__" no es una cuenta (antes tumbaba el login con un 500).
+    const account = typeof username === 'string' && Object.prototype.hasOwnProperty.call(all, username) ? all[username] : null;
+    const hash = account && typeof account.passwordHash === 'string' ? account.passwordHash : DUMMY_HASH;
+    const ok = bcrypt.compareSync(String(plainPassword || ''), hash);
+    if (!account || !ok || hash === DUMMY_HASH) return null;
     return { username, role: account.role, businessKey: account.businessKey };
 }
 

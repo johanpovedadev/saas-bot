@@ -13,6 +13,7 @@
  */
 
 const { similarityScore } = require('../../utils/fuzzySearch');
+const { parseCatalogPrice } = require('../../utils/price');
 
 function norm(s) {
     return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -26,7 +27,7 @@ function norm(s) {
 function catalogAccessors(fields) {
     const f = () => (typeof fields === 'function' ? fields() : fields) || {};
     return {
-        priceOf: (p) => parseFloat(String((p && p[f().productPrice]) || '').replace(/[^0-9]/g, '')) || 0,
+        priceOf: (p) => parseCatalogPrice(p && p[f().productPrice]),
         nameOf: (p) => (p && (p[f().productName] || p.NombreProducto)) || '',
         codeOf: (p) => (p && (p[f().productCode] || p.CodigoProducto)) || ''
     };
@@ -86,6 +87,53 @@ function sanitizeFreeText(s, maxLen = 400) {
 /** "sí", "dale", "esa", "de una"... - aceptar algo que el bot acaba de ofrecer. */
 function isShortAffirmation(normText) {
     return normText.length <= 30 && /^(si+|sip|dale|ok|okey|okay|listo|esa|ese|eso|claro|de una|va|vale|bueno|perfecto|me parece|hagale)(?![a-z])/.test(normText);
+}
+
+// ---------------------------------------------------------------------------
+// INTENCIÓN de compra (cualquier negocio). La IA entiende el mensaje, pero
+// estas dos preguntas se responden con código porque deciden si el pedido
+// ARRANCA o no:
+//   - "quiero / para pedir / dame una X (cuánto vale)" -> 'order': lo dijo
+//     explícito, se arranca el producto sin preguntar de nuevo.
+//   - "¿cuánto vale una X?" -> 'price': se responde el precio y se CONFIRMA
+//     ("¿Quieres pedir X? Sí / No") - nunca se deja la conversación suelta.
+// ---------------------------------------------------------------------------
+
+const ORDER_INTENT_RE = /\b(quiero|quisiera|queria|kiero|qiero|qisiera|necesito|me (da|das|de|regala|regalas|vende|vendes|manda|mandas|trae|traes|prepara|preparas|hace|haces|pone|pones|despacha|despachas)|dame|deme|regalame|mandame|traeme|preparame|pedir|pido|pidiendo|encarg\w*|comprar|compro|ordenar|ordeno|llevar|llevo|me antoje)\b/;
+// "quiero saber cuánto vale" es una PREGUNTA, no un pedido.
+const ASK_ONLY_RE = /\b(quiero|quisiera|queria|necesito|me gustaria) (saber|preguntar|averiguar|consultar|informacion|info)\b/;
+const PRICE_INTENT_RE = /\b(cuanto|cuantos|cuanta|kuanto|q vale|que vale|que valor|a como|precio|precios|valor|cuesta|cuestan|vale|valen)\b/;
+
+/** 'order' | 'price' | null según lo que el cliente dijo explícitamente. */
+function classifyBuyIntent(text) {
+    const t = norm(text).replace(ASK_ONLY_RE, ' ');
+    if (ORDER_INTENT_RE.test(t)) return 'order';
+    if (PRICE_INTENT_RE.test(t)) return 'price';
+    return null;
+}
+
+// Relleno que no cambia un "sí"/"no" ("sí la quiero porfa", "no gracias mija").
+const YES_NO_FILLER = '(la|lo|las|los|me|te|quiero|la quiero|lo quiero|porfa|por favor|gracias|claro|dale|de una|una|uno|si|ya|senora|senor|amigo|amiga|mija|mijo|mi amor|vecina|vecino|seno|por ahora|ahorita|todavia|mas tarde|despues|luego|nada|asi)';
+const STRICT_YES_RE = new RegExp(`^(si+|sip|sii|dale|ok|okey|okay|listo|claro|de una|va|vale|bueno|perfecto|hagale|por favor|porfa|esa|ese|eso|me parece|claro que si|obvio)( ${YES_NO_FILLER})*$`);
+const STRICT_NO_RE = new RegExp(`^(no+|nop|nel|mejor no|ahorita no|ahora no|por ahora no|todavia no|aun no|despues|luego|otro dia)( ${YES_NO_FILLER})*$`);
+
+/**
+ * Respuesta a una pregunta de Sí/No del bot: 'yes' | 'no' | null. Solo es
+ * 'yes'/'no' cuando el mensaje NO trae nada más ("sí, pero de fresa" o "no,
+ * mejor la copa" son null: los decide la IA con todo el contexto).
+ */
+function classifyYesNo(text) {
+    const t = norm(text).replace(/[^a-z0-9ñ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 40) return null;
+    if (STRICT_NO_RE.test(t)) return 'no';
+    if (STRICT_YES_RE.test(t)) return 'yes';
+    return null;
+}
+
+/** ¿El mensaje EMPIEZA aceptando ("sí, ...", "dale ...", "claro ...")? */
+function startsWithYes(text) {
+    const t = norm(text).replace(/[^a-z0-9ñ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return /^(si+|sip|dale|ok|okey|okay|listo|claro|de una|bueno|perfecto|hagale|porfa|por favor|obvio)(?![a-z])/.test(t);
 }
 
 /** Confirmación explícita para la única acción irreversible (enviar el pedido). */
@@ -295,6 +343,9 @@ module.exports = {
     resolveIn,
     sanitizeFreeText,
     isShortAffirmation,
+    classifyBuyIntent,
+    classifyYesNo,
+    startsWithYes,
     isExplicitConfirmation,
     qtyIsGrounded,
     nameWordsInText,

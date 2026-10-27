@@ -1,7 +1,9 @@
 {
   "scripts": {
     "prepare": "husky install",
-    "test": "echo 'No hay pruebas a nivel raiz - ver bot-wasap/ e inventario/' && exit 0"
+    "test": "echo 'No hay pruebas a nivel raiz - ver bot-wasap/ e inventario/' && exit 0",
+    "ports": "node scripts/check-ports.js",
+    "start:safe": "node scripts/pm2-safe-start.js"
   },
   "devDependencies": {
     "husky": "^8.0.0"

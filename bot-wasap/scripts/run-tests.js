@@ -21,6 +21,30 @@ const SKIP_MARKER = 'no es para correr';
 const AI_MARKER = '@usa-ia-real';
 // Clave de cifrado de finanzas SOLO para pruebas (32 bytes en base64): en una máquina limpia no hay .env con la real.
 const TEST_FINANCE_KEY = Buffer.alloc(32, 7).toString('base64');
+// Almacenes de datos de las pruebas: una carpeta temporal por corrida. Antes, un test que no fijaba su ruta escribía en
+// bot-wasap/data/ (la REAL cuando se corría desde el checkout del bot): chats "esperando atención" y preguntas de prueba
+// terminaron en el informe y en los avisos de la dueña de Mundo Helados (11 oct 2026). Un test que fija su propia ruta la sigue usando.
+const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lion-tests-data-'));
+const TEST_STORE_ENV = {
+    WAITING_HUMAN_STORE_PATH: path.join(TEST_DATA_DIR, 'waiting_human_chats.json'),
+    UNANSWERED_QUESTIONS_STORE_PATH: path.join(TEST_DATA_DIR, 'unanswered_questions.json'),
+    PENDING_ADMIN_QUESTION_STORE_PATH: path.join(TEST_DATA_DIR, 'pending_admin_question.json'),
+    ONBOARDING_STORE_PATH: path.join(TEST_DATA_DIR, 'onboarding_progress.json'),
+    MUTED_STORE_PATH: path.join(TEST_DATA_DIR, 'muted_chats.json'),
+    DAILY_ACTIVITY_STORE_PATH: path.join(TEST_DATA_DIR, 'daily_activity.json'),
+    OWNER_STATS_STORE_PATH: path.join(TEST_DATA_DIR, 'owner_stats.json'),
+    HOURS_STORE_PATH: path.join(TEST_DATA_DIR, 'business_hours.json'),
+    BOT_OWNERS_STORE_PATH: path.join(TEST_DATA_DIR, 'bot_owners.json'),
+    BOOKING_STORE_PATH: path.join(TEST_DATA_DIR, 'appointments.json'),
+    USER_STORE_DB_PATH: path.join(TEST_DATA_DIR, 'users.db'),
+    CUSTOMER_PROFILES_PATH: path.join(TEST_DATA_DIR, 'customer_profiles.json'),
+    AUDIT_LOG_PATH: path.join(TEST_DATA_DIR, 'audit.jsonl'),
+    SAFETY_EVENTS_STORE_PATH: path.join(TEST_DATA_DIR, 'safety_events.json'),
+    FOLLOWUP_STORE_PATH: path.join(TEST_DATA_DIR, 'followups.json'),
+    DAILY_REVIEW_STORE_PATH: path.join(TEST_DATA_DIR, 'daily_review_sent.json')
+};
+// Historial de conversaciones de las pruebas: una base temporal, nunca bot-wasap/data/<negocio>-conversations.db.
+const CONV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lion-tests-conv-'));
 // --with-ai: corre SOLO los tests que dependen de Gemini de verdad (con la clave real y gastando cuota).
 // Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
 const WITH_AI = process.argv.includes('--with-ai');
@@ -93,7 +117,7 @@ for (const file of toRun) {
         // services/geminiGuard.js, y la clave falsa (dotenv no pisa lo que ya
         // existe en el entorno) hace que cualquier otro cliente de IA que se
         // salte la guarda falle con "clave inválida" en vez de consumir cuota.
-        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase, API_BASE_OVERRIDE: fakeBackend.apiBase }
+        env: WITH_AI ? process.env : { ...process.env, LION_DISABLE_AI: '1', GEMINI_API_KEY: 'TEST-NO-NETWORK-KEY-NO-QUOTA-0000', HELADERIA_AI_AGENT: process.env.HELADERIA_AI_AGENT_SUITE || '0', SYSTEM_ALERTS_MUTED: '0', ALLOW_REAL_AI: '0', FINANCE_ENCRYPTION_KEY: TEST_FINANCE_KEY, API_BASE: fakeBackend.apiBase, API_BASE_URL: fakeBackend.apiBase, API_BASE_OVERRIDE: fakeBackend.apiBase, CONVERSATION_DB_PATH: path.join(CONV_DIR, 'conversations.db'), ...TEST_STORE_ENV }
     });
     if (result.status === 0 && !result.error) {
         console.log('OK');
@@ -116,4 +140,6 @@ if (failedFiles.length > 0) {
 console.log('='.repeat(60));
 
 if (fakeBackend) fakeBackend.child.kill();
+try { fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch (_) { /* temporal */ }
+try { fs.rmSync(CONV_DIR, { recursive: true, force: true }); } catch (_) { /* temporal */ }
 process.exit(failedFiles.length > 0 ? 1 : 0);

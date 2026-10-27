@@ -525,8 +525,10 @@ const startBot = async () => {
         }),
         authTimeoutMs: 600000,
         puppeteer: {
-            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            headless: false,
+            // En el servidor (Docker/Linux) el Chrome es otro y no hay pantalla: CHROME_PATH y WA_HEADLESS=1. Sin esas
+            // variables queda exactamente lo de siempre (Chrome de Windows con ventana).
+            executablePath: process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            headless: process.env.WA_HEADLESS === '1' || process.env.WA_HEADLESS === 'true',
             args: [
                 '--no-sandbox', '--disable-setuid-sandbox',
                 '--disable-gpu', '--disable-dev-shm-usage',
@@ -642,6 +644,10 @@ const startBot = async () => {
             require('./services/dailySummaryScheduler').startDailySummaryJob(sock, ctx);
             require('./services/onboardingScheduler').startOnboardingScheduler(sock, ctx);
             console.log('✅ Resumen diario y preguntas graduales iniciados');
+            // Red de seguridad (SAFETY_NET=1): seguimiento a los 3 min, aviso a la dueña a los 5 min y revisión
+            // diaria a Telegram para Johan. Apagada por defecto (no cambia nada en los negocios que no la activan).
+            if (require('./services/safetyNet').start(sock, ctx)) console.log('✅ Red de seguridad activa');
+            if (require('./services/dailyReview').start()) console.log('✅ Revisión diaria a Telegram activa');
         } catch (e) {
             console.warn('Resumen diario/preguntas graduales no disponibles:', e.message);
         }

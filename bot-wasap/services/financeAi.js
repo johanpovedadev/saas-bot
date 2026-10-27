@@ -570,4 +570,4 @@ function fallbackInterpret(message, userSession) {
     };
 }
 
-module.exports = { interpret, interpretAudio, interpretImage };
+module.exports = { interpret, interpretAudio, interpretImage, categorizeExpense };

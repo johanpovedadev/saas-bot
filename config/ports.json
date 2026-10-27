@@ -1,0 +1,21 @@
+{
+  "_nota": "REGISTRO ÚNICO DE PUERTOS de todos los proyectos que corren en el equipo de Johan (regla del 17 oct 2026: validar que el puerto está libre ANTES de arrancar cualquier servicio, en todos los proyectos y en los nuevos). Un puerto nuevo se agrega AQUÍ primero: `node scripts/check-ports.js --new <puerto>` dice si está libre y no choca con otro proyecto. Ver AGENTS.md > Puertos.",
+  "services": [
+    { "name": "django-heladeria", "project": "saas-bot", "port": 8000, "env": "DJANGO_PORT" },
+    { "name": "django-mascotas", "project": "saas-bot", "port": 8001, "env": "DJANGO_PORT" },
+    { "name": "django-pescaderia", "project": "saas-bot", "port": 8002, "env": "DJANGO_PORT" },
+    { "name": "bot-heladeria", "project": "saas-bot", "port": 8096, "env": "LION_STATUS_PORT" },
+    { "name": "bot-pescaderia", "project": "saas-bot", "port": 8097, "env": "LION_STATUS_PORT" },
+    { "name": "bot-mascotas", "project": "saas-bot", "port": 8100, "env": "LION_STATUS_PORT" },
+    { "name": "bot-finance", "project": "saas-bot", "port": 8101, "env": "LION_STATUS_PORT" },
+    { "name": "bot-pilates", "project": "saas-bot", "port": 8102, "env": "LION_STATUS_PORT" },
+    { "name": "bot-pilates-clientas", "project": "saas-bot", "port": 8103, "env": "LION_STATUS_PORT" },
+    { "name": "admin-panel", "project": "saas-bot", "port": 4000, "env": "PORT (admin-panel/.env)" },
+    { "name": "agentes-redes", "project": "AGentVents", "port": 3100, "env": "SOCIAL_WEBHOOK_PORT", "manual": true },
+    { "name": "social-bot", "project": "AGentVents (social-bot/)", "port": 8300, "env": "PORT", "manual": true },
+    { "name": "lion-platform-api", "project": "lion-platform-api", "port": 8080, "env": "PORT", "manual": true },
+    { "name": "lion-platform-api (prueba local)", "project": "lion-platform-api", "port": 8081, "env": "PORT", "manual": true },
+    { "name": "lion-platform-web (vite)", "project": "lion-platform-web", "port": 5173, "env": "--port", "manual": true },
+    { "name": "postgres (pruebas locales)", "project": "AGentVents / lion-platform-api", "port": 5432, "env": "DATABASE_URL", "manual": true }
+  ]
+}

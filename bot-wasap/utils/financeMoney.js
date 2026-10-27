@@ -31,8 +31,10 @@ const CURRENCY_LABELS = {
 function formatMoney(amount, fin) {
     const code = (fin && CURRENCY_SYMBOLS[fin.currency]) ? fin.currency : 'COP';
     const symbol = CURRENCY_SYMBOLS[code];
-    const formatted = new Intl.NumberFormat('es-CO').format(Math.round(Number(amount) || 0));
-    return `${symbol}${formatted}`;
+    const rounded = Math.round(Number(amount) || 0);
+    const formatted = new Intl.NumberFormat('es-CO').format(Math.abs(rounded));
+    // El signo va antes del símbolo ("-$5.500"), no entre el símbolo y el número ("$-5.500").
+    return `${rounded < 0 ? '-' : ''}${symbol}${formatted}`;
 }
 
 module.exports = { formatMoney, CURRENCY_SYMBOLS, CURRENCY_LABELS, SUPPORTED_CURRENCIES };
