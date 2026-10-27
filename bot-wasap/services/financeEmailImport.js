@@ -27,6 +27,7 @@ const RAPPICARD_SENDER = 'noreply@rappicard.co';
 const RAPPICARD_PURCHASE_SUBJECT = 'RappiCard - Resumen de transacción';
 const RAPPIPAY_SENDER = 'noreply@rappipay.co';
 const BBVA_BREB_SENDER = 'notificacionesBreB@bbva.com'.toLowerCase();
+const learning = require('./financeLearning');
 const BINANCE_SENDER = 'do-not-reply@ses.binance.com';
 const ACCOUNT_RAPPICARD = 'RappiCard';
 const ACCOUNT_BINANCE = 'Binance';
@@ -49,11 +50,13 @@ const SKIP = Object.freeze({
 
 // Primera coincidencia gana. Las categorías son las que ya usa Leo (financeAi.js).
 const MERCHANT_CATEGORIES = [
-    ['Transporte', /estaci[oó]n de servicio|\beds\b|primax|terpel|texaco|copetran|bolivariano|didi|uber|peaje|parqueadero/i],
-    ['Entretenimiento', /youtube|netflix|spotify|disney|hbo|prime video|cine|cinemark|procinal/i],
-    ['Comida', /tostao|kfc|crepes|waffles|mcdonald|burger|pizza|juan valdez|starbucks|oxxo|carulla|[eé]xito|\bd1\b|tienda d |s[uú]per|isimo|ara\b|pasteler|restaurante|caf[eé]|panader/i],
-    ['Salud', /farmacia|droguer|cruz verde|farmatodo|cl[ií]nica|hospital/i],
-    ['Ropa', /zara|h&m|arturo calle|studio f|ropa|zapater/i]
+    ['Vivienda', /homecenter|\beasy\b|tugo|jamar|ikea|\benel\b|codensa|vanti|acueducto|\beaab\b|\betb\b|movistar|\btigo\b|\bwom\b|claro (colombia|hogar|movil)/i],
+    ['Educacion', /platzi|udemy|coursera|domestika|libreria|panamericana|nacional de libros/i],
+    ['Transporte', /tu ?llave|transmilenio|recarga tm|cabify|indriver|picap|biomax|\bmobil\b|estaci[oó]n de servicio|\beds\b|primax|terpel|texaco|copetran|bolivariano|didi|uber|peaje|parqueadero/i],
+    ['Entretenimiento', /cine colombia|steam|playstation|xbox|google play|apple\.com|crunchyroll|youtube|netflix|spotify|disney|hbo|prime video|cine|cinemark|procinal/i],
+    ['Comida', /tostao|kfc|crepes|waffles|mcdonald|burger|pizza|juan valdez|starbucks|oxxo|carulla|[eé]xito|\bd1\b|tienda d |s[uú]per|isimo|ara\b|pasteler|restaurante|caf[eé]|panader|ol[ií]mpica|jumbo|makro|pricesmart|surtimax|frisby|el corral|\bpresto\b|domino|subway|dunkin|rappi ?(restaurant|turbo|market)|ifood|justo ?y ?bueno|cafam super/i],
+    ['Salud', /locatel|colsanitas|bodytech|smart ?fit|farmacia|droguer|cruz verde|farmatodo|cl[ií]nica|hospital/i],
+    ['Ropa', /koaj|adidas|nike|totto|bershka|pull ?& ?bear|offcorss|\bgef\b|zara|h&m|arturo calle|studio f|ropa|zapater/i]
 ];
 const DEFAULT_EXPENSE_CATEGORY = 'Otros';
 
@@ -195,7 +198,7 @@ function findPossibleManualDuplicate(existing, tx) {
 }
 
 function emptySummary(total) {
-    return { total, imported: 0, skipped: {}, importedTransactions: [], possibleDuplicates: [], balanceDelta: 0 };
+    return { total, imported: 0, autoClassified: 0, skipped: {}, importedTransactions: [], possibleDuplicates: [], balanceDelta: 0 };
 }
 
 function countSkip(summary, reason) {
@@ -258,6 +261,9 @@ function importEmails(jid, emails, options = {}) {
         }
 
         knownSourceIds.add(tx.sourceId);
+        // Lo que el usuario ya le enseñó a Leo (mismo número o mismo comercio) no se le vuelve a preguntar.
+        const rule = tx.needsReview ? learning.ruleFor(fin, tx) : null;
+        if (rule) { learning.applyRule(tx, rule); summary.autoClassified += 1; }
         accepted.push(tx);
     }
 

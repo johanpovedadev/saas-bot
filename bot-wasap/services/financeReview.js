@@ -8,6 +8,7 @@
 
 const { categorizeExpense } = require('./financeAi');
 const { pendingReviewOf, MAX_PENDING_SHOWN, NEED } = require('./financeInsights');
+const learning = require('./financeLearning');
 
 const PROMPT_VALIDITY_MS = 48 * 60 * 60 * 1000;
 const REVIEW_REPLY_PATTERN = /^\s*(\d{1,2})\s*[:.\-)]?\s+(.{2,80})$/;
@@ -59,13 +60,17 @@ function applyReviewReply(fin, text) {
     if (!reply) return null;
 
     const tx = pending[reply.index - 1];
+    tx.reviewKey = learning.reviewKeyOf(tx); // antes de cambiar la descripción: así se reconocen los iguales
     const detected = categorizeExpense(reply.description);
     tx.description = reply.description;
     tx.category = detected !== 'Otros' ? detected : (tx.medium === 'envio' ? 'Envíos' : tx.category);
     tx.necesidad = reply.necesidad;
     tx.needsReview = false;
     tx.reviewed = true;
-    return { tx, remaining: pending.length - 1 };
+    // Leo aprende: los pendientes iguales se clasifican ya y los que lleguen después no se preguntan.
+    learning.learn(fin, tx);
+    const autoApplied = learning.applyLearnedToPending(fin);
+    return { tx, remaining: pendingReviewOf(fin.transactions || []).length, autoApplied };
 }
 
 module.exports = { parseReviewReply, isReviewPromptActive, applyReviewReply };
