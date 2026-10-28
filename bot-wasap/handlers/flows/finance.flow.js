@@ -14,6 +14,8 @@ const { todayInBogota } = require('../../utils/financeDate');
 const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../../utils/financeMedium');
 const financeInsights = require('../../services/financeInsights');
 const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
+const financeReceipts = require('../../services/financeReceipts');
+const financeWeekly = require('../../services/financeWeekly');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -735,6 +737,13 @@ async function handle(sock, jid, text, userSession, ctx) {
         }
     }
 
+    // "¿dónde está más barata la leche?" / "precio leche": con los recibos del propio usuario, sin IA.
+    const cheaperProduct = financeReceipts.cheaperQuestion(text);
+    if (cheaperProduct) {
+        const results = financeReceipts.cheapestFor(fin.transactions, cheaperProduct);
+        return await say(sock, jid, financeReceipts.formatCheaper(cheaperProduct, results, (n) => formatMoney(n, fin)), ctx);
+    }
+
     // "resumen" / "informe" / "en qué se va mi plata": gastos agrupados con los datos reales, sin IA.
     if (isSpendingReportRequest(t)) {
         return await sendSpendingReport(sock, jid, ctx, fin);
@@ -1299,7 +1308,9 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         if (confirm.type === 'loan') {
             await saveLoanAndConfirm(sock, jid, confirm.counterparty, confirm.amount, confirm.direction, fin, ctx);
         } else {
-            await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx);
+            // Si el gasto viene de la foto de un recibo, se guardan sus productos para comparar precios entre tiendas.
+            const receiptExtra = financeReceipts.receiptExtraFor(userSession, confirm);
+            await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx, receiptExtra);
             for (const t2 of (Array.isArray(confirm.extra) ? confirm.extra : [])) {
                 await saveAndConfirm(sock, jid, t2.type, t2.amount, t2.category, t2.description, fin, ctx);
             }
@@ -1327,7 +1338,7 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
     }
 }
 
-async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx) {
+async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}) {
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1336,7 +1347,8 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         category,
         description,
         date: todayInBogota(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...extra
     };
     fin.transactions.push(tx);
     if (type === 'expense') {
@@ -1901,6 +1913,14 @@ function startNightReporter(sock, ctx) {
         if (hour >= 19 && hour < 20) {
             runNightReportSweep(sock, ctx);
         }
+        // Informe semanal (sábados 8 a. m.), por ahora solo para el admin de Telegram.
+        const adminJids = getAdminJids().filter((j) => j.endsWith('@telegram'));
+        financeWeekly.runWeeklySweep({
+            adminJids,
+            loadFinance: financeStore.loadFinance,
+            saveFinance: financeStore.saveFinance,
+            send: (jid, text) => say(sock, jid, text, ctx)
+        }).catch((e) => logger.error(`[informe semanal] ${e.message}`));
     }, CHECK_INTERVAL);
 }
 

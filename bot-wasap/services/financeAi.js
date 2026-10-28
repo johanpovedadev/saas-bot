@@ -3,6 +3,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
+const receipts = require('./financeReceipts');
 
 // gemini-2.0-flash fue retirado por Google (2026): con él, Leo caía siempre al modo sin IA y las fotos de recibos no
 // se leían. El modelo se puede cambiar sin tocar código con FINANCE_AI_MODEL.
@@ -184,26 +185,26 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     }
 
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: modeloFinanzas() });
-
-    const prompt = `Eres un asistente que lee facturas, recibos y tiquetes. Lee esta imagen y extrae el monto total y la descripción del negocio o producto. Responde en UNA SOLA línea con este formato exacto:\nCompré [descripción del negocio/producto] por [monto] pesos\nEjemplo: "Compré Almacén Éxito por 45000 pesos"\nSi no puedes leer la factura, responde con lo que veas en la imagen.`;
+    const model = genAI.getGenerativeModel({ model: modeloFinanzas(), generationConfig: { responseMimeType: 'application/json' } });
 
     try {
-        const imagePart = {
-            inlineData: {
-                mimeType: mimeType,
-                data: imageBase64
-            }
-        };
+        const imagePart = { inlineData: { mimeType, data: imageBase64 } };
         const result = await Promise.race([
-            model.generateContent([prompt, imagePart]),
+            model.generateContent([receipts.RECEIPT_PROMPT, imagePart]),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
         ]);
         const response = await result.response;
         const text = response.text().trim();
         if (!text) return null;
-        logger.info(`financeAi interpretImage lectura: "${text.substring(0, 80)}"`);
-        return text;
+        // Una sola llamada: total para registrar el gasto + productos para comparar precios entre tiendas.
+        const receipt = receipts.parseReceiptJson(text);
+        if (!receipt) {
+            logger.info(`financeAi interpretImage: no es un recibo legible ("${text.substring(0, 80)}")`);
+            return text;
+        }
+        if (userSession) userSession.lastReceipt = { ...receipt, at: Date.now() };
+        logger.info(`financeAi interpretImage: ${receipt.tienda} $${receipt.total}, ${receipt.items.length} productos`);
+        return receipts.purchaseLine(receipt);
     } catch (e) {
         logger.error(`financeAi interpretImage: ${e.message}`);
         return null;
@@ -336,6 +337,24 @@ function fallbackInterpret(message, userSession) {
             response: `🦁 ¡Rrrraaawr! Soy Leo. ¿Cómo te llamo?`,
             needs_confirmation: false
         };
+    }
+
+    // Línea que arma la lectura de un recibo: "Compré D1 La Victoria por 18500 pesos". El monto es el que va después
+    // de "por" (el nombre de la tienda puede traer números, como "D1", y no es el monto).
+    const receiptLine = raw.match(/^compr[eé]\s+(.+?)\s+por\s+\$?\s*([\d.,]+)\s*(?:pesos)?\s*$/i);
+    if (receiptLine) {
+        const amount = parseInt(receiptLine[2].replace(/[^\d]/g, ''), 10);
+        const desc = receiptLine[1].trim();
+        if (amount > 0 && desc) {
+            return {
+                intent: 'register_expense',
+                amount,
+                category: categorizeExpense(desc),
+                description: desc,
+                needs_confirmation: true,
+                response: `📝 *Gasto:* ${formatMoney(amount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
+            };
+        }
     }
 
     // Expense patterns: "gaste 18 mil en almuerzo", "pague 50k de mercado", etc.
