@@ -52,8 +52,8 @@ function pendingReviewOf(transactions) {
 }
 
 /** Calcula el resumen de los últimos `REPORT_DAYS` días hasta `today` (hora de Bogotá). */
-function buildSpendingReport(fin, today = todayInBogota()) {
-    const from = shiftDate(today, -(REPORT_DAYS - 1));
+function buildSpendingReport(fin, today = todayInBogota(), days = REPORT_DAYS) {
+    const from = shiftDate(today, -(days - 1));
     const periodTx = (fin.transactions || []).filter((tx) => tx.date >= from && tx.date <= today);
     const expenses = periodTx.filter((tx) => tx.type === 'expense');
     const incomes = periodTx.filter((tx) => tx.type === 'income');
@@ -87,7 +87,7 @@ function buildSpendingReport(fin, today = todayInBogota()) {
 
     const byMedium = sumExpensesByMedium(periodTx);
     return {
-        from, to: today, expenseTotal, incomeTotal: sumAmounts(incomes), expenseCount: expenses.length,
+        from, to: today, days, expenseTotal, incomeTotal: sumAmounts(incomes), expenseCount: expenses.length,
         byCategory, antSpending, byNeed, incomeBySource, byMedium,
         bankByAccount: sumBankExpensesByAccount(periodTx),
         cardOwed: byMedium[MEDIUM.CARD],
@@ -155,7 +155,7 @@ function formatPendingReview(pending, fin, limit = MAX_PENDING_SHOWN) {
 /** Mensaje completo de "¿En qué se va tu plata?". */
 function formatSpendingReport(report, fin) {
     const money = (amount) => formatMoney(amount, fin);
-    const out = [`📊 *¿En qué se va tu plata, ${fin.name}?*`, `_Últimos ${REPORT_DAYS} días_`, ''];
+    const out = [`📊 *¿En qué se va tu plata, ${fin.name}?*`, `_Últimos ${report.days || REPORT_DAYS} días_`, ''];
 
     if (report.expenseCount === 0) {
         out.push('Todavía no tengo gastos tuyos en este período. Contame lo que compres y te armo el resumen 🦁');

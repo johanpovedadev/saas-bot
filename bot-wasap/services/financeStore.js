@@ -106,6 +106,7 @@ function rowToFinance(row) {
         loans,
         currency: extra.currency || 'COP',
         reviewPromptedAt: extra.reviewPromptedAt || 0,
+        lastWeeklyReportDate: extra.lastWeeklyReportDate || '',
         learnedRules
     };
 }
@@ -152,6 +153,7 @@ function financeToRow(jid, fin) {
             loans: loansEnc,
             currency: fin.currency || 'COP',
             reviewPromptedAt: fin.reviewPromptedAt || 0,
+            lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
             learnedRules: rulesEnc
         })
     };

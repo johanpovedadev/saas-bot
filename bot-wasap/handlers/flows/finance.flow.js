@@ -15,6 +15,7 @@ const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../..
 const financeInsights = require('../../services/financeInsights');
 const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
 const financeReceipts = require('../../services/financeReceipts');
+const financeWeekly = require('../../services/financeWeekly');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -1912,6 +1913,14 @@ function startNightReporter(sock, ctx) {
         if (hour >= 19 && hour < 20) {
             runNightReportSweep(sock, ctx);
         }
+        // Informe semanal (sábados 8 a. m.), por ahora solo para el admin de Telegram.
+        const adminJids = getAdminJids().filter((j) => j.endsWith('@telegram'));
+        financeWeekly.runWeeklySweep({
+            adminJids,
+            loadFinance: financeStore.loadFinance,
+            saveFinance: financeStore.saveFinance,
+            send: (jid, text) => say(sock, jid, text, ctx)
+        }).catch((e) => logger.error(`[informe semanal] ${e.message}`));
     }, CHECK_INTERVAL);
 }
 
