@@ -4,6 +4,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
 
+// gemini-2.0-flash fue retirado por Google (2026): con él, Leo caía siempre al modo sin IA y las fotos de recibos no
+// se leían. El modelo se puede cambiar sin tocar código con FINANCE_AI_MODEL.
+function modeloFinanzas() {
+    return process.env.FINANCE_AI_MODEL || 'models/gemini-3.1-flash-lite';
+}
+
 function buildFinanceContext(userSession) {
     const fin = userSession.finance || {};
     const tier = fin.tier || 'free';
@@ -105,7 +111,7 @@ async function interpret(message, userSession, forceFallback) {
 
     const genAI = new GoogleGenerativeAI(key);
     const model = genAI.getGenerativeModel({
-        model: 'models/gemini-2.0-flash',
+        model: modeloFinanzas(),
         generationConfig: { responseMimeType: 'application/json' }
     });
 
@@ -144,7 +150,7 @@ async function interpretAudio(audioBase64, userSession) {
     }
 
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: modeloFinanzas() });
 
     const prompt = `Eres un asistente de transcripción. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz. No agregues nada, no interpretes, solo transcribe. Si el usuario menciona un gasto, cantidad o monto, inclúyelo tal cual lo dijo. Ejemplos de salidas correctas:\n- "Compré almuerzo por quince mil pesos"\n- "Ayer gasté treinta mil en el mercado"\n- "Hoy pagué el servicio de luz"\n- "Hola Leo, ¿cómo estás?"`;
 
@@ -178,7 +184,7 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
     }
 
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: modeloFinanzas() });
 
     const prompt = `Eres un asistente que lee facturas, recibos y tiquetes. Lee esta imagen y extrae el monto total y la descripción del negocio o producto. Responde en UNA SOLA línea con este formato exacto:\nCompré [descripción del negocio/producto] por [monto] pesos\nEjemplo: "Compré Almacén Éxito por 45000 pesos"\nSi no puedes leer la factura, responde con lo que veas en la imagen.`;
 
@@ -346,13 +352,14 @@ function fallbackInterpret(message, userSession) {
                 category: categorizeExpense(desc),
                 description: desc,
                 needs_confirmation: true,
-                response: `📝 *Registrado:* ${formatMoney(amount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
+                response: `📝 *Gasto:* ${formatMoney(amount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
 
     // Income patterns: "recibi 2 millones de sueldo", "me pagaron 500k", etc.
-    const ingresoPat = /(?:recibi|gane|ingreso|recibi|ingrese|pago|pagaron|me\s+pagaron)\s+(?:de|en|por)?\s*(.+)/i;
+    // Sin "pago" suelto: "pago arepa 8000" es un gasto (yo pago). Sí cuenta "pago de nómina/sueldo".
+    const ingresoPat = /(?:recibi|gane|ingreso|ingrese|me\s+pagaron|pagaron|me\s+consignaron|pago\s+de\s+(?:nomina|sueldo|salario|quincena))\s+(?:de|en|por)?\s*(.+)/i;
     const ingresoMatch = t.match(ingresoPat);
     if (ingresoMatch) {
         const rawDesc = ingresoMatch[1].trim();
@@ -365,7 +372,7 @@ function fallbackInterpret(message, userSession) {
                 category: categorizeIncome(desc),
                 description: desc,
                 needs_confirmation: true,
-                response: `💰 *Registrado:* ${formatMoney(amount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
+                response: `💰 *Ingreso* (te entró plata): ${formatMoney(amount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -460,10 +467,12 @@ function fallbackInterpret(message, userSession) {
     const anyAmount = parseAmount(raw);
     if (anyAmount > 0) {
         // Determine intent: income if income-related keywords present
-        const isIncome = /recibi|gane|ingreso|pago|pagaron|sueldo|salario|nomina|nomina/i.test(t);
+        // "Pago arepa 8000" es YO pago (un gasto). Ingreso es "me pagaron", "recibí", "sueldo"... (27 oct 2026: Leo
+        // guardó "Pago arepa rellena comida 8000" y "Pago parqueadero 4000" como ingresos).
+        const isIncome = /\b(recibi|gane|ingresos?|pagaron|consignaron|me (entro|llego)|sueldo|salario|nomina|vendi)\b/i.test(t);
         const rawDesc = isIncome
-            ? raw.replace(/recibi|gane|ingreso|pago|pagaron|me\s+pagaron/gi, '').trim()
-            : raw.replace(/compre|compro|compra|gaste|pague|costo|valio/gi, '').trim();
+            ? raw.replace(/recib[ií]|gan[eé]|ingresos?|me\s+pagaron|pagaron|consignaron|me\s+(entr[oó]|lleg[oó])|vend[ií]/gi, '').trim()
+            : raw.replace(/\b(compr[eéo]|compra|gast[eé]|pagu[eé]|pago|cost[oó]|vali[oó])\b/gi, '').trim();
         const desc = cleanDescription(rawDesc, anyAmount);
         if (desc.length > 0) {
             return {
@@ -473,8 +482,8 @@ function fallbackInterpret(message, userSession) {
                 description: desc,
                 needs_confirmation: true,
                 response: isIncome
-                    ? `💰 *Registrado:* ${formatMoney(anyAmount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
-                    : `📝 *Registrado:* ${formatMoney(anyAmount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
+                    ? `💰 *Ingreso* (te entró plata): ${formatMoney(anyAmount, fin)} - ${desc}\n\n¿Es correcto? (sí/no)`
+                    : `📝 *Gasto:* ${formatMoney(anyAmount, fin)} en ${desc}\n\n¿Es correcto? (sí/no)`
             };
         }
     }
@@ -570,4 +579,4 @@ function fallbackInterpret(message, userSession) {
     };
 }
 
-module.exports = { interpret, interpretAudio, interpretImage, categorizeExpense };
+module.exports = { interpret, interpretAudio, interpretImage, categorizeExpense, fallbackInterpret, modeloFinanzas };
