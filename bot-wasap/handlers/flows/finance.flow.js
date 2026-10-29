@@ -1767,7 +1767,7 @@ async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
 
 /**
  * Genera el informe nocturno para un usuario y lo envía.
- * Llamar desde un scheduler externo o setInterval entre 7-8 PM.
+ * Llamar desde un scheduler externo o setInterval a las 9 p. m. (hora de Colombia).
  */
 async function generateNightReport(sock, jid, fin, ctx) {
     if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
@@ -1906,14 +1906,13 @@ async function runNightReportSweep(sock, ctx) {
 }
 
 function startNightReporter(sock, ctx) {
-    // Check every 15 minutes if it's 7-8 PM
+    // Cada 15 min revisa si son las 9 p. m. en Colombia (antes 7 p. m. con la hora del servidor).
     const CHECK_INTERVAL = 15 * 60 * 1000; // 15 min
     setInterval(() => {
-        const hour = new Date().getHours();
-        if (hour >= 19 && hour < 20) {
+        if (financeWeekly.isNightReportTime(new Date())) {
             runNightReportSweep(sock, ctx);
         }
-        // Informe semanal (sábados 8 a. m.), por ahora solo para el admin de Telegram.
+        // Informe semanal (sábados 9 p. m.), por ahora solo para el admin de Telegram.
         const adminJids = getAdminJids().filter((j) => j.endsWith('@telegram'));
         financeWeekly.runWeeklySweep({
             adminJids,

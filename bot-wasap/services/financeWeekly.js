@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Informe semanal de Leo: cada sábado a las 8 a. m. (hora de Bogotá) llega el resumen de la semana, comparado con la
+ * Informe semanal de Leo: cada sábado a las 9 p. m. (hora de Colombia; Johan, 29 oct 2026) llega el resumen de la semana, comparado con la
  * semana anterior, y lo que va del mes. Por ahora solo para el admin (ADMIN_TELEGRAM_ID); después se abre a planes.
  * Origen: Johan, 27 oct 2026. Todo sale de los movimientos guardados: no hay IA ni cifras inventadas.
  */
@@ -10,7 +10,7 @@ const insights = require('./financeInsights');
 const { formatMoney } = require('../utils/financeMoney');
 
 const SATURDAY = 6;
-const SEND_HOUR = 8;
+const SEND_HOUR = 21;
 const WEEK_DAYS = 7;
 
 function bogotaParts(now) {
@@ -22,7 +22,14 @@ function bogotaParts(now) {
     return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: parseInt(get('hour'), 10) % 24, weekday };
 }
 
-/** ¿Toca mandar el informe ahora? Sábado entre 8:00 y 8:59 y todavía no se mandó hoy. */
+/** ¿Toca mandar el informe ahora? Sábado entre 9:00 y 9:59 p. m. (Bogotá) y todavía no se mandó hoy. */
+const NIGHT_REPORT_HOUR = 21; // informe de la noche: 9 p. m. hora de Colombia (Johan, 29 oct 2026)
+
+/** ¿Es la hora del informe de la noche en Bogotá, sin importar la zona horaria del servidor? */
+function isNightReportTime(now) {
+    return bogotaParts(now).hour === NIGHT_REPORT_HOUR;
+}
+
 function isWeeklyTime(now, lastSentDate) {
     const p = bogotaParts(now);
     return p.weekday === SATURDAY && p.hour === SEND_HOUR && lastSentDate !== p.date;
@@ -73,4 +80,4 @@ async function runWeeklySweep({ now = new Date(), adminJids, loadFinance, saveFi
     return enviados;
 }
 
-module.exports = { isWeeklyTime, buildWeeklyMessage, runWeeklySweep, bogotaParts };
+module.exports = { isWeeklyTime, isNightReportTime, buildWeeklyMessage, runWeeklySweep, bogotaParts, NIGHT_REPORT_HOUR };
