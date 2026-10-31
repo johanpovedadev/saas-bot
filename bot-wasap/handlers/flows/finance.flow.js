@@ -17,6 +17,7 @@ const { isReviewPromptActive, applyReviewReply } = require('../../services/finan
 const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
+const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -1164,7 +1165,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'chat':
         case 'help':
         case 'goal_query':
-            await say(sock, jid, result.response, ctx);
+            // Si la respuesta de la IA da consejos de plata, va con el aviso de que Leo no es asesor financiero.
+            await say(sock, jid, withDisclaimer(result.response), ctx);
             break;
 
         case 'upgrade':
@@ -1172,7 +1174,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             break;
 
         case 'health_score':
-            await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
+            await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
             break;
 
         case 'goals':
@@ -1235,7 +1237,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                 await sendSpendingReport(sock, jid, ctx, fin);
                 return;
             case '4':
-                await say(sock, jid, financeScore.buildHealthMessage(fin), ctx);
+                await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
                 return;
             case '5':
                 userSession.phase = PHASE.FIN_GOALS;

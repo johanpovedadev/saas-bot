@@ -8,6 +8,7 @@
  */
 
 const { formatMoney } = require('../utils/financeMoney');
+const { DISCLAIMER } = require('../utils/financeDisclaimer');
 const { todayInBogota } = require('../utils/financeDate');
 const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../utils/financeMedium');
 
@@ -195,6 +196,7 @@ function formatSpendingReport(report, fin) {
 
     const pending = formatPendingReview(report.pendingReview, fin);
     if (pending) out.push('', pending.trimEnd());
+    out.push('', DISCLAIMER);
     return out.join('\n');
 }
 
