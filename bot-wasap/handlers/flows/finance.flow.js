@@ -16,6 +16,7 @@ const financeInsights = require('../../services/financeInsights');
 const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
 const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
+const financeEmailInbox = require('../../services/financeEmailInbox');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
@@ -1905,15 +1906,30 @@ async function runNightReportSweep(sock, ctx) {
     }
 }
 
+/** Importa los correos que dejaron en la bandeja de Leo (ver services/financeEmailInbox.js). Nunca tumba el bot. */
+async function importEmailInbox(jid) {
+    if (!jid) return;
+    try {
+        for (const r of await financeEmailInbox.processInbox({ jid })) {
+            if (r.error) logger.error(`[correos] ${r.file}: ${r.error}`);
+            else logger.info(`[correos] ${r.file}: ${r.imported} importados${r.retry ? ' (falta TRM, se reintenta)' : ''}`);
+        }
+    } catch (e) {
+        logger.error(`[correos] ${e.message}`);
+    }
+}
+
 function startNightReporter(sock, ctx) {
     // Cada 15 min revisa si son las 9 p. m. en Colombia (antes 7 p. m. con la hora del servidor).
     const CHECK_INTERVAL = 15 * 60 * 1000; // 15 min
-    setInterval(() => {
+    setInterval(async () => {
+        const adminJids = getAdminJids().filter((j) => j.endsWith('@telegram'));
+        // Primero las compras que llegaron al correo (data/correos_entrantes), para que salgan en el informe.
+        await importEmailInbox(adminJids[0]);
         if (financeWeekly.isNightReportTime(new Date())) {
             runNightReportSweep(sock, ctx);
         }
         // Informe semanal (sábados 9 p. m.), por ahora solo para el admin de Telegram.
-        const adminJids = getAdminJids().filter((j) => j.endsWith('@telegram'));
         financeWeekly.runWeeklySweep({
             adminJids,
             loadFinance: financeStore.loadFinance,
@@ -1982,5 +1998,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
+    _internal: { importEmailInbox, bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
 };
