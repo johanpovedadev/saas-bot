@@ -10,7 +10,8 @@ const { categorizeExpense } = require('./financeAi');
 const { pendingReviewOf, MAX_PENDING_SHOWN, NEED } = require('./financeInsights');
 const learning = require('./financeLearning');
 
-const PROMPT_VALIDITY_MS = 48 * 60 * 60 * 1000;
+// Johan responde cuando puede (a veces días después): 48 h se quedaba corto y "1 comida" terminaba como gasto de $1.
+const PROMPT_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const REVIEW_REPLY_PATTERN = /^\s*(\d{1,2})\s*[:.\-)]?\s+(.{2,80})$/;
 // "3 mil en almuerzo" es un gasto nuevo, no la respuesta a un movimiento por clasificar.
 const NEW_EXPENSE_PATTERN = /^(mil|millon|millones|k|pesos|\$)\b/i;
@@ -42,7 +43,9 @@ function parseReviewReply(text, pendingCount) {
         }
     }
     const description = capitalize(rest.replace(/\s+/g, ' ').replace(/[,.;:-]+$/, '').trim());
-    return description ? { index, description, necesidad } : null;
+    if (description) return { index, description, necesidad };
+    // "1 prescindible": solo dice qué tan necesario fue; la descripción se queda como estaba.
+    return necesidad ? { index, description: null, necesidad } : null;
 }
 
 /** ¿Leo le mostró hace poco la lista de movimientos por clasificar? Solo entonces "1 mercado" es una respuesta. */
@@ -61,9 +64,11 @@ function applyReviewReply(fin, text) {
 
     const tx = pending[reply.index - 1];
     tx.reviewKey = learning.reviewKeyOf(tx); // antes de cambiar la descripción: así se reconocen los iguales
-    const detected = categorizeExpense(reply.description);
-    tx.description = reply.description;
-    tx.category = detected !== 'Otros' ? detected : (tx.medium === 'envio' ? 'Envíos' : tx.category);
+    if (reply.description) {
+        const detected = categorizeExpense(reply.description);
+        tx.description = reply.description;
+        tx.category = detected !== 'Otros' ? detected : (tx.medium === 'envio' ? 'Envíos' : tx.category);
+    }
     tx.necesidad = reply.necesidad;
     tx.needsReview = false;
     tx.reviewed = true;
@@ -73,4 +78,4 @@ function applyReviewReply(fin, text) {
     return { tx, remaining: pendingReviewOf(fin.transactions || []).length, autoApplied };
 }
 
-module.exports = { parseReviewReply, isReviewPromptActive, applyReviewReply };
+module.exports = { PROMPT_VALIDITY_MS, parseReviewReply, isReviewPromptActive, applyReviewReply };
