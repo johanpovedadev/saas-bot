@@ -26,6 +26,7 @@ const { MEDIUM } = require('../utils/financeMedium');
 const RAPPICARD_SENDER = 'noreply@rappicard.co';
 const RAPPICARD_PURCHASE_SUBJECT = 'RappiCard - Resumen de transacción';
 const RAPPIPAY_SENDER = 'noreply@rappipay.co';
+const RAPPIPAY_SERVICE_SENDER = 'noreply@holdingrappipay.co';
 const BBVA_BREB_SENDER = 'notificacionesBreB@bbva.com'.toLowerCase();
 const learning = require('./financeLearning');
 const BINANCE_SENDER = 'do-not-reply@ses.binance.com';
@@ -50,11 +51,11 @@ const SKIP = Object.freeze({
 
 // Primera coincidencia gana. Las categorías son las que ya usa Leo (financeAi.js).
 const MERCHANT_CATEGORIES = [
-    ['Vivienda', /homecenter|\beasy\b|tugo|jamar|ikea|\benel\b|codensa|vanti|acueducto|\beaab\b|\betb\b|movistar|\btigo\b|\bwom\b|claro (colombia|hogar|movil)/i],
+    ['Vivienda', /homecenter|\beasy\b|tugo|jamar|ikea|\benel\b|codensa|vanti|acueducto|\beaab\b|\betb\b|movistar|\btigo\b|\bwom\b|claro (colombia|hogar|movil)|comcel/i],
     ['Educacion', /platzi|udemy|coursera|domestika|libreria|panamericana|nacional de libros/i],
     ['Transporte', /tu ?llave|transmilenio|recarga tm|cabify|indriver|picap|biomax|\bmobil\b|estaci[oó]n de servicio|\beds\b|primax|terpel|texaco|copetran|bolivariano|didi|uber|peaje|parqueadero/i],
     ['Entretenimiento', /cine colombia|steam|playstation|xbox|google play|apple\.com|crunchyroll|youtube|netflix|spotify|disney|hbo|prime video|cine|cinemark|procinal/i],
-    ['Comida', /tostao|kfc|crepes|waffles|mcdonald|burger|pizza|juan valdez|starbucks|oxxo|carulla|[eé]xito|\bd1\b|tienda d |s[uú]per|isimo|ara\b|pasteler|restaurante|caf[eé]|panader|ol[ií]mpica|jumbo|makro|pricesmart|surtimax|frisby|el corral|\bpresto\b|domino|subway|dunkin|rappi ?(restaurant|turbo|market)|ifood|justo ?y ?bueno|cafam super/i],
+    ['Comida', /tostao|coffee|frut(o|a|er)|fruver|kfc|crepes|waffles|mcdonald|burger|pizza|juan valdez|starbucks|oxxo|carulla|[eé]xito|\bd1\b|tienda d |s[uú]per|isimo|ara\b|pasteler|restaurante|caf[eé]|panader|ol[ií]mpica|jumbo|makro|pricesmart|surtimax|frisby|el corral|\bpresto\b|domino|subway|dunkin|rappi ?(restaurant|turbo|market)|ifood|justo ?y ?bueno|cafam super/i],
     ['Salud', /locatel|colsanitas|bodytech|smart ?fit|farmacia|droguer|cruz verde|farmatodo|cl[ií]nica|hospital/i],
     ['Ropa', /koaj|adidas|nike|totto|bershka|pull ?& ?bear|offcorss|\bgef\b|zara|h&m|arturo calle|studio f|ropa|zapater/i]
 ];
@@ -122,6 +123,7 @@ function classifyEmail(email) {
         if (/Retiraste dinero/i.test(subject)) return { skip: SKIP.CASH_WITHDRAWAL };
         if (/Tu dinero ya está disponible/i.test(subject)) return { skip: SKIP.RECEIVED_TRANSFER };
     }
+    if (from.includes(RAPPIPAY_SERVICE_SENDER) && /Resumen de Pago a Servicio/i.test(subject)) return { kind: 'rappipay_service' };
     if (from.includes(BBVA_BREB_SENDER) && /Tu envío con llave fue exitoso/i.test(subject)) return { kind: 'bbva_send' };
     return { skip: SKIP.UNSUPPORTED };
 }
@@ -165,6 +167,22 @@ function binanceTransaction(purchase, rate) {
         }),
         original: { currency: purchase.currency, value: purchase.value, rate: rate.rate, rateDate: rate.validFrom }
     };
+}
+
+/** Pago de un servicio (celular, internet...) con la tarjeta desde RappiPay: es deuda de la tarjeta, no toca el saldo. */
+function servicePaymentTransaction(payment) {
+    const category = categorizeMerchant(payment.biller);
+    return baseTransaction({
+        amount: payment.amount,
+        category,
+        description: `Pago ${titleCase(payment.biller)}`,
+        date: payment.date,
+        timestamp: payment.timestamp,
+        account: ACCOUNT_RAPPICARD,
+        medium: MEDIUM.CARD,
+        sourceId: `rappipay_servicio:${payment.approval}`,
+        needsReview: category === DEFAULT_EXPENSE_CATEGORY
+    });
 }
 
 function transferDescription(destination) {
@@ -219,6 +237,10 @@ function buildTransaction(email, options) {
         if (!purchase) return { skip: SKIP.UNPARSEABLE };
         const rate = purchase.currency === 'USD' ? (options.usdRates || {})[bogotaDateOf(purchase.timestamp)] : null;
         return rate ? { tx: binanceTransaction(purchase, rate) } : { skip: SKIP.NO_USD_RATE };
+    }
+    if (kind.kind === 'rappipay_service') {
+        const payment = parsers.parseRappiPayServicePayment(email.text);
+        return payment ? { tx: servicePaymentTransaction(payment) } : { skip: SKIP.UNPARSEABLE };
     }
     const isRappiPay = kind.kind === 'rappipay_send';
     const transfer = isRappiPay ? parsers.parseRappiPayTransfer(email.text) : parsers.parseBbvaBrebSend(email.text);

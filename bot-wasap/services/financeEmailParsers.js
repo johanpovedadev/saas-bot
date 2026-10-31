@@ -46,7 +46,8 @@ function toDateIso(year, month, day) {
 /** "Pagaste 11.58 USD a EXITO EXPRESS TORRE AL." + la hora UTC del asunto. */
 function parseBinanceCardPurchase(email) {
     const body = String(email.text || '');
-    const payment = body.match(/Pagaste\s+([\d.,]+)\s+([A-Z]{3})\s+a\s+(.+?)\.\s*(?:¡|Se ha|$)/);
+    // El comercio termina en el primer punto seguido de espacio o fin ("... SAN CRISTOB. Si no fuiste tú ...").
+    const payment = body.match(/Pagaste\s+([\d.,]+)\s+([A-Z]{3})\s+a\s+(.+?)\.(?:\s|$)/);
     const when = String(email.subject || '').match(/(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) \(UTC\)/);
     if (!payment || !when) return null;
     const value = parseFloat(payment[1].replace(/,/g, ''));
@@ -126,7 +127,29 @@ function isOwnDestination(destination, ownMarkers) {
         .some((candidate) => candidate && markers.has(candidate));
 }
 
+const SHORT_MONTHS = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, oct: 10, nov: 11, dic: 12 };
+
+/**
+ * Pago de servicio con tarjeta desde RappiPay ("RappiPay - Resumen de Pago a Servicio - Claro Telefonía Móvil").
+ * Fecha "12:56 hrs, 27 Oct. 2026" en hora de Bogotá; el número de aprobación evita duplicados.
+ */
+function parseRappiPayServicePayment(text) {
+    const cells = cellsOf(text);
+    const biller = valueAfterLabel(cells, 'Convenio');
+    const total = valueAfterLabel(cells, 'Pago total') || valueAfterLabel(cells, 'Monto de recibo');
+    const approval = valueAfterLabel(cells, 'Aprobación');
+    const when = String(valueAfterLabel(cells, 'Fecha y hora') || '').match(/(\d{1,2}):(\d{2})\s*hrs,\s*(\d{1,2})\s+([a-z]{3})\w*\.?\s+(\d{4})/i);
+    if (!biller || !total || !approval || !when) return null;
+    const month = SHORT_MONTHS[when[4].toLowerCase()];
+    // "$69,800": en este correo la coma es separador de miles.
+    const amount = parseInt(String(total).replace(/[^\d]/g, ''), 10);
+    if (!month || !Number.isFinite(amount) || amount <= 0) return null;
+    const date = toDateIso(when[5], month, parseInt(when[3], 10));
+    return { biller: biller.trim(), amount, approval: approval.trim(), date, timestamp: bogotaTimestamp(date, parseInt(when[1], 10), parseInt(when[2], 10)) };
+}
+
 module.exports = {
+    parseRappiPayServicePayment,
     parseBinanceCardPurchase,
     parseRappiPayTransfer,
     parseBbvaBrebSend,
