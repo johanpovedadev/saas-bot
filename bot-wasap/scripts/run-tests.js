@@ -48,6 +48,8 @@ const CONV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'lion-tests-conv-'));
 // --with-ai: corre SOLO los tests que dependen de Gemini de verdad (con la clave real y gastando cuota).
 // Sin la bandera, esos tests no corren y NINGÚN test sale a la red.
 const WITH_AI = process.argv.includes('--with-ai');
+// --only=test_finance corre solo las pruebas de un negocio (p. ej. Leo), con el mismo entorno que la suite completa.
+const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice('--only='.length);
 
 // REGLA del proyecto: las pruebas simulan la IA, siempre. Gastar tokens reales es decisión de Johan y se declara
 // a propósito (ALLOW_REAL_AI=1); sin eso ni siquiera arranca, para que no pase por accidente (30 sept y 3 oct 2026).
@@ -85,7 +87,7 @@ function isSkipped(file) {
 
 const allFiles = findTestFiles();
 const usesRealAi = (f) => { try { return fs.readFileSync(f, 'utf8').includes(AI_MARKER); } catch (e) { return false; } };
-const toRun = allFiles.filter(f => !isSkipped(f) && (WITH_AI ? usesRealAi(f) : !usesRealAi(f)));
+const toRun = allFiles.filter(f => !isSkipped(f) && (!ONLY || path.basename(f).startsWith(ONLY)) && (WITH_AI ? usesRealAi(f) : !usesRealAi(f)));
 const skipped = allFiles.filter(isSkipped);
 
 console.log(`Encontrados ${allFiles.length} archivos de test (${skipped.length} excluidos por marcador "${SKIP_MARKER}")\n`);
