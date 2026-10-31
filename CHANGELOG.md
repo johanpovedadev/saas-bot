@@ -33,6 +33,68 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.4.0] - 2026-10-31
+
+### Agregado
+
+- **Leo no es asesor financiero:** el informe, la salud financiera y toda respuesta con consejos de ahorro, deudas o
+  tarjeta terminan con el aviso «Leo no es asesor financiero: te muestra opciones con tus datos para que decidas tú».
+  La IA presenta opciones, no órdenes (#79).
+- **Ajustes por la bandeja:** un archivo `{ "movimientos": [...] }` en `data/correos_entrantes` agrega lo que sale del
+  extracto y no llegó por correo, sin duplicar (#79).
+- `scripts/run-tests.js --only=test_finance`: corre solo las pruebas de Leo con el mismo entorno de la suite (#79).
+
+## [1.3.1] - 2026-10-31
+
+### Corregido
+
+- Responder «1 comida» o «1 prescindible» a «¿en qué fue este gasto?» creaba una compra de $1. La pregunta ahora vale
+  7 días (antes 48 h) y «1 prescindible» marca la necesidad sin cambiar el nombre (#77).
+
+## [1.3.0] - 2026-10-31
+
+### Agregado
+
+- **Compras del correo automáticas:** una tarea diaria (8:40 p. m.) deja los correos de RappiCard, Binance, RappiPay y
+  BBVA en `data/correos_entrantes`; Leo los importa cada 15 min, sin duplicar, antes del informe de las 9 p. m. (#75).
+- Pago de servicios con tarjeta desde RappiPay (Claro) como gasto con tarjeta (#75).
+
+### Corregido
+
+- Binance: el nombre del comercio ya no se come el resto del correo (#75).
+- Café y fruterías se clasifican como Comida; Claro Comcel como Vivienda (#75).
+
+## [1.2.1] - 2026-10-29
+
+### Cambiado
+
+- Informe de la noche y semanal (sábados) a las **9 p. m. hora de Colombia**, calculado en `America/Bogota` (#73).
+
+## [1.2.0] - 2026-10-27
+
+### Agregado
+
+- **Recibos por producto:** una sola llamada a la IA lee tienda, total y cada producto del recibo (#71).
+- **«¿Dónde está más barato?»** con los recibos del propio usuario, sin inventar precios (#71).
+- **Informe semanal** de los sábados para el admin (#71).
+
+### Corregido
+
+- Leo vuelve a usar IA (modelo `gemini-3.1-flash-lite`) y «Pago X» es gasto, no ingreso (#70).
+- En «Compré D1 La Victoria por 18500» el monto es el que va después de «por» (#71).
+
+## [1.1.0] - 2026-10-26
+
+### Agregado
+
+- **Leo Financiero:** importar compras y envíos del correo, informe agrupado y Leo que aprende de cada respuesta (#45, #52).
+- **Mundo Helados:** intención del cliente en todas las fases, red de seguridad (apagada con `SAFETY_NET`) y revisión diaria.
+- **Ecosistema:** registro de puertos y validación antes de arrancar, `ecosystem.config.js` seguro y reglas «quién hace qué».
+
+### Cambiado
+
+- `db.sqlite3` deja de estar versionado (el archivo de producción se conserva).
+
 ## [1.0.0] - 2026-10-08
 
 Primera versión publicada con Gitflow (`develop` → `release/1.0.0` → `main`). Reúne el trabajo de septiembre y octubre de
