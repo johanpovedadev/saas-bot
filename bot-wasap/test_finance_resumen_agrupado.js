@@ -143,8 +143,10 @@ function cleanup() {
         assert.strictEqual(review.isReviewPromptActive(finA), false, 'sin haberle mostrado la lista no vale como respuesta');
         finA.reviewPromptedAt = Date.now();
         assert.strictEqual(review.isReviewPromptActive(finA), true);
-        finA.reviewPromptedAt = Date.now() - 49 * 3600 * 1000;
-        assert.strictEqual(review.isReviewPromptActive(finA), false, 'la respuesta vale 48 horas');
+        finA.reviewPromptedAt = Date.now() - 4 * 24 * 3600 * 1000;
+        assert.strictEqual(review.isReviewPromptActive(finA), true, 'responder días después sigue valiendo (antes 48 h y terminaba como gasto de $1)');
+        finA.reviewPromptedAt = Date.now() - 8 * 24 * 3600 * 1000;
+        assert.strictEqual(review.isReviewPromptActive(finA), false, 'la respuesta vale una semana');
         console.log('OK: la respuesta clasifica el movimiento y solo vale si Leo preguntó hace poco');
 
         // --- Dentro de Leo, con el chat real ---
