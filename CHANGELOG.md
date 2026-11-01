@@ -33,6 +33,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.7.0] - 2026-11-01
+
+### Agregado
+
+- **Medallas:** 15 logros por hábitos y % de la meta, cada uno con su imagen; «medallas» muestra las ganadas y las próximas (#86, #103).
+- **Tarjeta para compartir:** «compartir» manda una imagen con racha, nivel, medallas y % de la meta, más el código para
+  invitar amigos, sin montos (#86, #103).
+
 ## [1.6.0] - 2026-11-01
 
 ### Agregado
