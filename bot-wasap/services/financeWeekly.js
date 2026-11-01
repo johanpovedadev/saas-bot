@@ -7,6 +7,7 @@
  */
 
 const insights = require('./financeInsights');
+const goals = require('./financeGoals');
 const { formatMoney } = require('../utils/financeMoney');
 
 const SATURDAY = 6;
@@ -56,9 +57,11 @@ function buildWeeklyMessage(fin, today) {
             : diff < 0 ? `📉 Gastaste ${money(-diff)} menos que la semana pasada (−${pct}%). ¡Bien! 💪`
                 : 'Igual que la semana pasada.';
     }
+    const goalLine = goals.weeklyGoalLine(fin, today, report.expenseTotal, previous);
     return [
         `🦁 *Tu semana con Leo, ${fin.name}*`,
         comparison,
+        ...(goalLine ? [goalLine] : []),
         `🗓️ En lo que va del mes: ${money(monthToDate)}`,
         '',
         insights.formatSpendingReport(report, fin)
