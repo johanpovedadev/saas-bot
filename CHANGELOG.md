@@ -33,6 +33,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.5.0] - 2026-11-01
+
+### Agregado
+
+- **Metas con fecha:** Leo dice en qué mes llegas a tu meta, con el ahorro que digas («ahorro 2 millones al mes») o
+  el que sale de tus ingresos menos gastos; sin datos suficientes no inventa la fecha (#83, #97).
+- **Cada decisión mueve la fecha:** el informe semanal dice cuántos días se acercó o alejó la meta, y el de la noche
+  celebra cuando gastaste menos que tu promedio (#84, #97).
+
 ## [1.4.0] - 2026-10-31
 
 ### Agregado
