@@ -8,6 +8,7 @@
 
 const insights = require('./financeInsights');
 const goals = require('./financeGoals');
+const streak = require('./financeStreak');
 const { formatMoney } = require('../utils/financeMoney');
 
 const SATURDAY = 6;
@@ -62,6 +63,7 @@ function buildWeeklyMessage(fin, today) {
         `🦁 *Tu semana con Leo, ${fin.name}*`,
         comparison,
         ...(goalLine ? [goalLine] : []),
+        ...(streak.statusLine(fin) ? [streak.statusLine(fin)] : []),
         `🗓️ En lo que va del mes: ${money(monthToDate)}`,
         '',
         insights.formatSpendingReport(report, fin)

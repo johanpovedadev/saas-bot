@@ -18,6 +18,7 @@ const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
+const financeStreak = require('../../services/financeStreak');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
@@ -126,12 +127,8 @@ function getWelcomeMessage() {
  * como 0.
  */
 function bumpStreak(fin) {
-    const today = new Date().toDateString();
-    if (fin.lastStreakDate === today) return; // ya contado hoy
-    const yesterday = new Date(Date.now() - 86400000).toDateString();
-    fin.streak = fin.lastStreakDate === yesterday ? fin.streak + 1 : 1;
-    fin.lastStreakDate = today;
-    fin.bestStreak = Math.max(fin.bestStreak || 0, fin.streak);
+    // Protector de racha y niveles del león (#85): ver services/financeStreak.js.
+    return financeStreak.bump(fin);
 }
 
 // ============================================================================
@@ -1381,8 +1378,9 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
 
     const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
 
-    // #8 — racha
-    bumpStreak(fin);
+    // #8 — racha (con protector y niveles, #85)
+    const streakEvent = bumpStreak(fin);
+    const streakEventLines = financeStreak.eventLines(streakEvent, fin);
 
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
@@ -1421,6 +1419,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         balanceLine + '\n' +
         todayMsg +
         streakMsg +
+        (streakEventLines.length ? `${streakEventLines.join('\n')}\n` : '') +
         milestoneMsg +
         planLine +
         (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
@@ -1818,7 +1817,8 @@ async function generateNightReport(sock, jid, fin, ctx) {
             ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
-    const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
+    // Racha, nivel del león y protectores (#85).
+    const streakLine = fin.streak >= 2 ? `${financeStreak.statusLine(fin)}\n` : '';
     // Metas con fecha (#83) y cuánto se acercó hoy (#84).
     const projectionText = fin.goalTarget > 0 ? financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin) : '';
     const goalDayText = financeGoals.dailyGoalLine(fin, today, todayExpense);
