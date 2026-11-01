@@ -6,7 +6,7 @@ const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
 const financeScore = require('../../services/financeScore');
-const { generateCard, getNewMilestones, getGoalType } = require('../../services/financeCard');
+const { generateCard, generateShareCard, getNewMilestones, getGoalType } = require('../../services/financeCard');
 const financeReferral = require('../../services/financeReferral');
 const financeAdmin = require('../../services/financeAdmin');
 const { formatMoney, CURRENCY_LABELS, SUPPORTED_CURRENCIES } = require('../../utils/financeMoney');
@@ -19,6 +19,7 @@ const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
 const financeStreak = require('../../services/financeStreak');
+const financeMedals = require('../../services/financeMedals');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
@@ -126,6 +127,10 @@ function getWelcomeMessage() {
  * venir undefined en cuentas viejas creadas antes de este campo - se trata
  * como 0.
  */
+function stripAccentsLower(text) {
+    return String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[¿?¡!.]/g, '').trim();
+}
+
 function bumpStreak(fin) {
     // Protector de racha y niveles del león (#85): ver services/financeStreak.js.
     return financeStreak.bump(fin);
@@ -735,6 +740,19 @@ async function handle(sock, jid, text, userSession, ctx) {
             financeStore.saveFinance(jid, fin);
             return await confirmReview(sock, jid, ctx, reviewed);
         }
+    }
+
+    // Medallas y tarjeta para compartir (#86). Sin IA, también en el plan Gratis.
+    const command = stripAccentsLower(t);
+    if (MEDALS_COMMAND.test(command)) {
+        financeMedals.awardNew(fin);
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, financeMedals.formatMedalList(fin), ctx);
+    }
+    if (SHARE_COMMAND.test(command)) {
+        await sendShareCard(sock, jid, fin, ctx);
+        financeStore.saveFinance(jid, fin);
+        return;
     }
 
     // "ahorro 2 millones al mes": cuánto aparta para su meta, y en qué fecha llega (#83). Sin IA.
@@ -1452,27 +1470,8 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     }
     fin.firstTransactionDone = true;
 
-    // Generate milestone cards
-    const newMilestones = getNewMilestones(fin, prevFin);
-    for (const mId of newMilestones) {
-        if (!fin.milestonesSent.includes(mId)) {
-            try {
-                const goalType = fin.goalName ? getGoalType(fin.goalName) : null;
-                const extra = mId.startsWith('goal-') && fin.goalName ? `${fin.goalName}` : undefined;
-                const imgPath = await generateCard(fin.name, mId, extra, goalType?.emoji);
-                let caption = `🦁 ${mId.replace(/-/g, ' ').toUpperCase()}`;
-                if (mId.startsWith('goal-') && fin.goalName) {
-                    const pct = mId.replace('goal-', '');
-                    caption = `🎉 ${goalType.emoji} *¡${pct}% de tu meta "${fin.goalName}"!*\n` +
-                        `Llevás ${formatMoney(fin.balance, fin)} de ${formatMoney(fin.goalTarget, fin)}. ¡Seguí así! 🦁`;
-                }
-                await sendImage(sock, jid, imgPath, caption, ctx);
-                fin.milestonesSent.push(mId);
-            } catch (e) {
-                logger.error(`[${jid}] Error generating milestone card ${mId}: ${e.message}`);
-            }
-        }
-    }
+    // Medallas (#86): por hábitos y % de meta, sin montos. Cada una con su tarjeta para compartir.
+    await sendNewMedals(sock, jid, fin, ctx);
 
     financeStore.saveFinance(jid, fin);
     logger.info({ jid, type, category, description }, 'Finance transaction saved');
@@ -1931,6 +1930,47 @@ async function runNightReportSweep(sock, ctx) {
     }
 }
 
+const SHARE_COMMAND = /^(compartir|mi tarjeta|compartir (mi )?tarjeta|compartir logros)$/;
+const MEDALS_COMMAND = /^(medallas|mis medallas|logros|mis logros)$/;
+
+/** Manda las medallas nuevas con su tarjeta. Sin montos en la imagen ni en el texto. */
+async function sendNewMedals(sock, jid, fin, ctx) {
+    const goalType = fin.goalName ? getGoalType(fin.goalName) : null;
+    for (const medal of financeMedals.awardNew(fin)) {
+        try {
+            const extra = medal.id.startsWith('meta-') && fin.goalName ? fin.goalName : undefined;
+            const imgPath = await generateCard(fin.name, medal, extra, goalType?.emoji);
+            await sendImage(sock, jid, imgPath, `🏅 *Nueva medalla: ${medal.label}*\n${medal.sub} 🦁\n_Escribí *compartir* para tu tarjeta con todos tus logros._`, ctx);
+        } catch (e) {
+            logger.error(`[${jid}] Error generando la medalla ${medal.id}: ${e.message}`);
+            await say(sock, jid, `🏅 *Nueva medalla: ${medal.label}* — ${medal.sub} 🦁`, ctx);
+        }
+    }
+}
+
+/** "compartir": tarjeta con racha, nivel, medallas y % de meta, más el código para invitar amigos. */
+async function sendShareCard(sock, jid, fin, ctx) {
+    const level = financeStreak.levelFor(fin);
+    const code = fin.referralCode || financeReferral.getOrCreateCode(jid);
+    if (!fin.referralCode) fin.referralCode = code;
+    const botHandle = process.env.FINANCE_BOT_HANDLE || '@LeoFinancierobot';
+    const medals = financeMedals.earnedIds(fin).size;
+    try {
+        const imgPath = await generateShareCard({
+            name: fin.name, streak: fin.streak || 0, levelEmoji: level.emoji, levelName: level.name,
+            medals, totalMedals: financeMedals.MEDALS.length,
+            goalName: fin.goalTarget > 0 ? fin.goalName : '', goalEmoji: fin.goalName ? getGoalType(fin.goalName).emoji : '',
+            goalPct: financeMedals.goalPct(fin), code, botHandle
+        });
+        await sendImage(sock, jid, imgPath,
+            `📸 *Tu tarjeta de Leo* — sin montos, solo tus logros.\n` +
+            `Reenviala a tus amigos: si se unen con tu código *${code}* en ${botHandle}, los dos ganan movimientos con IA 🦁`, ctx);
+    } catch (e) {
+        logger.error(`[${jid}] Error generando la tarjeta para compartir: ${e.message}`);
+        await say(sock, jid, `🦁 No pude armar la imagen ahora. Tu código para invitar amigos es *${code}* (${botHandle}).`, ctx);
+    }
+}
+
 /** Importa los correos que dejaron en la bandeja de Leo (ver services/financeEmailInbox.js). Nunca tumba el bot. */
 async function importEmailInbox(jid) {
     if (!jid) return;
@@ -2023,5 +2063,5 @@ module.exports = {
     // Expuesto para tests unitarios directos (evita depender del parser
     // determinista/flujo de confirmacion completo solo para probar la
     // matematica de la racha).
-    _internal: { importEmailInbox, bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
+    _internal: { sendShareCard, sendNewMedals, importEmailInbox, bumpStreak, matchDiagnosticOption, getWelcomeMessage, applyIntent, handleConfirmation, runNightReportSweep, generateNightReport, handleGoalOnboarding }
 };
