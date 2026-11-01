@@ -17,6 +17,7 @@ const { isReviewPromptActive, applyReviewReply } = require('../../services/finan
 const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
+const financeGoals = require('../../services/financeGoals');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
@@ -739,6 +740,18 @@ async function handle(sock, jid, text, userSession, ctx) {
         }
     }
 
+    // "ahorro 2 millones al mes": cuánto aparta para su meta, y en qué fecha llega (#83). Sin IA.
+    const monthlyGoal = financeGoals.parseMonthlySaving(t);
+    if (monthlyGoal) {
+        if (!fin.goalName) {
+            return await say(sock, jid, `🦁 Primero creemos tu meta: decime *"metas"* y le ponemos nombre y monto.`, ctx);
+        }
+        fin.goalMonthly = monthlyGoal;
+        financeStore.saveFinance(jid, fin);
+        const projection = financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin);
+        return await say(sock, jid, `✅ Listo: ${formatMoney(monthlyGoal, fin)} al mes para *${fin.goalName}*.` + (projection ? `\n${projection}` : ''), ctx);
+    }
+
     // "¿dónde está más barata la leche?" / "precio leche": con los recibos del propio usuario, sin IA.
     const cheaperProduct = financeReceipts.cheaperQuestion(text);
     if (cheaperProduct) {
@@ -1164,10 +1177,15 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'query':
         case 'chat':
         case 'help':
-        case 'goal_query':
+        case 'goal_query': {
+            // "¿Cómo voy con mi meta?" también dice en qué fecha llega (#83).
+            const projection = result.intent === 'goal_query' && fin.goalTarget > 0
+                ? financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin) : '';
+            const text = projection ? `${result.response}\n\n${projection}` : result.response;
             // Si la respuesta de la IA da consejos de plata, va con el aviso de que Leo no es asesor financiero.
-            await say(sock, jid, withDisclaimer(result.response), ctx);
+            await say(sock, jid, withDisclaimer(text), ctx);
             break;
+        }
 
         case 'upgrade':
             await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
@@ -1801,6 +1819,10 @@ async function generateNightReport(sock, jid, fin, ctx) {
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     const streakLine = fin.streak >= 2 ? `🔥 Llevás ${fin.streak} días seguidos registrando\n` : '';
+    // Metas con fecha (#83) y cuánto se acercó hoy (#84).
+    const projectionText = fin.goalTarget > 0 ? financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin) : '';
+    const goalDayText = financeGoals.dailyGoalLine(fin, today, todayExpense);
+    const goalExtra = (projectionText ? `${projectionText}\n` : '') + (goalDayText ? `${goalDayText}\n` : '');
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
     if (pendingReview.length > 0) markReviewPrompted(fin);
@@ -1818,6 +1840,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
         `💵 Te queda: ${formatMoney((fin.balance || 0), fin)}\n` +
         streakLine +
         goalLine +
+        goalExtra +
         reviewBlock +
         `\nVas bien, seguí contándome 🦁`,
         ctx);
