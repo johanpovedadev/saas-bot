@@ -87,6 +87,8 @@ function rowToFinance(row) {
         pendingConfirm: null,
         streak: extra.streak || 0,
         bestStreak: extra.bestStreak || 0,
+        streakFreezes: extra.streakFreezes || 0,
+        streakLevel: extra.streakLevel || '',
         lastStreakDate: extra.lastStreakDate || '',
         trialLastShown: extra.trialLastShown || 0,
         diagnosticAnswer: extra.diagnosticAnswer || 0,
@@ -139,6 +141,8 @@ function financeToRow(jid, fin) {
         extra: JSON.stringify({
             streak: fin.streak || 0,
             bestStreak: fin.bestStreak || 0,
+            streakFreezes: fin.streakFreezes || 0,
+            streakLevel: fin.streakLevel || '',
             lastStreakDate: fin.lastStreakDate || '',
             trialLastShown: fin.trialLastShown || 0,
             diagnosticAnswer: fin.diagnosticAnswer || 0,
