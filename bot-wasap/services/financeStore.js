@@ -111,6 +111,9 @@ function rowToFinance(row) {
         reviewPromptedAt: extra.reviewPromptedAt || 0,
         lastWeeklyReportDate: extra.lastWeeklyReportDate || '',
         // Ahorro mensual que el usuario aparta para su meta ("ahorro 2 millones al mes"), cifrado como goalTarget.
+        cardStatement: extra.cardStatement && financeCrypto.isEncrypted(extra.cardStatement)
+            ? JSON.parse(financeCrypto.decrypt(extra.cardStatement) || 'null')
+            : null,
         goalMonthly: financeCrypto.isEncrypted(extra.goalMonthly)
             ? (financeCrypto.decryptAmount(extra.goalMonthly) ?? 0)
             : (extra.goalMonthly || 0),
@@ -126,7 +129,8 @@ function financeToRow(jid, fin) {
     const loansEnc = financeCrypto.encrypt(JSON.stringify(fin.loans || []));
     const rulesEnc = financeCrypto.encrypt(JSON.stringify(fin.learnedRules || {}));
     const goalMonthlyEnc = financeCrypto.encryptAmount(fin.goalMonthly || 0);
-    if (balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null || goalMonthlyEnc === null) {
+    const cardStatementEnc = fin.cardStatement ? financeCrypto.encrypt(JSON.stringify(fin.cardStatement)) : '';
+    if (cardStatementEnc === null || balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null || goalMonthlyEnc === null) {
         logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
         return null;
     }
@@ -166,6 +170,7 @@ function financeToRow(jid, fin) {
             reviewPromptedAt: fin.reviewPromptedAt || 0,
             lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
             goalMonthly: goalMonthlyEnc,
+            cardStatement: cardStatementEnc,
             learnedRules: rulesEnc
         })
     };

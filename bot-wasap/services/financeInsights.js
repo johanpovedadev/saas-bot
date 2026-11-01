@@ -9,6 +9,7 @@
 
 const { formatMoney } = require('../utils/financeMoney');
 const { DISCLAIMER } = require('../utils/financeDisclaimer');
+const cardStatement = require('./financeCardStatement');
 const { todayInBogota } = require('../utils/financeDate');
 const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../utils/financeMedium');
 
@@ -91,7 +92,9 @@ function buildSpendingReport(fin, today = todayInBogota(), days = REPORT_DAYS) {
         from, to: today, days, expenseTotal, incomeTotal: sumAmounts(incomes), expenseCount: expenses.length,
         byCategory, antSpending, byNeed, incomeBySource, byMedium,
         bankByAccount: sumBankExpensesByAccount(periodTx),
-        cardOwed: byMedium[MEDIUM.CARD],
+        // Con extracto cargado, lo que dice el extracto (+ compras nuevas); si no, el estimado de compras con tarjeta.
+        cardInfo: cardStatement.owed(fin, today),
+        cardOwed: (cardStatement.owed(fin, today) || {}).total || byMedium[MEDIUM.CARD],
         pendingReview: pendingReviewOf(fin.transactions || [])
     };
 }
@@ -184,8 +187,10 @@ function formatSpendingReport(report, fin) {
     }
 
     out.push('', `💵 Te queda: *${money(fin.balance || 0)}*`);
-    if (report.cardOwed > 0) {
-        out.push(`💳 Por pagar de la tarjeta: ${money(report.cardOwed)} → te quedaría ${money((fin.balance || 0) - report.cardOwed)} al pagarla`);
+    if (report.cardInfo) {
+        out.push(cardStatement.formatOwed(report.cardInfo, fin));
+    } else if (report.cardOwed > 0) {
+        out.push(`💳 Compras con tarjeta del mes: ${money(report.cardOwed)} → te quedaría ${money((fin.balance || 0) - report.cardOwed)} al pagarlas`);
     }
 
     if (report.expenseCount > 0) {

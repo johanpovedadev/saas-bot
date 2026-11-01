@@ -16,6 +16,11 @@ const fs = require('fs');
 const path = require('path');
 const { importEmails, usdPurchaseDates } = require('./financeEmailImport');
 const financeStore = require('./financeStore');
+const { sanitizeStatement } = require('./financeCardStatement');
+
+// Ingresos suman al saldo; gastos pagados con plata disponible (banco, efectivo, envío) restan. La tarjeta de
+// crédito no: es deuda y se descuenta cuando se paga ("pagué la tarjeta").
+const MEDIUMS_THAT_MOVE_BALANCE = new Set(['banco', 'efectivo', 'envio']);
 
 const VALID_TYPES = new Set(['expense', 'income']);
 
@@ -23,17 +28,52 @@ const VALID_TYPES = new Set(['expense', 'income']);
  * Ajustes que no llegan por correo (sacados del extracto o pedidos por el usuario): { "movimientos": [ {...} ] }.
  * Cada uno necesita sourceId (para no duplicar), type, amount > 0, date YYYY-MM-DD y description.
  */
+function balanceEffect(m) {
+    if (m.afectaSaldo === false) return 0;
+    if (m.type === 'income') return Math.round(m.amount);
+    if (m.type === 'expense' && MEDIUMS_THAT_MOVE_BALANCE.has(m.medium)) return -Math.round(m.amount);
+    return 0;
+}
+
+/**
+ * Ajustes: { "movimientos": [...], "saldo": 1726057, "tarjeta": { cuenta, pagoTotal, pagoMinimo, fechaPago, corte } }.
+ * - movimientos: cada uno mueve el saldo según balanceEffect (afectaSaldo: false para historia vieja).
+ * - saldo: el saldo real que dijo el usuario; se aplica al final y manda sobre lo anterior.
+ * - tarjeta: el extracto vigente, para mostrar lo que de verdad hay que pagar.
+ */
+function importAdjustmentFile(jid, data) {
+    const summary = importAdjustments(jid, data.movimientos || []);
+    if (data.saldo == null && !data.tarjeta) return summary;
+    const fin = financeStore.loadFinance(jid);
+    if (data.saldo != null) {
+        const saldo = Math.round(Number(data.saldo));
+        if (!Number.isFinite(saldo)) throw new Error('saldo inválido');
+        fin.balance = saldo;
+        summary.saldo = saldo;
+    }
+    if (data.tarjeta) {
+        const statement = sanitizeStatement(data.tarjeta);
+        if (!statement) throw new Error('extracto de tarjeta inválido (falta pagoTotal, fechaPago o corte)');
+        fin.cardStatement = statement;
+        summary.tarjeta = statement.cuenta;
+    }
+    if (!financeStore.saveFinance(jid, fin)) throw new Error('No se pudo guardar (¿falta FINANCE_ENCRYPTION_KEY?)');
+    return summary;
+}
+
 function importAdjustments(jid, movimientos) {
     const fin = financeStore.loadFinance(jid);
     if (!fin) throw new Error(`No existe la cuenta de Leo ${jid}`);
     const known = new Set((fin.transactions || []).map((t) => t.sourceId).filter(Boolean));
     const accepted = [];
     let skipped = 0;
+    let balanceDelta = 0;
     for (const m of movimientos) {
         const ok = m && typeof m.sourceId === 'string' && m.sourceId && VALID_TYPES.has(m.type)
             && Number.isFinite(m.amount) && m.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(m.date || '') && m.description;
         if (!ok || known.has(m.sourceId)) { skipped += 1; continue; }
         known.add(m.sourceId);
+        balanceDelta += balanceEffect(m);
         accepted.push({
             type: m.type, amount: Math.round(m.amount), category: m.category || 'Otros', description: String(m.description),
             date: m.date, timestamp: new Date(`${m.date}T12:00:00-05:00`).getTime(),
@@ -44,6 +84,7 @@ function importAdjustments(jid, movimientos) {
     }
     if (accepted.length > 0) {
         fin.transactions = [...fin.transactions, ...accepted].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        fin.balance = (fin.balance || 0) + balanceDelta;
         if (!financeStore.saveFinance(jid, fin)) throw new Error('No se pudo guardar (¿falta FINANCE_ENCRYPTION_KEY?)');
     }
     return { imported: accepted.length, skipped: skipped ? { invalido_o_repetido: skipped } : {} };
@@ -76,8 +117,8 @@ async function processInbox({ jid, dir = DEFAULT_INBOX_DIR, ownMarkers = listFro
     for (const file of files) {
         try {
             const emails = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-            if (emails && Array.isArray(emails.movimientos)) {
-                const summary = importAdjustments(jid, emails.movimientos);
+            if (emails && !Array.isArray(emails) && (Array.isArray(emails.movimientos) || emails.saldo != null || emails.tarjeta)) {
+                const summary = importAdjustmentFile(jid, emails);
                 moveTo(dir, file, 'procesados');
                 results.push({ file, ...summary });
                 continue;
@@ -103,4 +144,4 @@ async function processInbox({ jid, dir = DEFAULT_INBOX_DIR, ownMarkers = listFro
     return results;
 }
 
-module.exports = { processInbox, importAdjustments, DEFAULT_INBOX_DIR };
+module.exports = { processInbox, importAdjustments, importAdjustmentFile, DEFAULT_INBOX_DIR };

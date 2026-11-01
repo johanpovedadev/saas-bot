@@ -33,6 +33,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.7.1] - 2026-11-01
+
+### Corregido
+
+- El sueldo y los gastos con banco que entran por la bandeja ahora mueven el saldo; la tarjeta no (#106).
+- La tarjeta se muestra según el extracto (pago total, mínimo y fecha) más las compras nuevas; «pagué la tarjeta» baja el
+  saldo sin contarlo como gasto, y «mi saldo es X» fija el saldo real (#106).
+
 ## [1.7.0] - 2026-11-01
 
 ### Agregado
