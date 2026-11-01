@@ -73,8 +73,10 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
 }
 
 async function generateCard(userName, milestoneId, extra, goalEmoji) {
-    const info = MILESTONES[milestoneId];
+    // Acepta el id de un hito viejo o una medalla { id, icon, label, sub, color } (services/financeMedals.js).
+    const info = typeof milestoneId === 'object' && milestoneId ? milestoneId : MILESTONES[milestoneId];
     if (!info) throw new Error(`Unknown milestone: ${milestoneId}`);
+    const cardId = typeof milestoneId === 'object' ? (info.id || 'medalla') : milestoneId;
 
     const canvas = createCanvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext('2d');
@@ -166,7 +168,7 @@ async function generateCard(userName, milestoneId, extra, goalEmoji) {
         fs.mkdirSync(CARD_DIR, { recursive: true });
     }
 
-    const filePath = path.join(CARD_DIR, `${milestoneId}_${Date.now()}.png`);
+    const filePath = path.join(CARD_DIR, `${cardId}_${Date.now()}.png`);
     const buffer = canvas.toBuffer('image/png');
     fs.writeFileSync(filePath, buffer);
     return filePath;
@@ -205,4 +207,94 @@ function getNewMilestones(fin, prevFin) {
     return milestones;
 }
 
-module.exports = { generateCard, getNewMilestones, MILESTONES, GOAL_TYPES, getGoalType };
+/**
+ * Tarjeta para compartir (#86): racha, nivel, medallas y % de la meta. NUNCA lleva montos.
+ * data: { name, streak, levelEmoji, levelName, medals, totalMedals, goalName, goalEmoji, goalPct, code, botHandle }
+ */
+async function generateShareCard(data) {
+    const canvas = createCanvas(WIDTH, HEIGHT);
+    const ctx = canvas.getContext('2d');
+    const accent = '#FFB300';
+
+    const grad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+    grad.addColorStop(0, '#1a1a2e');
+    grad.addColorStop(0.5, '#16213e');
+    grad.addColorStop(1, '#0f3460');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 0, WIDTH, 6);
+
+    ctx.fillStyle = hexToRgba(accent, 0.15);
+    drawRoundedRect(ctx, 20, 20, 80, 40, 20);
+    ctx.fill();
+    ctx.fillStyle = accent;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('🦁 Leo', 38, 47);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillText(data.name || 'Usuario', 30, 105);
+    ctx.font = '18px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText(`${data.levelEmoji || '🐾'} ${data.levelName || 'Cachorro'}`, 30, 133);
+
+    // Racha grande
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillStyle = '#FF5252';
+    ctx.fillText(`🔥 ${data.streak || 0}`, WIDTH / 4 + 10, 215);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText((data.streak || 0) === 1 ? 'día seguido' : 'días seguidos', WIDTH / 4 + 10, 242);
+
+    // Medallas
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillStyle = accent;
+    ctx.fillText(`🏅 ${data.medals || 0}`, (WIDTH * 3) / 4 - 10, 215);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(`medallas de ${data.totalMedals || 0}`, (WIDTH * 3) / 4 - 10, 242);
+    ctx.textAlign = 'left';
+
+    // Meta: solo porcentaje
+    if (data.goalName) {
+        const pct = Math.max(0, Math.min(100, data.goalPct || 0));
+        ctx.font = '17px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`${data.goalEmoji || '🎯'} ${data.goalName}`, 30, 290);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${pct} %`, WIDTH - 30, 290);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        drawRoundedRect(ctx, 30, 302, WIDTH - 60, 14, 7);
+        ctx.fill();
+        if (pct > 0) {
+            ctx.fillStyle = accent;
+            drawRoundedRect(ctx, 30, 302, Math.max(14, (WIDTH - 60) * pct / 100), 14, 7);
+            ctx.fill();
+        }
+    }
+
+    // Invitación
+    if (data.code) {
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(`Uníte con mi código ${data.code}${data.botHandle ? ` en ${data.botHandle}` : ''}`, 30, 350);
+    }
+
+    const dateStr = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillText(dateStr, 30, HEIGHT - 20);
+    ctx.textAlign = 'right';
+    ctx.fillText('Leo Financiero', WIDTH - 30, HEIGHT - 20);
+    ctx.textAlign = 'left';
+
+    if (!fs.existsSync(CARD_DIR)) fs.mkdirSync(CARD_DIR, { recursive: true });
+    const filePath = path.join(CARD_DIR, `compartir_${Date.now()}.png`);
+    fs.writeFileSync(filePath, canvas.toBuffer('image/png'));
+    return filePath;
+}
+
+module.exports = { generateShareCard, generateCard, getNewMilestones, MILESTONES, GOAL_TYPES, getGoalType };
