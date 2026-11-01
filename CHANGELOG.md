@@ -33,6 +33,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.6.0] - 2026-11-01
+
+### Agregado
+
+- **Protector de racha:** cada 7 días seguidos se gana uno (máximo 2); cubre los días olvidados y la racha sigue (#85, #100).
+- **Niveles del león** por hábitos, que nunca bajan: Cachorro, León joven, León y León inversionista (#85, #100).
+- Los informes muestran racha, nivel y protectores (#100).
+
 ## [1.5.0] - 2026-11-01
 
 ### Agregado
