@@ -20,6 +20,8 @@ const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
+const cardStatement = require('../../services/financeCardStatement');
+const { parseAmountText } = require('../../utils/financeAmount');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
@@ -744,6 +746,24 @@ async function handle(sock, jid, text, userSession, ctx) {
 
     // Medallas y tarjeta para compartir (#86). Sin IA, también en el plan Gratis.
     const command = stripAccentsLower(t);
+    // "mi saldo es 1.726.057": el usuario corrige su saldo real (lo que tiene en el banco y en efectivo). Sin IA.
+    const balanceMatch = command.match(/^(?:mi saldo (?:real )?es|tengo en (?:el )?banco|ajusta(?:r)? (?:mi )?saldo a)\s+(.+)$/);
+    if (balanceMatch) {
+        const amount = parseAmountText(balanceMatch[1]);
+        if (amount) {
+            fin.balance = amount;
+            financeStore.saveFinance(jid, fin);
+            return await say(sock, jid, `✅ Listo, tu saldo quedó en ${formatMoney(amount, fin)}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
+        }
+    }
+    // "pagué la tarjeta": baja el saldo sin contarlo como gasto (las compras ya se anotaron). Sin IA.
+    const cardPayment = cardStatement.parsePayment(command, fin, todayInBogota());
+    if (cardPayment) {
+        const reply = cardStatement.applyPayment(fin, cardPayment, todayInBogota());
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, reply, ctx);
+    }
+
     if (MEDALS_COMMAND.test(command)) {
         financeMedals.awardNew(fin);
         financeStore.saveFinance(jid, fin);

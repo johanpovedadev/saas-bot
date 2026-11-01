@@ -112,7 +112,7 @@ function cleanup() {
         assert.ok(/Tostao ×4 = \$30\.800/.test(text), 'detecta el gasto hormiga');
         assert.ok(/Te queda: \*\$100\.000\*/.test(text));
         const cardOwed = report.byMedium.tarjeta;
-        assert.ok(text.includes(`Por pagar de la tarjeta: $${money(cardOwed)}`), 'muestra lo que se debe de la tarjeta');
+        assert.ok(text.includes(`Compras con tarjeta del mes: $${money(cardOwed)}`), 'sin extracto muestra las compras con tarjeta del mes (no dice que es lo que se debe)');
         assert.ok(text.includes(`te quedaría $${money(100000 - cardOwed).replace('-', '')}`) || /te quedaría -\$/.test(text), 'y cuánto le quedaría al pagarla');
         assert.ok(/Para gastar menos/.test(text) && /Tostao\* se repite 4 veces/.test(text), 'sugiere dónde recortar con las cifras reales');
         assert.ok(/Prescindible|prescindible/.test(text) && /lo primero que podés quitar/.test(text));
