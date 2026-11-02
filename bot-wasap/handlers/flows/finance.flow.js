@@ -48,6 +48,13 @@ const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
     `9️⃣ Apóyanos ☕\n` +
     `🔟 Mejoras y configuración`;
 
+// "menú", "cancelar"... en cualquier paso (#122, escalón A): limpia la fase y lo pendiente y vuelve al menú.
+const BACK_TO_MENU_WORDS = new Set(['menu', 'volver', 'atras', 'cancelar', 'salir', '0']);
+const BACK_HINT = '_(escribí *menú* para volver)_';
+const SETTINGS_OPTIONS = `1️⃣ Cambiar moneda\n` +
+    `2️⃣ Enviar feedback (qué te gusta / qué mejoraría)\n` +
+    `3️⃣ Volver al menú`;
+
 const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
 
 function initFinance(userSession) {
@@ -670,6 +677,10 @@ async function handle(sock, jid, text, userSession, ctx) {
         return;
     }
 
+    if (fin.name && userSession.phase !== PHASE.FIN_ONBOARDING && isBackToMenu(t)) {
+        return await backToMenu(sock, jid, userSession, ctx, fin);
+    }
+
     // Pending confirmation
     if (fin.pendingConfirm) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
@@ -1038,6 +1049,25 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     await processPossibleTransaction(sock, jid, text, userSession, ctx, fin);
 }
 
+function isBackToMenu(text) {
+    return BACK_TO_MENU_WORDS.has(stripAccentsLower(text).replace(/[^a-z0-9]/g, ''));
+}
+
+/** Sale de cualquier paso: borra la fase y lo que estaba por confirmar (sin guardarlo) y muestra el menú. */
+async function backToMenu(sock, jid, userSession, ctx, fin) {
+    const hadPending = Boolean(fin.pendingConfirm || fin.pendingFeedback || fin.pendingReferral || fin.goalTempName);
+    fin.pendingConfirm = null;
+    fin.pendingLoanList = null;
+    fin.pendingReferral = null;
+    fin.pendingFeedback = false;
+    fin.goalStep = 0;
+    fin.goalTempName = '';
+    userSession.phase = PHASE.FIN_MAIN;
+    userSession.errorCount = 0;
+    financeStore.saveFinance(jid, fin);
+    await showQuickMenu(sock, jid, fin, ctx, hadPending ? '↩️ Listo, lo dejé sin guardar. Volvimos al menú 🦁' : '↩️ Volvimos al menú 🦁');
+}
+
 async function handleGoals(sock, jid, text, userSession, ctx, fin) {
     const t = text.trim();
     const step = fin.goalStep || 0;
@@ -1049,7 +1079,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
         financeStore.saveFinance(jid, fin);
         await say(sock, jid,
             `🦁 *${t}* — ¡excelente meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
-            `Decime el monto, por ejemplo: "2 millones" o "500 mil"`,
+            `Decime el monto, por ejemplo: "2 millones" o "500 mil"\n\n${BACK_HINT}`,
             ctx);
     } else if (step === 1) {
         // User responded with amount
@@ -1093,7 +1123,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
         }
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
-            `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"`,
+            `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"\n\n${BACK_HINT}`,
             ctx);
     }
 }
@@ -1233,7 +1263,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'goals':
             userSession.phase = PHASE.FIN_GOALS;
             fin.goalStep = 0;
-            await say(sock, jid, result.response, ctx);
+            await say(sock, jid, `${result.response}\n\n${BACK_HINT}`, ctx);
             break;
 
         case 'referral_info':
@@ -1296,7 +1326,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
                 userSession.phase = PHASE.FIN_GOALS;
                 fin.goalStep = 0;
                 await say(sock, jid,
-                    `🎯 ¡Excelente que pienses en metas! Decime: ¿para qué querés ahorrar?\n\n_(ej: "un viaje", "un carro", "emergencias")_`,
+                    `🎯 ¡Excelente que pienses en metas! Decime: ¿para qué querés ahorrar?\n\n_(ej: "un viaje", "un carro", "emergencias")_\n\n${BACK_HINT}`,
                     ctx);
                 return;
             case '6':
@@ -1603,10 +1633,7 @@ async function handleSupportRequest(sock, jid, ctx) {
 async function showSettingsMenu(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.FIN_SETTINGS;
     await say(sock, jid,
-        `⚙️ *Mejoras y configuración*\n\n` +
-        `1️⃣ Cambiar moneda\n` +
-        `2️⃣ Enviar feedback (qué te gusta / qué mejoraría)\n` +
-        `3️⃣ Volver al menú`,
+        `⚙️ *Mejoras y configuración*\n\n${SETTINGS_OPTIONS}\n\n${BACK_HINT}`,
         ctx);
 }
 
@@ -1616,13 +1643,13 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
         userSession.phase = PHASE.FIN_SETTINGS_CURRENCY;
         const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
         await say(sock, jid,
-            `💱 ¿En qué moneda querés ver tus montos? (esto solo cambia cómo se muestran, tu saldo real no cambia)\n\n${options}`,
+            `💱 ¿En qué moneda querés ver tus montos? (esto solo cambia cómo se muestran, tu saldo real no cambia)\n\n${options}\n\n${BACK_HINT}`,
             ctx);
         return;
     }
     if (/^2$|feedback|sugerencia/.test(low)) {
         fin.pendingFeedback = true;
-        await say(sock, jid, `💬 Contame qué te gusta de Leo o qué te gustaría que mejore — te leo con toda la atención 🦁`, ctx);
+        await say(sock, jid, `💬 Contame qué te gusta de Leo o qué te gustaría que mejore — te leo con toda la atención 🦁\n\n${BACK_HINT}`, ctx);
         return;
     }
     if (/^3$|volver|menu/.test(low)) {
@@ -1630,7 +1657,7 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
         await showQuickMenu(sock, jid, fin, ctx);
         return;
     }
-    await say(sock, jid, `Elegí una opción: 1) Cambiar moneda 2) Enviar feedback 3) Volver al menú`, ctx);
+    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:\n\n${SETTINGS_OPTIONS}\n\n${BACK_HINT}`, ctx);
 }
 
 async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
@@ -1645,7 +1672,7 @@ async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
     }
     if (!chosen) {
         const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
-        await say(sock, jid, `No reconocí esa moneda. Elegí una opción:\n\n${options}`, ctx);
+        await say(sock, jid, `No reconocí esa moneda. Elegí una opción:\n\n${options}\n\n${BACK_HINT}`, ctx);
         return;
     }
     fin.currency = chosen;
