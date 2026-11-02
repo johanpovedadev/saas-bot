@@ -113,6 +113,10 @@ function rowToFinance(row) {
         // Informe de la noche según actividad (#123): avisos mandados y desde cuándo Leo sabe el saldo real.
         nightNudge: extra.nightNudge || null,
         balanceSetAt: extra.balanceSetAt || '',
+        // Bienvenida exprés (#122, escalón A): "Después" a la oferta de meta y el tip de fijar el chat, una vez.
+        expressWelcome: extra.expressWelcome || false,
+        goalOfferDeclinedAt: extra.goalOfferDeclinedAt || '',
+        pinTipShown: extra.pinTipShown || false,
         // Qué informes quiere (#123, punto 3) y si le sirven (punto 4): 👍/👎 y respuestas tras el informe.
         reportPref: extra.reportPref || 'diario',
         reportFeedback: extra.reportFeedback || { up: 0, down: 0 },
@@ -181,6 +185,9 @@ function financeToRow(jid, fin) {
             lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
             nightNudge: fin.nightNudge || null,
             balanceSetAt: fin.balanceSetAt || '',
+            expressWelcome: fin.expressWelcome || false,
+            goalOfferDeclinedAt: fin.goalOfferDeclinedAt || '',
+            pinTipShown: fin.pinTipShown || false,
             reportPref: fin.reportPref || 'diario',
             reportFeedback: fin.reportFeedback || { up: 0, down: 0 },
             lastNightReportAt: fin.lastNightReportAt || 0,

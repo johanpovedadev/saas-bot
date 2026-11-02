@@ -101,9 +101,9 @@ function daysAgoStr(n) {
             console.log('OK: superar el record anterior se celebra como tal');
         }
 
-        // 4. Bienvenida: enfoque en lo que se va a lograr, no en ausencia de miedo.
-        // El primer contacto real lo maneja showWelcome (no handle) - handler.js
-        // lo llama para el primer mensaje de un jid nunca visto.
+        // 4. Bienvenida exprés (#122, escalón A): un solo mensaje que invita a contar un gasto de hoy, sin
+        // preguntar el nombre, y sin liderar con miedo. El primer contacto real lo maneja showWelcome (no handle) -
+        // handler.js lo llama para el primer mensaje de un jid nunca visto.
         {
             const jid = '573000000703@c.us';
             const ctx = freshCtx();
@@ -111,9 +111,10 @@ function daysAgoStr(n) {
             sent.length = 0;
             await financeFlow.showWelcome(sock, jid, ctx);
             const r = sent.join('\n');
-            assert.ok(/vas a saber|vas a poder decidir/i.test(r), 'la bienvenida debe enfocarse en lo que la persona va a lograr');
+            assert.strictEqual(sent.length, 1, 'la bienvenida es un solo mensaje');
+            assert.ok(/Contame un gasto de hoy/i.test(r) && !/c[oó]mo te llamo/i.test(r), 'invita a contar un gasto, sin pedir el nombre');
             assert.ok(!/sin reg[aá]/i.test(r), 'no deberia liderar con lo que Leo NO es (marco de miedo/ausencia)');
-            console.log('OK: mensaje de bienvenida con enfoque en deseo/logro');
+            console.log('OK: bienvenida exprés: un solo mensaje que invita a contar un gasto');
         }
 
         // 5. Cierre del onboarding: el primer registro se enmarca como paso
