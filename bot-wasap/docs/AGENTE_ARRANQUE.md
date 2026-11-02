@@ -119,6 +119,10 @@ anótalo en el PR y sigue. Cuando esto cambie, actualiza esta tabla.
 - Tiempos máximos: agente 45 min, pruebas 20 min. El modelo es gratis (`deepseek` en OpenCode): por eso el issue
   tiene que ser **un escalón pequeño** con archivos, funciones y prueba ya dichos.
 - Cómo se ve qué pasó: `~/.jarvis/hermes_jobs.db` (duración, estado de cada trabajo).
+- **¿Pusiste `hermes:listo` y no arranca nada?** Mirá `~/.jarvis/hermes_cola.json`. Si dice `"pausada": true`
+  (se pausa sola tras 2 fallas seguidas o 5 issues en el día), Johan manda **`/reanudar`** a Hermes por Telegram.
+  Editar el archivo no sirve: Hermes guarda el estado en memoria y lo vuelve a escribir. La cola revisa cada 10 min.
+  En `hermes_jobs.db` la tabla se llama `trabajos`.
 - **Cómo escribir un issue para OpenCode:** título corto, "Lee `bot-wasap/docs/LEO_MAPA.md`", archivo y función
   exactos, ejemplo de entrada → salida esperada, nombre de la prueba y el comando para correrla. Ejemplos: #113–#116.
 
