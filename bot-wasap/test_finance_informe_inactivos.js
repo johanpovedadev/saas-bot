@@ -1,11 +1,13 @@
 'use strict';
 /**
- * Informe de la noche según actividad (#123, puntos 1 y 2). Johan, 2 nov 2026: 3 usuarios que dejaron Leo en agosto
+ * Informe de la noche según actividad (#123). Johan, 2 nov 2026: 3 usuarios que dejaron Leo en agosto
  * recibieron ~100 informes idénticos ("Compraste $0 · Te queda -$22.000") y ninguno volvió.
  *  - 0-2 días sin registrar → informe; 3 → reenganche (una vez); 4-6 → nada; 7 → pausa (una vez); 8+ → nada.
  *  - Registrar algo de nuevo → vuelve el informe y se borran los avisos.
  *  - Sin saldo dicho y saldo negativo → no aparece "-$", se pide el saldo.
  *  - Reenganche y pausa: sin montos ni culpa.
+ *  - Cada uno elige (Configuración → Informes o por chat): diario, solo semanal o ninguno.
+ *  - "¿Te sirvió? 👍 / 👎": se guarda el voto y si el informe generó respuesta; 👍 no es un gasto de $1.
  * Base temporal, ID de prueba, IA simulada. Uso: node test_finance_informe_inactivos.js
  */
 const assert = require('assert');
@@ -126,6 +128,72 @@ function saveUser(transactions, extra = {}) {
         await financeFlow.handle(sock, JID, 'mi saldo es 300 mil', ctx.sessions[JID], ctx);
         assert.strictEqual(financeStore.loadFinance(JID).balanceSetAt, TODAY);
         console.log('OK: sin saldo dicho no se muestra "-$"; con "mi saldo es" o un ingreso sí');
+
+        // --- 5. Cada uno elige qué informes recibir ---
+        const activo = { transactions: [tx('expense', 10000, TODAY)] };
+        assert.strictEqual(policy.nightAction({ ...activo, reportPref: 'semanal' }, TODAY), 'nada', 'solo semanal: sin informe de la noche');
+        assert.strictEqual(policy.nightAction({ ...activo, reportPref: 'ninguno' }, TODAY), 'nada');
+        assert.strictEqual(policy.nightAction({ transactions: [tx('expense', 1, daysAgo(3))], reportPref: 'ninguno' }, TODAY), 'nada', 'sin informes tampoco hay reenganche');
+        assert.strictEqual(policy.nightAction(activo, TODAY), 'informe', 'por defecto, diario');
+        assert.deepStrictEqual([policy.weeklyAllowed({ reportPref: 'semanal' }), policy.weeklyAllowed({ reportPref: 'ninguno' }), policy.weeklyAllowed({})], [true, false, true]);
+        const weekly = require('./services/financeWeekly');
+        const saturday9pm = new Date('2026-11-07T21:30:00-05:00');
+        const weeklySent = [];
+        const weeklyFins = { a: { name: 'A', transactions: [], reportPref: 'ninguno' }, b: { name: 'B', transactions: [], reportPref: 'semanal' } };
+        await weekly.runWeeklySweep({ now: saturday9pm, adminJids: ['a', 'b'], loadFinance: (j) => weeklyFins[j], saveFinance: () => {}, send: async (j) => weeklySent.push(j) });
+        assert.deepStrictEqual(weeklySent, ['b'], 'el semanal respeta "ninguno"');
+
+        // Por Configuración: 10 → 4 → 2 (solo semanal).
+        saveUser([tx('expense', 22000, TODAY)]);
+        ctx.sessions[JID] = { phase: 'fin_main' };
+        const say = async (text) => { delete sentTo[JID]; await financeFlow.handle(sock, JID, text, ctx.sessions[JID], ctx); return (sentTo[JID] || []).join('\n'); };
+        r = await say('10');
+        assert.ok(/Informes/.test(r), r);
+        r = await say('4');
+        assert.ok(/1️⃣ Diario y semanal/.test(r) && /2️⃣ Solo semanal/.test(r) && /3️⃣ Ninguno/.test(r) && /4️⃣ Volver/.test(r), r);
+        r = await say('2');
+        assert.ok(/solo el resumen del sábado/.test(r), r);
+        assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'semanal', 'queda guardado');
+        assert.strictEqual(await sweepNight(), '', 'con "solo semanal" no llega el informe de la noche');
+        // Por chat.
+        r = await say('no me mandes informes');
+        assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'ninguno', r);
+        r = await say('Activar informe diario');
+        assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'diario', r);
+        r = await say('solo informe semanal');
+        assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'semanal', r);
+        console.log('OK: "solo semanal" y "ninguno" se respetan; se eligen en Configuración o por chat');
+
+        // --- 6. ¿Te sirvió? 👍 / 👎 ---
+        saveUser([tx('expense', 22000, TODAY)]);
+        ctx.sessions[JID] = { phase: 'fin_main' };
+        r = await sweepNight();
+        assert.ok(/¿Te sirvió\? 👍 \/ 👎/.test(r), `el informe pregunta si sirvió: ${r}`);
+        assert.ok(financeStore.loadFinance(JID).lastNightReportAt > 0, 'guarda cuándo salió el informe');
+        r = await say('👍');
+        let f = financeStore.loadFinance(JID);
+        assert.deepStrictEqual(f.reportFeedback, { up: 1, down: 0 }, r);
+        assert.strictEqual(f.transactions.length, 1, '👍 no se toma como gasto');
+        assert.ok(!ctx.sessions[JID].finance.pendingConfirm, '👍 no abre una confirmación de gasto');
+        assert.strictEqual(f.reportReplies, 1, 'el informe generó respuesta');
+        r = await say('almuerzo 12 mil');
+        assert.strictEqual(financeStore.loadFinance(JID).reportReplies, 1, 'una respuesta por informe');
+        await say('no');
+        // 👎 → ofrece solo el semanal; "sí" lo cambia.
+        saveUser([tx('expense', 22000, TODAY)]);
+        ctx.sessions[JID] = { phase: 'fin_main' };
+        await sweepNight();
+        r = await say('No me sirve');
+        assert.strictEqual(r, 'Gracias 🦁 ¿Preferís solo el resumen del sábado? (sí/no)');
+        assert.deepStrictEqual(financeStore.loadFinance(JID).reportFeedback, { up: 0, down: 1 });
+        r = await say('sí');
+        assert.ok(/solo el resumen del sábado/.test(r), r);
+        assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'semanal');
+        // Fuera de las 12 h, 👍 ya no es un voto.
+        const viejo = { lastNightReportAt: Date.now() - 13 * 60 * 60 * 1000, reportFeedback: { up: 0, down: 0 } };
+        assert.strictEqual(policy.handleReportReply(viejo, '👍', Date.now()), '');
+        assert.deepStrictEqual(viejo.reportFeedback, { up: 0, down: 0 });
+        console.log('OK: 👍/👎 en las 12 h se guardan sin tomarse como gasto; 👎 ofrece solo el semanal');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

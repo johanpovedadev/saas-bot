@@ -27,7 +27,7 @@ const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
-    PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_FEEDBACK
+    PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_SETTINGS_REPORTS, PHASE.FIN_FEEDBACK
 ];
 
 const CONFIRM_VARIANTS = [
@@ -54,7 +54,8 @@ const BACK_TO_MENU_WORDS = new Set(['menu', 'volver', 'atras', 'cancelar', 'sali
 const BACK_HINT = '_(escribí *menú* para volver)_';
 const SETTINGS_OPTIONS = `1️⃣ Cambiar moneda\n` +
     `2️⃣ Enviar feedback (qué te gusta / qué mejoraría)\n` +
-    `3️⃣ Volver al menú`;
+    `3️⃣ Volver al menú\n` +
+    `4️⃣ 🔔 Informes (diario, semanal o ninguno)`;
 
 const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
 
@@ -687,6 +688,12 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
     }
 
+    // Después del informe de la noche: 👍/👎 y si el informe generó respuesta (#123).
+    const reportRepliesBefore = fin.reportReplies || 0;
+    const reportReply = fin.name ? financeNightPolicy.handleReportReply(fin, t, Date.now()) : '';
+    if (reportReply || (fin.reportReplies || 0) !== reportRepliesBefore) financeStore.saveFinance(jid, fin);
+    if (reportReply) return await say(sock, jid, reportReply, ctx);
+
     // Respuesta numerica a la lista de prestamos mostrada (marcar como pagado).
     // Consumo unico: si el numero no calza, se limpia igual y sigue el flujo normal
     // (para no bloquear el menu numerado del plan Gratis con un numero viejo).
@@ -715,6 +722,9 @@ async function handle(sock, jid, text, userSession, ctx) {
     }
     if (userSession.phase === PHASE.FIN_SETTINGS_CURRENCY) {
         return await handleSettingsCurrency(sock, jid, t, userSession, ctx, fin);
+    }
+    if (userSession.phase === PHASE.FIN_SETTINGS_REPORTS) {
+        return await handleSettingsReports(sock, jid, t, userSession, ctx, fin);
     }
 
     // Preguntando si tiene codigo de invitacion (apenas entra, justo tras el nombre)
@@ -773,6 +783,14 @@ async function handle(sock, jid, text, userSession, ctx) {
     const cardPayment = cardStatement.parsePayment(command, fin, todayInBogota());
     if (cardPayment) {
         const reply = cardStatement.applyPayment(fin, cardPayment, todayInBogota());
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, reply, ctx);
+    }
+
+    // "solo informe semanal", "no me mandes informes", "activar informe diario" (#123). Sin IA.
+    const reportPrefCommand = financeNightPolicy.parseReportPrefCommand(t);
+    if (reportPrefCommand) {
+        const reply = financeNightPolicy.setReportPref(fin, reportPrefCommand);
         financeStore.saveFinance(jid, fin);
         return await say(sock, jid, reply, ctx);
     }
@@ -1706,7 +1724,29 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
         await showQuickMenu(sock, jid, fin, ctx);
         return;
     }
+    if (/^4$|informe/.test(low)) {
+        userSession.phase = PHASE.FIN_SETTINGS_REPORTS;
+        await say(sock, jid, financeNightPolicy.REPORT_PREF_MENU, ctx);
+        return;
+    }
     await say(sock, jid, `No tengo esa opción 🙂 Elegí una:\n\n${SETTINGS_OPTIONS}\n\n${BACK_HINT}`, ctx);
+}
+
+/** Configuración → Informes (#123): diario y semanal, solo semanal o ninguno. */
+async function handleSettingsReports(sock, jid, t, userSession, ctx, fin) {
+    const option = financeNightPolicy.parseReportPrefOption(t);
+    if (!option) {
+        await say(sock, jid, financeNightPolicy.REPORT_PREF_MENU, ctx);
+        return;
+    }
+    if (option.back) {
+        await showSettingsMenu(sock, jid, userSession, ctx);
+        return;
+    }
+    const reply = financeNightPolicy.setReportPref(fin, option.pref);
+    financeStore.saveFinance(jid, fin);
+    userSession.phase = PHASE.FIN_MAIN;
+    await say(sock, jid, reply, ctx);
 }
 
 async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
@@ -1940,8 +1980,9 @@ async function generateNightReport(sock, jid, fin, ctx) {
         goalLine +
         goalExtra +
         reviewBlock +
-        `\nVas bien, seguí contándome 🦁`,
+        `\nVas bien, seguí contándome 🦁\n\n${financeNightPolicy.FEEDBACK_QUESTION}`,
         ctx);
+    financeNightPolicy.markReportSent(fin, Date.now());
 }
 
 async function handleReferralInfo(sock, jid, fin, ctx) {
