@@ -33,6 +33,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.7.2] - 2026-11-02
+
+### Cambiado
+
+- Si la meta sale a más de 2 años, Leo propone cuánto apartar para llegar en 1 y 2 años en vez de solo dar una fecha
+  lejana; a 6 meses o menos lo celebra (#109).
+
 ## [1.7.1] - 2026-11-01
 
 ### Corregido
