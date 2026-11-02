@@ -18,6 +18,7 @@ const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
+const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
 const cardStatement = require('../../services/financeCardStatement');
@@ -763,6 +764,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         const amount = parseAmountText(balanceMatch[1]);
         if (amount) {
             fin.balance = amount;
+            financeNightPolicy.markBalanceKnown(fin, todayInBogota());
             financeStore.saveFinance(jid, fin);
             return await say(sock, jid, `✅ Listo, tu saldo quedó en ${formatMoney(amount, fin)}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
         }
@@ -1933,7 +1935,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
         (todayIncome > 0
             ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
             : '') +
-        `💵 Te queda: ${formatMoney((fin.balance || 0), fin)}\n` +
+        `${financeNightPolicy.formatBalanceLine(fin)}\n` +
         streakLine +
         goalLine +
         goalExtra +
@@ -2016,9 +2018,14 @@ async function runNightReportSweep(sock, ctx) {
             // cargar desde la DB - así el informe no depende de que el
             // usuario haya escrito recientemente.
             const fin = (session && session.finance) || financeStore.loadFinance(jid);
-            if (!fin?.name || !(fin.transactions?.length > 0)) continue;
+            if (!fin?.name) continue;
             if ((fin.lastReportDate || '') === today) continue;
-            await generateNightReport(sock, jid, fin, ctx);
+            // Según los días sin registrar: informe, reenganche, aviso de pausa o nada (#123).
+            const bogotaToday = todayInBogota();
+            const action = financeNightPolicy.nightAction(fin, bogotaToday, { registeredOn: u.fecha_registro });
+            if (action === financeNightPolicy.ACTION.REPORT) await generateNightReport(sock, jid, fin, ctx);
+            else if (financeNightPolicy.nightMessage(action)) await say(sock, jid, financeNightPolicy.nightMessage(action), ctx);
+            financeNightPolicy.recordNightAction(fin, action, bogotaToday);
             fin.lastReportDate = today;
             financeStore.saveFinance(jid, fin);
         } catch (e) {

@@ -17,6 +17,8 @@ const path = require('path');
 const { importEmails, usdPurchaseDates } = require('./financeEmailImport');
 const financeStore = require('./financeStore');
 const { sanitizeStatement } = require('./financeCardStatement');
+const financeNightPolicy = require('./financeNightPolicy');
+const { todayInBogota } = require('../utils/financeDate');
 
 // Ingresos suman al saldo; gastos pagados con plata disponible (banco, efectivo, envío) restan. La tarjeta de
 // crédito no: es deuda y se descuenta cuando se paga ("pagué la tarjeta").
@@ -49,6 +51,7 @@ function importAdjustmentFile(jid, data) {
         const saldo = Math.round(Number(data.saldo));
         if (!Number.isFinite(saldo)) throw new Error('saldo inválido');
         fin.balance = saldo;
+        financeNightPolicy.markBalanceKnown(fin, todayInBogota());
         summary.saldo = saldo;
     }
     if (data.tarjeta) {
