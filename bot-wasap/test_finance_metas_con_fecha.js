@@ -59,7 +59,17 @@ const tx = (type, amount, date, description = 'x') => ({ type, amount, date, des
         assert.strictEqual(goals.projectGoal(base, TODAY).status, 'sin_datos', 'sin movimientos ni ahorro dicho no hay fecha');
         const conAhorro = goals.projectGoal({ ...base, goalMonthly: 2500000 }, TODAY);
         assert.deepStrictEqual([conAhorro.status, conAhorro.months, conAhorro.date], ['en_camino', 24, 'noviembre de 2028'], JSON.stringify(conAhorro));
-        assert.ok(/llegás en \*noviembre de 2028\* \(en 24 meses\)/.test(goals.formatProjection(conAhorro, base)));
+        assert.ok(/Con lo que apartás, llegás en \*noviembre de 2028\* \(en 24 meses\)/.test(goals.formatProjection(conAhorro, base)));
+        // Meta lejana (Johan: "abril de 2035" desanima): se muestra cómo acercarla en 1 y 2 años.
+        const lejana = goals.projectGoal({ goalName: 'Inversiones y viajes', goalTarget: 20000000, balance: 1703057, goalMonthly: 181433, transactions: [] }, TODAY);
+        assert.strictEqual(lejana.months, 101);
+        const textoLejana = goals.formatProjection(lejana, base);
+        assert.ok(/tu meta llega en abril de 2035\. ¡Acortémosla!/.test(textoLejana), textoLejana);
+        assert.ok(/\$\s?1\.550\.000 al mes → \*noviembre de 2027\*/.test(textoLejana), textoLejana);
+        assert.ok(/\$\s?800\.000 al mes → \*noviembre de 2028\*/.test(textoLejana), textoLejana);
+        assert.ok(/ahorro 1 millón al mes/.test(textoLejana));
+        const cerca = goals.projectGoal({ ...base, balance: 50000000, goalMonthly: 2500000 }, TODAY);
+        assert.ok(/¡Ya está cerquita!/.test(goals.formatProjection(cerca, base)), 'meta cercana se celebra');
 
         // Sin ahorro dicho: sale de ingresos menos gastos de los últimos meses (aquí 40 días, neto 1.000.000).
         const movs = [tx('income', 3000000, '2026-09-23'), tx('expense', 2000000, '2026-10-15')];

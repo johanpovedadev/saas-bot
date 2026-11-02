@@ -17,6 +17,14 @@ const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 
 const WINDOW_DAYS = 90;          // ventana para estimar el ahorro mensual
 const MIN_DAYS_OF_DATA = 30;     // con menos de un mes de datos no se estima
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const FAR_MONTHS = 24;            // más de 2 años: se muestran opciones para acercarla
+const NEAR_MONTHS = 6;            // 6 meses o menos: se celebra
+
+/** Redondea hacia arriba a un monto fácil de recordar ($10.000 o $50.000). */
+function niceRoundUp(value) {
+    const step = value >= 500000 ? 50000 : 10000;
+    return Math.ceil(value / step) * step;
+}
 
 function daysBetween(fromIso, toIso) {
     return Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / MS_PER_DAY);
@@ -58,7 +66,7 @@ function projectGoal(fin, today) {
     if (!rate) return { status: 'sin_datos', remaining };
     if (rate.amount <= 0) return { status: 'sin_ahorro', remaining, source: rate.source };
     const months = Math.ceil(remaining / rate.amount);
-    return { status: 'en_camino', remaining, monthly: rate.amount, source: rate.source, months, date: monthLabel(today, months) };
+    return { status: 'en_camino', remaining, monthly: rate.amount, source: rate.source, months, date: monthLabel(today, months), today };
 }
 
 function formatProjection(projection, fin) {
@@ -72,7 +80,19 @@ function formatProjection(projection, fin) {
             return '📅 Por ahora no está sobrando plata para la meta. Decime cuánto podés apartar al mes (_"ahorro 300 mil al mes"_) y calculo la fecha.';
         case 'en_camino': {
             const plazo = projection.months === 1 ? 'el próximo mes' : `en ${projection.months} meses`;
-            return `📅 A este ritmo llegás en *${projection.date}* (${plazo}), apartando ${money(projection.monthly)} al mes.`;
+            const base = projection.source === 'movimientos' ? 'Con lo que llevás registrado' : 'Con lo que apartás';
+            if (projection.months > FAR_MONTHS && projection.today) {
+                // Una fecha lejana desanima ("2035"): se dice, pero se muestra enseguida cómo acercarla.
+                const options = [12, 24].map((m) => {
+                    const monthly = niceRoundUp(projection.remaining / m);
+                    return `   • ${money(monthly)} al mes → *${monthLabel(projection.today, m)}*`;
+                });
+                return `📅 ${base}, tu meta llega en ${projection.date}. ¡Acortémosla! 💪\n` +
+                    `${options.join('\n')}\n` +
+                    'Decime cuánto podés apartar, por ejemplo: _"ahorro 1 millón al mes"_ 🦁';
+            }
+            return `📅 ${base}, llegás en *${projection.date}* (${plazo}), apartando ${money(projection.monthly)} al mes.` +
+                (projection.months <= NEAR_MONTHS ? ' ¡Ya está cerquita! 🔥' : '');
         }
         default:
             return '';
