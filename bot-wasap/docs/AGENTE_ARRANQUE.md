@@ -90,6 +90,24 @@ Hermes debe salir `online` en la tabla de PM2).
 
 **No tocar el bot de mascotas.** Producción, plata, datos y secretos los decide Johan.
 
+### Qué está arriba hoy (Johan, 2 nov 2026)
+
+De los negocios de clientes, **solo Mundo Helados está en producción**. Los demás están abajo **a propósito**:
+no los arranques, no los "arregles" ni gastes tiempo en sus pruebas o errores, salvo que el issue lo pida.
+
+| Servicio (PM2) | Estado | Nota |
+|---|---|---|
+| `bot-heladeria` + `django-heladeria` | 🟢 arriba | **Mundo Helados**, el único cliente en producción. Cuidado máximo. |
+| `bot-finance-telegram` | 🟢 arriba | Leo Financiero (lo usa Johan). |
+| `hermes` | 🟢 arriba | Cola de issues para OpenCode. |
+| `admin-panel`, `cloudflare-tunnel` | 🟢 arriba | Soporte de lo de arriba. |
+| `bot-mascotas-prod` | 🟢 arriba | **No tocar.** |
+| `bot-pescaderia` + `django-pescaderia` | 🔴 abajo | A propósito. |
+| `bot-pilates`, `bot-pilates-clientas` | 🔴 abajo | A propósito. |
+
+Si una prueba de pescadería o pilates falla en la suite completa, no bloquea un cambio de Leo ni de helados:
+anótalo en el PR y sigue. Cuando esto cambie, actualiza esta tabla.
+
 ---
 
 ## 6. Hermes + OpenCode (issues que se hacen solos)
