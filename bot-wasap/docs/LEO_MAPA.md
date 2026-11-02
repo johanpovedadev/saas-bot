@@ -1,6 +1,7 @@
 # Mapa de Leo Financiero (para agentes de IA y desarrolladores)
 
 Léelo antes de tocar Leo. Está hecho para que no tengas que recorrer el repo: aquí dice qué archivo hace qué.
+Cómo subir, desplegar y usar Hermes: [`AGENTE_ARRANQUE.md`](AGENTE_ARRANQUE.md).
 
 ## Qué es
 
