@@ -51,6 +51,31 @@ const WITH_AI = process.argv.includes('--with-ai');
 // --only=test_finance corre solo las pruebas de un negocio (p. ej. Leo), con el mismo entorno que la suite completa.
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice('--only='.length);
 
+// --changed: corre solo lo que tocan los cambios contra develop (los de Hermes/OpenCode llegan sin commit).
+// Si TODO lo que cambió es de Leo (finance), corre solo las pruebas de Leo (~2 min en vez de ~25); si no, la suite completa.
+const CHANGED = process.argv.includes('--changed');
+const LEO_FILE = /(^|\/)(test_finance[^/]*\.js|services\/finance[^/]*\.js|utils\/finance[^/]*\.js|handlers\/flows\/finance\.flow\.js|docs\/LEO_MAPA\.md)$/;
+function changedFiles() {
+    const { execSync } = require('child_process');
+    const run = (cmd) => { try { return execSync(cmd, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { return null; } };
+    const base = run('git rev-parse --verify origin/develop') ? 'origin/develop' : 'develop';
+    const diff = run(`git diff --name-only ${base}`);
+    const untracked = run('git ls-files --others --exclude-standard');
+    if (diff === null) return null;
+    return [...diff.split('\n'), ...(untracked || '').split('\n')].map((f) => f.trim()).filter(Boolean);
+}
+let onlyPrefix = ONLY;
+if (CHANGED && !onlyPrefix) {
+    const files = changedFiles();
+    const relevant = (files || []).filter((f) => !/\.md$/.test(f) || /LEO_MAPA/.test(f));
+    if (files && relevant.length > 0 && relevant.every((f) => LEO_FILE.test(f))) {
+        onlyPrefix = 'test_finance';
+        console.log(`--changed: ${relevant.length} archivo(s) de Leo cambiados → solo pruebas de Leo`);
+    } else {
+        console.log('--changed: hay cambios fuera de Leo (o no se pudo leer git) → suite completa');
+    }
+}
+
 // REGLA del proyecto: las pruebas simulan la IA, siempre. Gastar tokens reales es decisión de Johan y se declara
 // a propósito (ALLOW_REAL_AI=1); sin eso ni siquiera arranca, para que no pase por accidente (30 sept y 3 oct 2026).
 if (WITH_AI && process.env.ALLOW_REAL_AI !== '1') {
@@ -87,7 +112,7 @@ function isSkipped(file) {
 
 const allFiles = findTestFiles();
 const usesRealAi = (f) => { try { return fs.readFileSync(f, 'utf8').includes(AI_MARKER); } catch (e) { return false; } };
-const toRun = allFiles.filter(f => !isSkipped(f) && (!ONLY || path.basename(f).startsWith(ONLY)) && (WITH_AI ? usesRealAi(f) : !usesRealAi(f)));
+const toRun = allFiles.filter(f => !isSkipped(f) && (!onlyPrefix || path.basename(f).startsWith(onlyPrefix)) && (WITH_AI ? usesRealAi(f) : !usesRealAi(f)));
 const skipped = allFiles.filter(isSkipped);
 
 console.log(`Encontrados ${allFiles.length} archivos de test (${skipped.length} excluidos por marcador "${SKIP_MARKER}")\n`);
