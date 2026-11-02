@@ -154,4 +154,47 @@ function parseMonthlySaving(text) {
     return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
 }
 
-module.exports = { monthlySaving, projectGoal, formatProjection, daysMoved, weeklyGoalLine, dailyGoalLine, parseMonthlySaving };
+/** Tamaño del escalón según la meta (#114): hasta $5 M de a $500.000, hasta $50 M de a $1.000.000, más de a $5.000.000. */
+const STEP_TIERS = [
+    { upTo: 5000000, size: 500000 },
+    { upTo: 50000000, size: 1000000 },
+    { upTo: Infinity, size: 5000000 },
+];
+const WEEKS_PER_MONTH = 52 / 12;
+
+function stepSize(goalTarget) {
+    return STEP_TIERS.find((tier) => goalTarget <= tier.upTo).size;
+}
+
+/**
+ * Próximo escalón de la meta (#114): el siguiente múltiplo del escalón por encima de lo que lleva (sin pasarse de la
+ * meta) y, si se sabe el ahorro mensual, en cuánto llega: { step, falta, semanas } o { step, falta, meses }.
+ * null si no hay meta con monto o ya la cumplió.
+ */
+function nextStep(fin, today) {
+    if (!(fin.goalTarget > 0)) return null;
+    const saved = Math.max(0, fin.balance || 0);
+    if (saved >= fin.goalTarget) return null;
+    const size = stepSize(fin.goalTarget);
+    const step = Math.min(fin.goalTarget, (Math.floor(saved / size) + 1) * size);
+    const falta = step - saved;
+    const info = { step, falta };
+    const monthly = projectGoal(fin, today).monthly;
+    if (monthly > 0) {
+        const months = falta / monthly;
+        if (months < 1) info.semanas = Math.max(1, Math.ceil(months * WEEKS_PER_MONTH));
+        else info.meses = Math.ceil(months);
+    }
+    return info;
+}
+
+function formatNextStep(info, fin) {
+    if (!info) return '';
+    const money = (n) => formatMoney(n, fin);
+    let ritmo = '';
+    if (info.semanas) ritmo = ` A tu ritmo, en ${info.semanas} ${plural(info.semanas, 'semana', 'semanas')}.`;
+    else if (info.meses) ritmo = ` A tu ritmo, en ${info.meses} ${plural(info.meses, 'mes', 'meses')}.`;
+    return `🎯 Próximo escalón: ${money(info.step)}. Te faltan ${money(info.falta)}.${ritmo}`;
+}
+
+module.exports = { monthlySaving, projectGoal, formatProjection, daysMoved, weeklyGoalLine, dailyGoalLine, parseMonthlySaving, nextStep, formatNextStep };
