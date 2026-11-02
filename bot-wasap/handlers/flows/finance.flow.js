@@ -1195,10 +1195,9 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     extra
                 };
                 if (extra.length > 0) {
-                    const lineas = extra.map(t => `• ${t.type === 'expense' ? '💸' : '💰'} ${formatMoney(t.amount, fin)} — ${t.description}`).join('\n');
-                    await say(sock, jid, `${result.response}\n\nTambién anoté:\n${lineas}\n\n¿Confirmas TODO? (sí/no)`, ctx);
+                    await say(sock, jid, `${result.response.replace(YES_NO_SUFFIX, '').trim()}\n\nTambién anoté:\n${extraLines(extra, fin)}\n\n¿Confirmas TODO? ${CONFIRM_HINT}`, ctx);
                 } else {
-                    await say(sock, jid, result.response, ctx);
+                    await say(sock, jid, withConfirmHint(result.response), ctx);
                 }
             } else if (result.amount > 0) {
                 await saveAndConfirm(sock, jid, type, result.amount, cat, desc, fin, ctx);
@@ -1225,7 +1224,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     direction,
                     date: result.date || 'hoy'
                 };
-                await say(sock, jid, result.response, ctx);
+                await say(sock, jid, withConfirmHint(result.response), ctx);
             } else if (result.amount > 0) {
                 await saveLoanAndConfirm(sock, jid, counterparty, result.amount, direction, fin, ctx);
             } else {
@@ -1384,11 +1383,64 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     await applyIntent(sock, jid, result, userSession, ctx, fin);
 }
 
+// "¿Es correcto?": además de sí/no se puede corregir el monto o la descripción (#122, escalón B).
+const CONFIRM_HINT = '(sí / no / o escribí el monto correcto)';
+const YES_NO_SUFFIX = /\(s[ií]\s*\/\s*no\)\s*$/i;
+const AMOUNT_ONLY = /^\$?\s*\d[\d.,]*\s*(millones|millon|mil|k)?$/;
+const CORRECTION_VERB = /^(es|era|son|eran|fue|fueron)\s+/;
+const DESCRIPTION_CORRECTION = /^no\b[\s,.:;!-]*(?:es|era)\s+(.+)$/i;
+
+function withConfirmHint(response) {
+    const text = String(response || '').trim();
+    return YES_NO_SUFFIX.test(text) ? text.replace(YES_NO_SUFFIX, CONFIRM_HINT) : `${text}\n\n${CONFIRM_HINT}`;
+}
+
+function extraLines(extra, fin) {
+    return extra.map(t => `• ${t.type === 'expense' ? '💸' : '💰'} ${formatMoney(t.amount, fin)} — ${t.description}`).join('\n');
+}
+
+/**
+ * Corrección en "¿Es correcto?": "no, 15 mil", "15000", "no es 15 mil" → { amount }; "no, es pago deuda papá" →
+ * { description }. null si no es una corrección ("no" solo, "sí", "1", "2" siguen como antes).
+ * `t` viene en minúsculas y sin tildes; la descripción se toma del texto original.
+ */
+function parseConfirmCorrection(t, original, confirm) {
+    const noMatch = t.match(/^no\b[\s,.:;!-]*(.*)$/);
+    const rest = (noMatch ? noMatch[1] : t).trim();
+    if (!rest) return null;
+    const value = rest.replace(CORRECTION_VERB, '');
+    if (AMOUNT_ONLY.test(value) && (noMatch || !/^[12]$/.test(value))) {
+        const amount = parseAmountText(value);
+        return amount ? { amount } : null;
+    }
+    const description = noMatch && confirm.type !== 'loan' ? (original.trim().match(DESCRIPTION_CORRECTION) || [])[1] : null;
+    return description ? { description: description.trim() } : null;
+}
+
+function correctedConfirmationText(confirm, fin) {
+    if (confirm.type === 'loan') {
+        const verb = confirm.direction === 'me_deben' ? 'Te debe' : 'Le debés a';
+        return `✏️ Corregido: ${verb} *${confirm.counterparty}* ${formatMoney(confirm.amount, fin)}\n\n¿Es correcto? ${CONFIRM_HINT}`;
+    }
+    const label = confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso';
+    const extra = Array.isArray(confirm.extra) && confirm.extra.length > 0
+        ? `\n\nTambién anoté:\n${extraLines(confirm.extra, fin)}` : '';
+    return `✏️ Corregido:\n\n${label}: ${formatMoney(confirm.amount, fin)}${confirm.description ? ` — ${confirm.description}` : ''}` +
+        `${extra}\n\n¿Es correcto? ${CONFIRM_HINT}`;
+}
+
 async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
     const t = text.toLowerCase().trim()
         .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // strip accents
     const confirm = fin.pendingConfirm;
     if (!confirm) return;
+
+    // Va antes del "sí": "15000" empieza con 1 y se tomaba como confirmación.
+    const correction = parseConfirmCorrection(t, text, confirm);
+    if (correction) {
+        Object.assign(confirm, correction);
+        return await say(sock, jid, correctedConfirmationText(confirm, fin), ctx);
+    }
 
     if (/^(1|si|sip|sep|ok|okay|dale|confirmo|correcto|yes|claro|listo|dale|simon)/i.test(t)) {
         if (confirm.type === 'loan') {
@@ -1404,21 +1456,16 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         fin.pendingConfirm = null;
     } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
         fin.pendingConfirm = null;
-        const cancelMsg = [
-            'Cancelado. Sin problema 🦁',
-            'Listo, lo descartamos. ¿Qué más?',
-            'Olvídalo. Puedes intentar de nuevo cuando quieras.',
-            'Deshecho. Cuéntame el correcto.'
-        ][Math.floor(Math.random() * 4)];
-        await say(sock, jid, `✅ ${cancelMsg}`, ctx);
+        const example = confirm.type === 'loan' ? 'le presté a Juan 50 mil' : 'almuerzo 15 mil';
+        await say(sock, jid, `✅ Listo, lo descarté. Si era otro monto, escribí por ejemplo: _${example}_`, ctx);
     } else if (confirm.type === 'loan') {
         const verb = confirm.direction === 'me_deben' ? 'Te debe' : 'Le debés a';
-        await say(sock, jid, `🤝 ${verb} *${confirm.counterparty}* ${formatMoney(confirm.amount, fin)}\n\n¿Es correcto? (sí/no)`, ctx);
+        await say(sock, jid, `🤝 ${verb} *${confirm.counterparty}* ${formatMoney(confirm.amount, fin)}\n\n¿Es correcto? ${CONFIRM_HINT}`, ctx);
     } else {
         const rePrompt = [
-            `¿Es correcto?\n\n💸 Compra: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\nResponde *sí* o *no*`,
-            `Confirmación:\n\n💰 ${formatMoney(confirm.amount, fin)} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? (sí/no)`,
-            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso'}: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? (sí/no)`
+            `¿Es correcto?\n\n💸 Compra: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? '📝 ' + confirm.description + '\n' : ''}\n${CONFIRM_HINT}`,
+            `Confirmación:\n\n💰 ${formatMoney(confirm.amount, fin)} — ${confirm.description || 'sin detalle'}\n🏷️ ${confirm.category}\n\n¿Está bien? ${CONFIRM_HINT}`,
+            `Te leo:\n\n${confirm.type === 'expense' ? '💸 Compra' : '💰 Ingreso'}: ${formatMoney(confirm.amount, fin)}\n${confirm.description ? 'Detalle: ' + confirm.description + '\n' : ''}Categoría: ${confirm.category}\n\n¿Confirmas? ${CONFIRM_HINT}`
         ][Math.floor(Math.random() * 3)];
         await say(sock, jid, rePrompt, ctx);
     }
