@@ -1840,8 +1840,11 @@ async function generateNightReport(sock, jid, fin, ctx) {
     const streakLine = fin.streak >= 2 ? `${financeStreak.statusLine(fin)}\n` : '';
     // Metas con fecha (#83) y cuánto se acercó hoy (#84).
     const projectionText = fin.goalTarget > 0 ? financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin) : '';
+    // Próximo escalón de la meta (#114).
+    const nextStepText = financeGoals.formatNextStep(financeGoals.nextStep(fin, today), fin);
     const goalDayText = financeGoals.dailyGoalLine(fin, today, todayExpense);
-    const goalExtra = (projectionText ? `${projectionText}\n` : '') + (goalDayText ? `${goalDayText}\n` : '');
+    const goalExtra = (projectionText ? `${projectionText}\n` : '') + (nextStepText ? `${nextStepText}\n` : '') +
+        (goalDayText ? `${goalDayText}\n` : '');
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
     if (pendingReview.length > 0) markReviewPrompted(fin);
