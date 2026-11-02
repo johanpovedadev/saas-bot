@@ -7,6 +7,8 @@
  *   - sock.on('message', cb)
  *   - sock.sendMessage(jid, text)
  *   - sock.sendMessage(jid, media, { caption })   // media tipo MessageMedia {data, mimetype, filename}
+ *   - sock.sendMessage(jid, text, { buttons })     // botones: filas de { text, data } -> inline_keyboard
+ *   - un botón tocado (callback_query) llega como un mensaje normal cuyo texto es su `data`
  *   - sock.getChatById(jid) -> { sendStateTyping() }
  *   - msg.downloadMedia()   -> { data: base64, mimetype }
  *
@@ -19,6 +21,7 @@ const EventEmitter = require('events');
 const axios = require('axios');
 const { TelegramBot } = require('node-telegram-bot-api');
 const { logger } = require('../utils/logger');
+const { toInlineKeyboard } = require('../utils/messageButtons');
 
 const TELEGRAM_SUFFIX = '@telegram';
 const MAX_TEXT_LENGTH = 4000;
@@ -90,6 +93,8 @@ class TelegramAdapter extends EventEmitter {
         this.options = options;
         this.bot = new TelegramBot(token, { polling: options.polling !== false });
         this.info = { wid: { _serialized: '@telegram' } };
+        // Telegram tiene botones de verdad: say() no los convierte en opciones numeradas (utils/messageButtons.js).
+        this.supportsButtons = true;
 
         this.bot.on('message', (tgMsg) => {
             try {
@@ -97,6 +102,9 @@ class TelegramAdapter extends EventEmitter {
             } catch (e) {
                 logger.error(`Telegram _onMessage error: ${e.stack || e.message}`);
             }
+        });
+        this.bot.on('callback_query', (query) => {
+            this._onCallbackQuery(query).catch((e) => logger.error(`Telegram _onCallbackQuery error: ${e.stack || e.message}`));
         });
         this.bot.on('polling_error', (err) => {
             logger.error(`Telegram polling_error: ${err && err.message ? err.message : err}`);
@@ -171,16 +179,38 @@ class TelegramAdapter extends EventEmitter {
         this.emit('message', msg);
     }
 
-    async _sendTextWithMarkdown(chatId, text) {
+    /**
+     * Un botón tocado: se avisa a Telegram (para que deje de girar) y se emite como si el usuario hubiera escrito
+     * el `data` del botón. Así los flujos no cambian: un botón = escribir esa palabra.
+     */
+    async _onCallbackQuery(query) {
+        try {
+            await this.bot.answerCallbackQuery(query.id);
+        } catch (e) {
+            logger.debug(`Telegram answerCallbackQuery error: ${e.message}`);
+        }
+        const tgMsg = query.message;
+        if (!tgMsg || !query.data) return;
+        this._onMessage({
+            message_id: `${tgMsg.message_id}:${query.id}`,
+            chat: tgMsg.chat,
+            from: query.from,
+            text: query.data,
+            date: Math.floor(Date.now() / 1000)
+        });
+    }
+
+    async _sendTextWithMarkdown(chatId, text, extra = {}) {
         try {
             await this.bot.sendMessage(chatId, text, {
                 parse_mode: 'Markdown',
-                disable_web_page_preview: true
+                disable_web_page_preview: true,
+                ...extra
             });
         } catch (e) {
             // Algunos textos tienen markdown desbalanceado -> reintentar en claro.
             try {
-                await this.bot.sendMessage(chatId, text, { disable_web_page_preview: true });
+                await this.bot.sendMessage(chatId, text, { disable_web_page_preview: true, ...extra });
             } catch (e2) {
                 logger.error(`Telegram sendMessage falló (chat ${chatId}): ${e2.message}`);
                 throw e2;
@@ -216,11 +246,14 @@ class TelegramAdapter extends EventEmitter {
             return;
         }
 
-        // Texto plano
+        // Texto plano (con botones opcionales, que van en el último pedazo)
         if (typeof textOrMedia === 'string') {
             const chunks = chunkText(textOrMedia);
-            for (const chunk of chunks) {
-                await this._sendTextWithMarkdown(chatId, chunk);
+            const keyboard = options && options.buttons ? toInlineKeyboard(options.buttons) : [];
+            for (let i = 0; i < chunks.length; i++) {
+                const isLast = i === chunks.length - 1;
+                const extra = isLast && keyboard.length > 0 ? { reply_markup: { inline_keyboard: keyboard } } : {};
+                await this._sendTextWithMarkdown(chatId, chunks[i], extra);
             }
             return;
         }

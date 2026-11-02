@@ -1,6 +1,7 @@
 'use strict';
 
 const PHASE = require('../../utils/phases');
+const messageButtons = require('../../utils/messageButtons');
 const { say, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
@@ -637,7 +638,8 @@ async function handle(sock, jid, text, userSession, ctx) {
         }
     }
     const fin = initFinance(userSession);
-    const t = (text || '').trim();
+    // Un número escrito justo después de unos botones equivale a tocar ese botón (#122, escalón 0).
+    const t = messageButtons.resolveButtonReply(ctx, jid, (text || '').trim()).trim();
     if (!t) return;
 
     logger.info(`[${jid}] Finance | Msg: "${t.substring(0, 80)}" | Phase: ${userSession.phase}`);
