@@ -102,9 +102,9 @@ function cleanupJid(jid) {
         assert.strictEqual(financeAdmin.getAiCredits(inviteeJid), 0, 'antes de la recompensa el invitado no tiene creditos');
 
         // Primer movimiento real del invitado -> dispara la recompensa
-        const r1 = await send(ctx, inviteeJid, '18 mil en almuerzo');
-        assert.ok(/es correcto/i.test(r1) || /confirmo/i.test(r1) || /1/.test(r1), 'debe pedir confirmacion del registro');
-        const r2 = await send(ctx, inviteeJid, 'si');
+        // Un gasto claro se guarda de una (#122, escalón B): la recompensa sale en ese mismo mensaje.
+        const r2 = await send(ctx, inviteeJid, '18 mil en almuerzo');
+        assert.ok(/registrad/i.test(r2), 'el gasto queda registrado');
         assert.ok(/MOVIMIENTOS CON IA/i.test(r2), 'debe avisarle al invitado que gano movimientos con IA');
         assert.ok(!/D[ÍI]AS DE MASTER/i.test(r2), 'ya no debe mencionar dias de Master');
 

@@ -83,15 +83,15 @@ function cleanup() {
         financeAdmin.registerUser(JID, 'Prueba');
         financeAdmin.setTier(JID, 'master', 1); // las fotos usan IA: plan con IA
         ctx.sessions[JID] = { lastReceipt: { ...ok, at: Date.now() } };
+        // Monto y descripción claros: se guarda de una (#122, escalón B), con los productos de la foto.
         const pregunta = await send('Compré D1 La Victoria por 18500 pesos');
-        assert.ok(/Gasto|Registrad/.test(pregunta), `pide confirmar el gasto (${pregunta.slice(0, 120)})`);
+        assert.ok(/Gasto|registrad/i.test(pregunta), `registra el gasto (${pregunta.slice(0, 120)})`);
         assert.ok(/\$\s?18\.500/.test(pregunta), `el monto es el que va después de "por", no el 1 de "D1" (${pregunta.slice(0, 120)})`);
-        await send('sí');
         const guardado = financeStore.loadFinance(JID).transactions.find((t) => t.amount === 18500);
         assert.ok(guardado && guardado.store === 'D1 La Victoria' && guardado.items.length === 2, 'el gasto queda con la tienda y sus productos');
         const respuesta = await send('¿Dónde está más barata la leche?');
         assert.ok(/D1 La Victoria: \$\s?4\.200/.test(respuesta), `responde con el precio unitario guardado (${respuesta})`);
-        console.log('OK: en el chat, foto confirmada → productos guardados → "¿dónde está más barata la leche?" responde');
+        console.log('OK: en el chat, foto registrada → productos guardados → "¿dónde está más barata la leche?" responde');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

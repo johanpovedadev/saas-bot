@@ -58,16 +58,13 @@ async function send(jid, text, firstName) {
         assert.ok(/1️⃣ ✈️ Un viaje/.test(r) && /4️⃣ Después/.test(r), `botones como opciones numeradas fuera de Telegram: ${r}`);
         r = await send(ana, '4'); // "Después"
         assert.strictEqual(r, financeWelcome.GOAL_LATER_TEXT);
-        // Del 2.º gasto en adelante, hasta el escalón B, Leo todavía pregunta "¿Es correcto?".
         r = await send(ana, 'pan 5 mil');
-        r += await send(ana, 'sí');
         assert.ok(!r.includes(financeWelcome.GOAL_OFFER_TEXT), 'después de "Después" no pregunta otra vez');
         console.log('OK: después del primer gasto ofrece la meta con botones; "Después" no pregunta otra vez');
 
         // --- 3. Tip de fijar el chat: una vez, tras el 2.º gasto (Ana ya lleva 2) ---
         assert.ok(r.includes(financeWelcome.PIN_TIP), `tip tras el 2.º gasto: ${r}`);
-        await send(ana, 'bus 3 mil');
-        r = await send(ana, 'sí');
+        r = await send(ana, 'bus 3 mil');
         assert.ok(!r.includes(financeWelcome.PIN_TIP), 'el tip sale una sola vez');
         console.log('OK: el tip de fijar el chat sale una vez, después del 2.º gasto');
 
@@ -92,7 +89,7 @@ async function send(jid, text, firstName) {
         assert.ok(r.includes(financeWelcome.PRICE_ANSWER) && r.includes(financeWelcome.WELCOME_TEXT), r);
         assert.ok(!/\$\s?\d/.test(r), 'sin precios: los planes están pendientes');
         await send(precio, 'almuerzo 15 mil'); // primer gasto: se guarda de una
-        await send(precio, 'mercado 80 mil'); // el 2.º todavía pregunta "¿Es correcto?" (hasta el escalón B)
+        await send(precio, 'gasté 80 mil'); // sin descripción: es dudoso y pregunta "¿Es correcto?"
         assert.ok(ctx.sessions[precio].finance.pendingConfirm, 'hay un gasto esperando confirmación');
         r = await send(precio, '¿tengo que pagar por usarte?');
         assert.strictEqual(r, financeWelcome.PRICE_ANSWER);
