@@ -113,6 +113,13 @@ function rowToFinance(row) {
         // Informe de la noche según actividad (#123): avisos mandados y desde cuándo Leo sabe el saldo real.
         nightNudge: extra.nightNudge || null,
         balanceSetAt: extra.balanceSetAt || '',
+        // Qué informes quiere (#123, punto 3) y si le sirven (punto 4): 👍/👎 y respuestas tras el informe.
+        reportPref: extra.reportPref || 'diario',
+        reportFeedback: extra.reportFeedback || { up: 0, down: 0 },
+        lastNightReportAt: extra.lastNightReportAt || 0,
+        reportReplies: extra.reportReplies || 0,
+        reportRepliedAt: extra.reportRepliedAt || 0,
+        reportPrefAskedAt: extra.reportPrefAskedAt || 0,
         // Ahorro mensual que el usuario aparta para su meta ("ahorro 2 millones al mes"), cifrado como goalTarget.
         cardStatement: extra.cardStatement && financeCrypto.isEncrypted(extra.cardStatement)
             ? JSON.parse(financeCrypto.decrypt(extra.cardStatement) || 'null')
@@ -174,6 +181,12 @@ function financeToRow(jid, fin) {
             lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
             nightNudge: fin.nightNudge || null,
             balanceSetAt: fin.balanceSetAt || '',
+            reportPref: fin.reportPref || 'diario',
+            reportFeedback: fin.reportFeedback || { up: 0, down: 0 },
+            lastNightReportAt: fin.lastNightReportAt || 0,
+            reportReplies: fin.reportReplies || 0,
+            reportRepliedAt: fin.reportRepliedAt || 0,
+            reportPrefAskedAt: fin.reportPrefAskedAt || 0,
             goalMonthly: goalMonthlyEnc,
             cardStatement: cardStatementEnc,
             learnedRules: rulesEnc

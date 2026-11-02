@@ -10,6 +10,7 @@ const insights = require('./financeInsights');
 const goals = require('./financeGoals');
 const streak = require('./financeStreak');
 const { formatMoney } = require('../utils/financeMoney');
+const financeNightPolicy = require('./financeNightPolicy');
 
 const SATURDAY = 6;
 const SEND_HOUR = 21;
@@ -77,6 +78,7 @@ async function runWeeklySweep({ now = new Date(), adminJids, loadFinance, saveFi
     for (const jid of adminJids) {
         const fin = loadFinance(jid);
         if (!fin || !fin.name || !isWeeklyTime(now, fin.lastWeeklyReportDate)) continue;
+        if (!financeNightPolicy.weeklyAllowed(fin)) continue;
         await send(jid, buildWeeklyMessage(fin, today));
         fin.lastWeeklyReportDate = today;
         saveFinance(jid, fin);

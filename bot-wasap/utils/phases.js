@@ -56,6 +56,7 @@ const PHASE = {
     FIN_MAIN: 'fin_main',
     FIN_SETTINGS: 'fin_settings',                 // Menu de mejoras/configuracion
     FIN_SETTINGS_CURRENCY: 'fin_settings_currency', // Esperando elegir moneda
+    FIN_SETTINGS_REPORTS: 'fin_settings_reports',   // Eligiendo qué informes recibir (#123)
     FIN_FEEDBACK: 'fin_feedback',                  // Esperando el texto del feedback
 
     // ===================================
