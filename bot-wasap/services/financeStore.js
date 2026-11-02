@@ -110,6 +110,9 @@ function rowToFinance(row) {
         currency: extra.currency || 'COP',
         reviewPromptedAt: extra.reviewPromptedAt || 0,
         lastWeeklyReportDate: extra.lastWeeklyReportDate || '',
+        // Informe de la noche según actividad (#123): avisos mandados y desde cuándo Leo sabe el saldo real.
+        nightNudge: extra.nightNudge || null,
+        balanceSetAt: extra.balanceSetAt || '',
         // Ahorro mensual que el usuario aparta para su meta ("ahorro 2 millones al mes"), cifrado como goalTarget.
         cardStatement: extra.cardStatement && financeCrypto.isEncrypted(extra.cardStatement)
             ? JSON.parse(financeCrypto.decrypt(extra.cardStatement) || 'null')
@@ -169,6 +172,8 @@ function financeToRow(jid, fin) {
             currency: fin.currency || 'COP',
             reviewPromptedAt: fin.reviewPromptedAt || 0,
             lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
+            nightNudge: fin.nightNudge || null,
+            balanceSetAt: fin.balanceSetAt || '',
             goalMonthly: goalMonthlyEnc,
             cardStatement: cardStatementEnc,
             learnedRules: rulesEnc
