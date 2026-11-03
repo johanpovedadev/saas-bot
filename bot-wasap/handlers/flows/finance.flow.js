@@ -21,6 +21,7 @@ const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
 const financeWelcome = require('../../services/financeWelcome');
 const financeEntry = require('../../services/financeEntry');
+const financeCorrections = require('../../services/financeCorrections');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -709,6 +710,16 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await backToMenu(sock, jid, userSession, ctx, fin);
     }
 
+    // [✏️ Corregir] [🗑️ Borrar] de un registro, la respuesta a "¿Qué cambio?" y "fue con tarjeta" (#122, escalón B).
+    const entryAction = financeCorrections.parseEntryAction(t);
+    if (entryAction) return await handleEntryAction(sock, jid, entryAction, ctx, fin);
+    const correction = financeCorrections.applyPendingCorrection(fin, t, todayInBogota(), Date.now())
+        || (!fin.pendingConfirm && financeCorrections.applyPaymentAfterSave(fin, t, todayInBogota(), Date.now()));
+    if (correction) {
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, correction.text, ctx, correction.buttons ? { buttons: correction.buttons } : undefined);
+    }
+
     // Pending confirmation
     if (fin.pendingConfirm) {
         return await handleConfirmation(sock, jid, t, userSession, ctx, fin);
@@ -1155,6 +1166,7 @@ function isBackToMenu(text) {
 async function backToMenu(sock, jid, userSession, ctx, fin) {
     const hadPending = Boolean(fin.pendingConfirm || fin.pendingFeedback || fin.pendingReferral || fin.goalTempName);
     fin.pendingConfirm = null;
+    fin.pendingCorrection = null;
     fin.pendingLoanList = null;
     fin.pendingReferral = null;
     fin.pendingFeedback = false;
@@ -1283,8 +1295,9 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     category: t.category || (t.type === 'expense' ? 'Otros' : 'Ingreso'),
                     description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso')
                 }));
-            // El primer registro de una cuenta nueva se guarda de una si está claro (#122, escalón A).
-            const saveRightAway = fin.expressWelcome && !fin.firstTransactionDone && extra.length === 0 && financeEntry.isClearEntry(result);
+            // Claro (monto y descripción) → se guarda de una, con [✏️ Corregir] [🗑️ Borrar] [📋 Menú] (#122, escalón B).
+            // Dudoso → "¿Es correcto?" como antes.
+            const saveRightAway = financeEntry.isClearEntry(result) && extra.every((t) => financeEntry.isClearEntry({ ...t, intent: result.intent }));
             if (result.needs_confirmation && result.amount > 0 && !saveRightAway) {
                 fin.pendingConfirm = {
                     type,
@@ -1300,10 +1313,9 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     await say(sock, jid, withConfirmHint(result.response), ctx);
                 }
             } else if (result.amount > 0) {
-                await saveAndConfirm(sock, jid, type, result.amount, cat, desc, fin, ctx);
-                for (const t of extra) {
-                    await saveAndConfirm(sock, jid, t.type, t.amount, t.category, t.description, fin, ctx);
-                }
+                // Si es el total de la foto de un recibo, se guardan sus productos (igual que al confirmar con "sí").
+                const receiptExtra = financeReceipts.receiptExtraFor(userSession, { type, amount: result.amount });
+                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc }, ...extra], fin, ctx, receiptExtra);
             } else {
                 await say(sock, jid, result.response ||
                     (type === 'expense'
@@ -1449,7 +1461,8 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
 
     // Texto natural: parser determinista (sin IA, sin consumir cupo). Así un
     // usuario Gratis puede decir "compré 18 mil en almuerzo" y se registra igual.
-    const result = await financeAi.interpret(t, userSession, true);
+    const result = await financeCorrections.interpretEntries(t, (part) => financeAi.interpret(part, userSession, true))
+        || await financeAi.interpret(t, userSession, true);
     if (!result) {
         await showQuickMenu(sock, jid, fin, ctx);
         return;
@@ -1548,10 +1561,9 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         } else {
             // Si el gasto viene de la foto de un recibo, se guardan sus productos para comparar precios entre tiendas.
             const receiptExtra = financeReceipts.receiptExtraFor(userSession, confirm);
-            await saveAndConfirm(sock, jid, confirm.type, confirm.amount, confirm.category, confirm.description, fin, ctx, receiptExtra);
-            for (const t2 of (Array.isArray(confirm.extra) ? confirm.extra : [])) {
-                await saveAndConfirm(sock, jid, t2.type, t2.amount, t2.category, t2.description, fin, ctx);
-            }
+            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description },
+                ...(Array.isArray(confirm.extra) ? confirm.extra : [])];
+            await saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra);
         }
         fin.pendingConfirm = null;
     } else if (/^(2|no|nop|nope|negativo|mal|error|cancelar|cancel|quit)/i.test(t)) {
@@ -1571,7 +1583,36 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
     }
 }
 
-async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}) {
+/**
+ * Guarda lo que trajo un mensaje como un grupo (#122, escalón B): todos con el mismo `entryGroup` y la última
+ * confirmación con [✏️ Corregir] [🗑️ Borrar] [📋 Menú] para ese grupo. `receiptExtra` va solo en el primero.
+ */
+async function saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra = {}) {
+    const group = Date.now();
+    for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const isLast = i === entries.length - 1;
+        await saveAndConfirm(sock, jid, e.type, e.amount, e.category, e.description, fin, ctx,
+            { ...(i === 0 ? receiptExtra : {}), entryGroup: group },
+            isLast ? { buttons: financeCorrections.entryButtons(group) } : {});
+    }
+    financeCorrections.rememberEntryGroup(fin, group, Date.now());
+    financeStore.saveFinance(jid, fin);
+}
+
+/** Botones de un registro guardado: borrar o corregir un campo (#122, escalón B). */
+async function handleEntryAction(sock, jid, action, ctx, fin) {
+    if (action.action === 'borrar') {
+        const text = financeCorrections.deleteGroup(fin, action.group, todayInBogota());
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, text, ctx, { buttons: [[{ text: '📋 Menú', data: 'menu' }]] });
+    }
+    const reply = financeCorrections.startCorrection(fin, action, Date.now());
+    financeStore.saveFinance(jid, fin);
+    await say(sock, jid, reply.text, ctx, reply.buttons ? { buttons: reply.buttons } : undefined);
+}
+
+async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1639,7 +1680,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         planLine +
         (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
         `\n¿Algo más? 🦁`,
-        ctx);
+        ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
 

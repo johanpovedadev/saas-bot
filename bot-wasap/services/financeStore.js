@@ -117,6 +117,10 @@ function rowToFinance(row) {
         expressWelcome: extra.expressWelcome || false,
         goalOfferDeclinedAt: extra.goalOfferDeclinedAt || '',
         pinTipShown: extra.pinTipShown || false,
+        // Corregir con botones (#122, escalón B): el último registro y la corrección a medias.
+        lastEntryGroup: extra.lastEntryGroup || 0,
+        lastEntryAt: extra.lastEntryAt || 0,
+        pendingCorrection: extra.pendingCorrection || null,
         // Qué informes quiere (#123, punto 3) y si le sirven (punto 4): 👍/👎 y respuestas tras el informe.
         reportPref: extra.reportPref || 'diario',
         reportFeedback: extra.reportFeedback || { up: 0, down: 0 },
@@ -188,6 +192,9 @@ function financeToRow(jid, fin) {
             expressWelcome: fin.expressWelcome || false,
             goalOfferDeclinedAt: fin.goalOfferDeclinedAt || '',
             pinTipShown: fin.pinTipShown || false,
+            lastEntryGroup: fin.lastEntryGroup || 0,
+            lastEntryAt: fin.lastEntryAt || 0,
+            pendingCorrection: fin.pendingCorrection || null,
             reportPref: fin.reportPref || 'diario',
             reportFeedback: fin.reportFeedback || { up: 0, down: 0 },
             lastNightReportAt: fin.lastNightReportAt || 0,
