@@ -14,7 +14,7 @@
  */
 const NEWS = [
     {
-        id: '1.1.0',
+        id: '1.8.0',
         date: '2026-11-03',
         items: [
             { text: 'Ahora tocás *botones* en vez de escribir comandos, y en cada pantalla hay ⬅️ Volver', probar: 'escribí *menú*' },

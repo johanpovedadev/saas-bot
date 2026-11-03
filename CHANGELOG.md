@@ -33,6 +33,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.8.0] - 2026-11-02
+
+Versión gratis de Leo: que nadie se trabe. Sale de revisar dónde abandonaron los usuarios reales y de probar Manny.
+
+### Agregado
+
+- **Botones en Telegram**: tocar un botón es como escribir esa palabra; en canales sin botones salen como opciones
+  numeradas (#131, #122).
+- **Bienvenida exprés**: Leo arranca pidiendo un gasto; nombre de Telegram y meta después, con "Después" (#132).
+- **Guardar de una** los gastos claros con `[✏️ Corregir] [🗑️ Borrar] [📋 Menú]`; varias cosas en un mensaje y
+  cantidades ("5 cocas 7000 cada una") (#133, #125).
+- **Menú con botones**, `⬅️ Volver` en todo y menú gratis corto; "menú/cancelar/volver" escrito sirve en cualquier
+  paso (#134, #124).
+- **Mis metas** con meta existente: avance y opciones para cambiarla, sin volver a preguntar (#135).
+- **Novedades** en el informe de la noche: "🆕 Leo aprendió cosas nuevas", una vez por versión (#136, #129).
+- **Informe según actividad**: reenganche a los 3 días, pausa a los 7, sin saldo negativo inventado; elegir
+  diario/semanal/ninguno y 👍/👎 para medir (#126, #127, #123).
+- **Próximo escalón** de la meta en el informe de la noche (#120, #114).
+
+### Documentación
+
+- Arranque rápido para agentes, servicios arriba y cola de Hermes pausada (#118, #119, #121); mapa de Leo (#112).
+
 ## [1.7.2] - 2026-11-02
 
 ### Cambiado
