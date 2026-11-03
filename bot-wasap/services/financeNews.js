@@ -14,6 +14,14 @@
  */
 const NEWS = [
     {
+        id: '1.9.0',
+        date: '2026-11-03',
+        items: [
+            { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
+            { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
+        ],
+    },
+    {
         id: '1.8.0',
         date: '2026-11-03',
         items: [

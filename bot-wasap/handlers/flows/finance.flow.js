@@ -25,6 +25,7 @@ const financeCorrections = require('../../services/financeCorrections');
 const financeMenu = require('../../services/financeMenu');
 const financeNews = require('../../services/financeNews');
 const privacy = require('../../utils/financePrivacy');
+const financeCharts = require('../../services/financeCharts');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -836,6 +837,11 @@ async function handle(sock, jid, text, userSession, ctx) {
         const reply = financeNightPolicy.setReportPref(fin, reportPrefCommand);
         financeStore.saveFinance(jid, fin);
         return await say(sock, jid, reply, ctx);
+    }
+
+    // "gráfica" / "ver gráfica" / "resumen en imagen" (#139). Sin IA.
+    if (CHART_COMMAND.test(command)) {
+        return await sendMonthChart(sock, jid, ctx, fin);
     }
 
     if (MEDALS_COMMAND.test(command)) {
@@ -2081,6 +2087,10 @@ async function sendSpendingReport(sock, jid, ctx, fin, options) {
         financeStore.saveFinance(jid, fin);
     }
     await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
+    if (report.expenseCount > 0) {
+        const data = financeCharts.donutData(fin, todayInBogota(), report.days, `Últimos ${report.days} días`);
+        await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(data, fin), '📊 Tus gastos en una imagen');
+    }
 }
 
 async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
@@ -2167,6 +2177,14 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal =
         `\nVas bien, seguí contándome 🦁` + (reveal ? '' : `\n\n${financeNightPolicy.FEEDBACK_QUESTION}`),
         ctx, reveal ? undefined : { buttons: financeMenu.nightReportButtons(fin) });
     if (reveal) return;
+    // Una sola imagen para no saturar (#139): la barra de la meta o, sin meta, la dona de hoy.
+    const goalBar = financeCharts.goalBarData(fin, today);
+    if (goalBar) {
+        await sendChart(sock, jid, ctx, () => financeCharts.renderGoalBar(goalBar, fin), `🎯 ${fin.goalName}`);
+    } else if (todayExpense > 0) {
+        const todayDonut = financeCharts.donutData(fin, today, 1, 'Hoy');
+        await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(todayDonut, fin), '📊 Tus gastos de hoy');
+    }
     financeNightPolicy.markReportSent(fin, Date.now());
     if (news.length > 0) financeNews.markNewsSeen(fin);
 }
@@ -2271,6 +2289,33 @@ async function runNightReportSweep(sock, ctx) {
 }
 
 const SHARE_COMMAND = /^(compartir|mi tarjeta|compartir (mi )?tarjeta|compartir logros)$/;
+const CHART_COMMAND = /^(ver (la |mi )?grafica|grafica|graficas|mi grafica|resumen en imagen)$/;
+const DAYS_IN_MONTH_SO_FAR = (today) => Number(today.slice(8, 10));
+
+/**
+ * Manda un gráfico como foto (#139). Además va el texto de siempre, para quien no carga imágenes; si `canvas`
+ * falla, queda solo el texto (se registra, nunca rompe el informe).
+ */
+async function sendChart(sock, jid, ctx, render, caption) {
+    try {
+        const png = render();
+        await sock.sendMessage(jid, financeCharts.toMedia(png, 'leo.png'), { caption });
+        return true;
+    } catch (e) {
+        logger.error(`[${jid}] No se pudo armar el gráfico: ${e.message}`);
+        return false;
+    }
+}
+
+/** "gráfica": la dona de los gastos del mes. */
+async function sendMonthChart(sock, jid, ctx, fin) {
+    const today = todayInBogota();
+    const data = financeCharts.donutData(fin, today, DAYS_IN_MONTH_SO_FAR(today), 'Este mes');
+    if (data.slices.length === 0) {
+        return await say(sock, jid, '📊 Todavía no tengo gastos de este mes para graficar. Contame uno, por ejemplo: _almuerzo 15 mil_ 🦁', ctx);
+    }
+    await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(data, fin), '📊 Tus gastos de este mes');
+}
 const MEDALS_COMMAND = /^(medallas|mis medallas|logros|mis logros)$/;
 
 /** Manda las medallas nuevas con su tarjeta. Sin montos en la imagen ni en el texto. */
@@ -2339,7 +2384,8 @@ function startNightReporter(sock, ctx) {
             adminJids,
             loadFinance: financeStore.loadFinance,
             saveFinance: financeStore.saveFinance,
-            send: (jid, text) => say(sock, jid, text, ctx)
+            send: (jid, text) => say(sock, jid, text, ctx),
+            sendImage: (jid, render, caption) => sendChart(sock, jid, ctx, render, caption)
         }).catch((e) => logger.error(`[informe semanal] ${e.message}`));
     }, CHECK_INTERVAL);
 }
