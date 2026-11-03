@@ -28,6 +28,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeReview.js` + `financeLearning.js` | "¿En qué fue este gasto?" (`1 comida`) y lo que Leo aprende. |
 | `services/financeReceipts.js` | Productos del recibo y "¿dónde está más barato?". |
 | `utils/financeMoney.js` | `formatMoney(n, fin)` → "$1.234.567". **Úsalo siempre para mostrar plata.** |
+| `utils/financePrivacy.js` | Modo privado (#139): `money(n, fin, { kind })` con `kind` = `saldo` / `ahorro` / `meta` / `gasto`. **Para saldo, ahorro o meta usá este, no `formatMoney`**: con el modo prendido sale `$•••••`. |
 | `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. |
 | `utils/financeDate.js` | `todayInBogota()` → "YYYY-MM-DD". **Usa esta fecha, no la del servidor.** |
 | `utils/financeDisclaimer.js` | Aviso "Leo no es asesor financiero" (solo en informes y consejos). |

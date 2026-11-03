@@ -11,7 +11,7 @@
  * Funciones puras: reciben `fin` y la fecha de hoy (YYYY-MM-DD, Bogotá). finance.flow.js solo las llama.
  */
 
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const ACTIVE_DAYS = 2;        // hasta 2 días sin registrar: informe normal
@@ -116,7 +116,7 @@ function balanceKnown(fin) {
 function formatBalanceLine(fin) {
     const balance = fin.balance || 0;
     if (balance < 0 && !balanceKnown(fin)) return UNKNOWN_BALANCE_LINE;
-    return `💵 Te queda: ${formatMoney(balance, fin)}`;
+    return `💵 Te queda: ${privacy.money(balance, fin, { kind: privacy.KINDS.BALANCE })}`;
 }
 
 /** Sin tildes, minúsculas y sin puntuación ni modificadores de tono del emoji, para comparar respuestas cortas. */

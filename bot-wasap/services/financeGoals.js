@@ -11,7 +11,7 @@
  * Los días que se acerca o se aleja la meta = plata de diferencia ÷ ahorro diario. Tono positivo siempre.
  */
 
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const WINDOW_DAYS = 90;          // ventana para estimar el ahorro mensual
@@ -70,7 +70,8 @@ function projectGoal(fin, today) {
 }
 
 function formatProjection(projection, fin) {
-    const money = (n) => formatMoney(n, fin);
+    // Modo privado (#139): lo que aparta al mes es ahorro y se oculta; la fecha sí se dice.
+    const money = privacy.moneyFn(fin, privacy.KINDS.SAVING);
     switch (projection.status) {
         case 'lograda':
             return `🏆 ¡Llegaste a tu meta *${fin.goalName}*!`;
@@ -190,7 +191,7 @@ function nextStep(fin, today) {
 
 function formatNextStep(info, fin) {
     if (!info) return '';
-    const money = (n) => formatMoney(n, fin);
+    const money = privacy.moneyFn(fin, privacy.KINDS.GOAL);
     let ritmo = '';
     if (info.semanas) ritmo = ` A tu ritmo, en ${info.semanas} ${plural(info.semanas, 'semana', 'semanas')}.`;
     else if (info.meses) ritmo = ` A tu ritmo, en ${info.meses} ${plural(info.meses, 'mes', 'meses')}.`;

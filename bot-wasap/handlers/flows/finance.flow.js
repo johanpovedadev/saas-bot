@@ -24,6 +24,7 @@ const financeEntry = require('../../services/financeEntry');
 const financeCorrections = require('../../services/financeCorrections');
 const financeMenu = require('../../services/financeMenu');
 const financeNews = require('../../services/financeNews');
+const privacy = require('../../utils/financePrivacy');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -681,6 +682,17 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (financeWelcome.isPriceQuestion(t)) {
         return await say(sock, jid, financeWelcome.PRICE_ANSWER, ctx);
     }
+    // Modo privado (#139): "ocultar saldo" / "ocultar todo" / "mostrar saldo", en cualquier paso.
+    const privacyCommand = privacy.parsePrivacyCommand(t);
+    if (privacyCommand) {
+        const reply = privacy.applyPrivacyCommand(fin, privacyCommand);
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, reply, ctx);
+    }
+    // [👀 Ver montos] debajo del informe: ese informe otra vez con los montos, sin apagar el modo privado.
+    if (financeMenu.isRevealRequest(t)) {
+        return await generateNightReport(sock, jid, privacy.revealed(fin), ctx, { reveal: true });
+    }
     const spokenName = financeWelcome.parseNameCommand(t);
     if (spokenName) {
         fin.name = spokenName;
@@ -807,7 +819,7 @@ async function handle(sock, jid, text, userSession, ctx) {
             fin.balance = amount;
             financeNightPolicy.markBalanceKnown(fin, todayInBogota());
             financeStore.saveFinance(jid, fin);
-            return await say(sock, jid, `✅ Listo, tu saldo quedó en ${formatMoney(amount, fin)}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
+            return await say(sock, jid, `✅ Listo, tu saldo quedó en ${privacy.money(amount, fin, { kind: privacy.KINDS.BALANCE })}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
         }
     }
     // "pagué la tarjeta": baja el saldo sin contarlo como gasto (las compras ya se anotaron). Sin IA.
@@ -846,7 +858,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         fin.goalMonthly = monthlyGoal;
         financeStore.saveFinance(jid, fin);
         const projection = financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin);
-        return await say(sock, jid, `✅ Listo: ${formatMoney(monthlyGoal, fin)} al mes para *${fin.goalName}*.` + (projection ? `\n${projection}` : ''), ctx);
+        return await say(sock, jid, `✅ Listo: ${privacy.money(monthlyGoal, fin, { kind: privacy.KINDS.SAVING })} al mes para *${fin.goalName}*.` + (projection ? `\n${projection}` : ''), ctx);
     }
 
     // "¿dónde está más barata la leche?" / "precio leche": con los recibos del propio usuario, sin IA.
@@ -1106,7 +1118,7 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     await say(sock, jid,
         `🦁 *${fin.goalName}* — ¡esa es tu meta! ` +
         (fin.goalTarget > 0
-            ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${formatMoney(fin.goalTarget, fin)} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
+            ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${privacy.money(fin.goalTarget, fin, { kind: privacy.KINDS.GOAL })} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
             : `Cuando quieras decime cuánta plata necesitás y armamos el camino juntos.\n\n`) +
         `Tu primer paso es registrar cualquier movimiento de hoy — así de simple:\n\n` +
         `_"Compré 18 mil en almuerzo"_\n` +
@@ -1142,13 +1154,13 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     const txCount = fin.transactions.length;
     const goalLine = fin.goalName && fin.goalTarget
-        ? `🎯 Avance de meta "${fin.goalName}": ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
+        ? `🎯 Avance de meta "${fin.goalName}": ${privacy.money(fin.balance || 0, fin, { kind: privacy.KINDS.GOAL })} de ${privacy.money(fin.goalTarget, fin, { kind: privacy.KINDS.GOAL })}\n`
         : '';
     await say(sock, jid,
         `🦁 ¡Qué bueno verte de nuevo, *${fin.name}*!\n\n` +
         (txCount > 0
             ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
-              `💵 Balance: ${formatMoney(fin.balance, fin)}\n` +
+              `💵 Balance: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}\n` +
               goalLine +
               `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n`
             : `Todavía no has registrado nada.\n\n`),
@@ -1239,7 +1251,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 }
                 financeStore.saveFinance(jid, fin);
                 await say(sock, jid,
-                    `🎯 *Meta guardada!* Vas a ahorrar ${formatMoney(val, fin)} para "${fin.goalName}".\n\n` +
+                    `🎯 *Meta guardada!* Vas a ahorrar ${privacy.money(val, fin, { kind: privacy.KINDS.GOAL })} para "${fin.goalName}".\n\n` +
                     `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
                     `Podés registrar tu primer movimiento:\n` +
                     `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
@@ -1418,7 +1430,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             // "¿Cómo voy con mi meta?" también dice en qué fecha llega (#83).
             const projection = result.intent === 'goal_query' && fin.goalTarget > 0
                 ? financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin) : '';
-            const text = projection ? `${result.response}\n\n${projection}` : result.response;
+            const aiText = result.fromAi ? privacy.maskAllAmounts(result.response, fin) : result.response;
+            const text = projection ? `${aiText}\n\n${projection}` : aiText;
             // Si la respuesta de la IA da consejos de plata, va con el aviso de que Leo no es asesor financiero.
             await say(sock, jid, withDisclaimer(text), ctx);
             break;
@@ -1692,11 +1705,11 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
     const balanceLine = !hasIncome && fin.balance < 0
-        ? `💸 Comprado hoy: ${formatMoney(fin.todaySpending, fin)}`
-        : `💵 Saldo: ${formatMoney(fin.balance, fin)}`;
+        ? `💸 Comprado hoy: ${privacy.money(fin.todaySpending, fin)}`
+        : `💵 Saldo: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}`;
 
     const todayMsg = fin.todaySpending > 0
-        ? `📊 Hoy: ${formatMoney(fin.todaySpending, fin)}\n`
+        ? `📊 Hoy: ${privacy.money(fin.todaySpending, fin)}\n`
         : '';
     // Racha protegida: si acaba de reiniciar en 1 pero ya tenia una racha
     // mejor antes, no se muestra como si arrancara de cero — se reconoce lo
@@ -1721,7 +1734,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     await say(sock, jid,
         `✅ *${type === 'expense' ? 'Compra registrada' : 'Ingreso registrado'}!*\n` +
         confirmMsg + '\n\n' +
-        `${type === 'expense' ? '💸' : '💰'} ${formatMoney(amount, fin)} — ${description}\n` +
+        `${type === 'expense' ? '💸' : '💰'} ${privacy.money(amount, fin)} — ${description}\n` +
         `🏷️ ${category}\n\n` +
         balanceLine + '\n' +
         todayMsg +
@@ -1874,7 +1887,7 @@ async function showSettingsMenu(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.FIN_SETTINGS;
     await say(sock, jid,
         `⚙️ *Mejoras y configuración*`,
-        ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
+        ctx, { buttons: financeMenu.settingsButtons(userSession.finance) });
 }
 
 async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
@@ -1901,7 +1914,7 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
         await say(sock, jid, financeMenu.REPORT_PREF_TITLE, ctx, { buttons: financeMenu.REPORT_PREF_BUTTONS });
         return;
     }
-    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:`, ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
+    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:`, ctx, { buttons: financeMenu.settingsButtons(fin) });
 }
 
 /** Configuración → Informes (#123): diario y semanal, solo semanal o ninguno. */
@@ -1940,7 +1953,7 @@ async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     await say(sock, jid,
         `Listo ✅ tus montos ahora se ven en *${CURRENCY_LABELS[chosen]}* — esto es solo visual, tu saldo real no cambia.\n\n` +
-        `Ejemplo: tu saldo ahora se ve así → ${formatMoney(fin.balance || 0, fin)}`,
+        `Ejemplo: tu saldo ahora se ve así → ${privacy.money(fin.balance || 0, fin, { kind: privacy.KINDS.BALANCE })}`,
         ctx);
 }
 
@@ -1991,7 +2004,7 @@ async function showWelcome(sock, jid, ctx, text) {
             `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.\n` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
-                  `💵 Balance: ${formatMoney(fin.balance, fin)}\n\n`
+                  `💵 Balance: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}\n\n`
                 : `Todavía no registraste nada. Podés arrancar cuando quieras.\n\n`),
             ctx);
         if (!canUseAi(jid)) {
@@ -2083,8 +2096,14 @@ async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
  * Genera el informe nocturno para un usuario y lo envía.
  * Llamar desde un scheduler externo o setInterval a las 9 p. m. (hora de Colombia).
  */
-async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
+/**
+ * Informe de la noche. Con `reveal` (botón [👀 Ver montos], #139) es el mismo informe con los montos, solo en ese
+ * mensaje: no marca novedades, revisión ni la hora del informe, y no trae botones.
+ */
+async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal = false } = {}) {
     if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
+    // Modo privado (#139): saldo y meta se ocultan; los gastos del día solo con "ocultar todo".
+    const gasto = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
     // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
     // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
     // mostraba $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto.
@@ -2096,19 +2115,20 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
     const byMedium = sumExpensesByMedium(todayTx);
     const hasNonCash = byMedium[MEDIUM.CARD] + byMedium[MEDIUM.BANK] + byMedium[MEDIUM.TRANSFER] > 0;
     const bankLines = Object.entries(sumBankExpensesByAccount(todayTx))
-        .map(([account, total]) => `   🏦 Con ${account}: ${formatMoney(total, fin)}\n`).join('');
+        .map(([account, total]) => `   🏦 Con ${account}: ${gasto(total)}\n`).join('');
     const breakdown = hasNonCash
-        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${formatMoney(byMedium[MEDIUM.CARD], fin)}\n` : '') +
+        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${gasto(byMedium[MEDIUM.CARD])}\n` : '') +
           bankLines +
-          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${formatMoney(byMedium[MEDIUM.TRANSFER], fin)}\n` : '') +
-          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${formatMoney(byMedium[MEDIUM.CASH], fin)}\n` : '')
+          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${gasto(byMedium[MEDIUM.TRANSFER])}\n` : '') +
+          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${gasto(byMedium[MEDIUM.CASH])}\n` : '')
         : '';
     const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
     const goalLine = fin.goalName
         ? (fin.goalTarget > 0
-            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
+            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}%` +
+              (privacy.hides(fin, privacy.KINDS.GOAL) ? '\n' : ` — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`)
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     // Racha, nivel del león y protectores (#85).
@@ -2121,21 +2141,22 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
     const goalExtra = (projectionText ? `${projectionText}\n` : '') + (nextStepText ? `${nextStepText}\n` : '') +
         (goalDayText ? `${goalDayText}\n` : '');
     // Novedades de Leo, una vez por versión (#129).
-    const news = financeNews.pendingNews(fin, { registeredOn });
+    const news = reveal ? [] : financeNews.pendingNews(fin, { registeredOn });
     const newsBlock = news.length > 0 ? `\n${financeNews.formatNews(news)}\n` : '';
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
-    if (pendingReview.length > 0) markReviewPrompted(fin);
+    if (pendingReview.length > 0 && !reveal) markReviewPrompted(fin);
 
     await say(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
+        (reveal ? '👀 _Con montos, solo en este mensaje: tu modo privado sigue prendido._\n\n' : '') +
         `📊 *Hoy con Leo:*\n` +
-        `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
+        `💸 Compraste: ${gasto(todayExpense)}\n` +
         breakdown +
-        `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
+        `💰 Te entró: ${gasto(todayIncome)}\n` +
         // Sin ingresos el "balance del día" solo repetía lo comprado en negativo y confundía con el saldo.
         (todayIncome > 0
-            ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
+            ? `📈 Balance del día: ${gasto(todayIncome - todayExpense)}\n`
             : '') +
         `${financeNightPolicy.formatBalanceLine(fin)}\n` +
         streakLine +
@@ -2143,8 +2164,9 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
         goalExtra +
         reviewBlock +
         newsBlock +
-        `\nVas bien, seguí contándome 🦁\n\n${financeNightPolicy.FEEDBACK_QUESTION}`,
-        ctx, { buttons: financeMenu.NIGHT_REPORT_BUTTONS });
+        `\nVas bien, seguí contándome 🦁` + (reveal ? '' : `\n\n${financeNightPolicy.FEEDBACK_QUESTION}`),
+        ctx, reveal ? undefined : { buttons: financeMenu.nightReportButtons(fin) });
+    if (reveal) return;
     financeNightPolicy.markReportSent(fin, Date.now());
     if (news.length > 0) financeNews.markNewsSeen(fin);
 }

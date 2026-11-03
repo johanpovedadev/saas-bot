@@ -9,7 +9,7 @@
 const insights = require('./financeInsights');
 const goals = require('./financeGoals');
 const streak = require('./financeStreak');
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 const financeNightPolicy = require('./financeNightPolicy');
 
 const SATURDAY = 6;
@@ -47,7 +47,7 @@ function expensesBetween(fin, from, to) {
 }
 
 function buildWeeklyMessage(fin, today) {
-    const money = (n) => formatMoney(n, fin);
+    const money = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
     const report = insights.buildSpendingReport(fin, today, WEEK_DAYS);
     const previous = expensesBetween(fin, shift(today, -2 * WEEK_DAYS + 1), shift(today, -WEEK_DAYS));
     const monthToDate = expensesBetween(fin, `${today.slice(0, 7)}-01`, today);
