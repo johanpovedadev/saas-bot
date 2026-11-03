@@ -28,7 +28,8 @@ const os = require('os');
 const path = require('path');
 
 let failures = 0;
-function check(cond, msg) { if (cond) console.log('✅', msg); else { failures++; console.log('❌', msg); } }
+// Un ❌ también va a stderr: run-tests.js (y la CI) solo muestran el stderr de un archivo que falla.
+function check(cond, msg) { if (cond) console.log('✅', msg); else { failures++; console.log('❌', msg); console.error('❌', msg); } }
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'aislamiento-'));
 const SHARED_ENV = {
@@ -150,9 +151,14 @@ const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf-8'));
         {
             const authHel = path.join(TMP, 'auth', 'heladeria');
             const authPes = path.join(TMP, 'auth', 'pescaderia');
-            let firstChild = null;
-            const first = run([worker, 'lock', '4000'], { BUSINESS_KEY: 'heladeria', AUTH_DIR_FOR_TEST: authHel }, { onSpawn: c => { firstChild = c; } });
-            await new Promise(r => setTimeout(r, 1500));
+            // Se espera a que el primero AVISE que tiene la sesión (su línea RESULT), no un tiempo fijo: en la CI, con
+            // la máquina cargada, arrancar node podía tardar más de 1,5 s y el segundo se quedaba con la sesión.
+            let firstHolds;
+            const firstReady = new Promise((resolve) => { firstHolds = resolve; });
+            const first = run([worker, 'lock', '4000'], { BUSINESS_KEY: 'heladeria', AUTH_DIR_FOR_TEST: authHel }, {
+                onSpawn: (c) => c.stdout.on('data', (d) => { if (String(d).includes('RESULT ')) firstHolds(); }),
+            });
+            await Promise.race([firstReady, first]);
             const second = await run([worker, 'lock', '0'], { BUSINESS_KEY: 'heladeria', AUTH_DIR_FOR_TEST: authHel });
             check(second.result && second.result.ok === false, `C) un segundo proceso de heladería NO toma la sesión mientras el primero vive (lo tiene el PID ${second.result && second.result.holder})`);
             const other = await run([worker, 'lock', '0'], { BUSINESS_KEY: 'pescaderia', AUTH_DIR_FOR_TEST: authPes });
@@ -161,7 +167,6 @@ const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf-8'));
             check(f.result && f.result.ok === true, 'C) el primer proceso de heladería sí tuvo la sesión');
             const third = await run([worker, 'lock', '0'], { BUSINESS_KEY: 'heladeria', AUTH_DIR_FOR_TEST: authHel });
             check(third.result && third.result.ok === true, 'C) terminado el primero (como en un reinicio de PM2), el siguiente proceso de heladería sí arranca');
-            void firstChild;
         }
 
         // ---- D) index.js sin BUSINESS_KEY no arranca ----
