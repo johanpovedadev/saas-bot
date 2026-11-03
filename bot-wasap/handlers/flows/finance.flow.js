@@ -23,6 +23,7 @@ const financeWelcome = require('../../services/financeWelcome');
 const financeEntry = require('../../services/financeEntry');
 const financeCorrections = require('../../services/financeCorrections');
 const financeMenu = require('../../services/financeMenu');
+const financeNews = require('../../services/financeNews');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -72,7 +73,6 @@ function initFinance(userSession) {
             goalStep: 0,
             goalTempName: '',
             goalType: '',
-            notifiedNewFeatures: false,
             lastReportDate: '',
             milestonesSent: [],
             pendingReferral: null,
@@ -1987,18 +1987,8 @@ async function showWelcome(sock, jid, ctx, text) {
             fin.lastCheckinDate = today;
         }
         const txCount = fin.transactions.length;
-        const notif = fin.notifiedNewFeatures ? '' :
-            `\n━━━━━━━━━━━━━━━━━━━\n` +
-            `🦁 *¡Nuevo!* Ahora podés:\n` +
-            `• 🎯 *Crear metas de ahorro* — decime "metas"\n` +
-            `• 📊 *Resumen con avance* de tu meta\n` +
-            `• 🔥 *Racha de días* registrando\n` +
-            `• 💬 *Mensajes más claros* y motivación diaria\n\n` +
-            `Empezá hoy tu meta diciendo "metas" 🦁\n` +
-            `━━━━━━━━━━━━━━━━━━━\n\n`;
-        fin.notifiedNewFeatures = true;
         await say(sock, jid,
-            `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.${notif}` +
+            `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.\n` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
                   `💵 Balance: ${formatMoney(fin.balance, fin)}\n\n`
@@ -2093,7 +2083,7 @@ async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
  * Genera el informe nocturno para un usuario y lo envía.
  * Llamar desde un scheduler externo o setInterval a las 9 p. m. (hora de Colombia).
  */
-async function generateNightReport(sock, jid, fin, ctx) {
+async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
     if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
     // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
     // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
@@ -2130,6 +2120,9 @@ async function generateNightReport(sock, jid, fin, ctx) {
     const goalDayText = financeGoals.dailyGoalLine(fin, today, todayExpense);
     const goalExtra = (projectionText ? `${projectionText}\n` : '') + (nextStepText ? `${nextStepText}\n` : '') +
         (goalDayText ? `${goalDayText}\n` : '');
+    // Novedades de Leo, una vez por versión (#129).
+    const news = financeNews.pendingNews(fin, { registeredOn });
+    const newsBlock = news.length > 0 ? `\n${financeNews.formatNews(news)}\n` : '';
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
     if (pendingReview.length > 0) markReviewPrompted(fin);
@@ -2149,9 +2142,11 @@ async function generateNightReport(sock, jid, fin, ctx) {
         goalLine +
         goalExtra +
         reviewBlock +
+        newsBlock +
         `\nVas bien, seguí contándome 🦁\n\n${financeNightPolicy.FEEDBACK_QUESTION}`,
         ctx, { buttons: financeMenu.NIGHT_REPORT_BUTTONS });
     financeNightPolicy.markReportSent(fin, Date.now());
+    if (news.length > 0) financeNews.markNewsSeen(fin);
 }
 
 async function handleReferralInfo(sock, jid, fin, ctx) {
@@ -2233,8 +2228,17 @@ async function runNightReportSweep(sock, ctx) {
             // Según los días sin registrar: informe, reenganche, aviso de pausa o nada (#123).
             const bogotaToday = todayInBogota();
             const action = financeNightPolicy.nightAction(fin, bogotaToday, { registeredOn: u.fecha_registro });
-            if (action === financeNightPolicy.ACTION.REPORT) await generateNightReport(sock, jid, fin, ctx);
-            else if (financeNightPolicy.nightMessage(action)) await say(sock, jid, financeNightPolicy.nightMessage(action), ctx);
+            if (action === financeNightPolicy.ACTION.REPORT) {
+                await generateNightReport(sock, jid, fin, ctx, { registeredOn: u.fecha_registro });
+            } else if (action === financeNightPolicy.ACTION.NUDGE) {
+                // Las novedades son una buena excusa para volver (#129).
+                const news = financeNews.pendingNews(fin, { registeredOn: u.fecha_registro });
+                const whileAway = financeNews.formatNewsWhileAway(news);
+                await say(sock, jid, financeNightPolicy.nightMessage(action) + (whileAway ? `\n\n${whileAway}` : ''), ctx);
+                if (news.length > 0) financeNews.markNewsSeen(fin);
+            } else if (financeNightPolicy.nightMessage(action)) {
+                await say(sock, jid, financeNightPolicy.nightMessage(action), ctx);
+            }
             financeNightPolicy.recordNightAction(fin, action, bogotaToday);
             fin.lastReportDate = today;
             financeStore.saveFinance(jid, fin);

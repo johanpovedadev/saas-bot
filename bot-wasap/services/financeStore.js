@@ -99,7 +99,8 @@ function rowToFinance(row) {
         goalStep: extra.goalStep || 0,
         goalTempName: extra.goalTempName || '',
         goalType: extra.goalType || '',
-        notifiedNewFeatures: extra.notifiedNewFeatures || false,
+        // Novedades de Leo ya vistas (#129): la versión más nueva que le llegó.
+        lastNewsSeen: extra.lastNewsSeen || '',
         lastReportDate: extra.lastReportDate || '',
         milestonesSent: extra.milestonesSent || [],
         medals: extra.medals || [],
@@ -176,7 +177,7 @@ function financeToRow(jid, fin) {
             goalStep: fin.goalStep || 0,
             goalTempName: fin.goalTempName || '',
             goalType: fin.goalType || '',
-            notifiedNewFeatures: fin.notifiedNewFeatures || false,
+            lastNewsSeen: fin.lastNewsSeen || '',
             lastReportDate: fin.lastReportDate || '',
             milestonesSent: fin.milestonesSent || [],
             medals: fin.medals || [],
