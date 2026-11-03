@@ -150,7 +150,7 @@ function saveUser(transactions, extra = {}) {
         r = await say('10');
         assert.ok(/Informes/.test(r), r);
         r = await say('4');
-        assert.ok(/1️⃣ Diario y semanal/.test(r) && /2️⃣ Solo semanal/.test(r) && /3️⃣ Ninguno/.test(r) && /4️⃣ Volver/.test(r), r);
+        assert.ok(/1️⃣ Diario y semanal/.test(r) && /2️⃣ Solo semanal/.test(r) && /3️⃣ Ninguno/.test(r) && /4️⃣ ⬅️ Volver/.test(r), r);
         r = await say('2');
         assert.ok(/solo el resumen del sábado/.test(r), r);
         assert.strictEqual(financeStore.loadFinance(JID).reportPref, 'semanal', 'queda guardado');

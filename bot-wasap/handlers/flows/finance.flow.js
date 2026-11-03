@@ -22,6 +22,7 @@ const financeGoals = require('../../services/financeGoals');
 const financeWelcome = require('../../services/financeWelcome');
 const financeEntry = require('../../services/financeEntry');
 const financeCorrections = require('../../services/financeCorrections');
+const financeMenu = require('../../services/financeMenu');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -42,24 +43,8 @@ const CONFIRM_VARIANTS = [
     'Hecho. Un paso más cerca de tus metas 💪'
 ];
 
-const FREE_MENU_OPTIONS = `1️⃣ Registrar una compra\n` +
-    `2️⃣ Registrar un ingreso\n` +
-    `3️⃣ Ver mi resumen y saldo\n` +
-    `4️⃣ Mi salud financiera\n` +
-    `5️⃣ Mis metas de ahorro\n` +
-    `6️⃣ Invitar amigos (código)\n` +
-    `7️⃣ Planes y actualizar a Pro\n` +
-    `8️⃣ Préstamos (quién me debe / qué debo)\n` +
-    `9️⃣ Apóyanos ☕\n` +
-    `🔟 Mejoras y configuración`;
-
 // "menú", "cancelar"... en cualquier paso (#122, escalón A): limpia la fase y lo pendiente y vuelve al menú.
 const BACK_TO_MENU_WORDS = new Set(['menu', 'volver', 'atras', 'cancelar', 'salir', '0']);
-const BACK_HINT = '_(escribí *menú* para volver)_';
-const SETTINGS_OPTIONS = `1️⃣ Cambiar moneda\n` +
-    `2️⃣ Enviar feedback (qué te gusta / qué mejoraría)\n` +
-    `3️⃣ Volver al menú\n` +
-    `4️⃣ 🔔 Informes (diario, semanal o ninguno)`;
 
 const PRIVACY_LINE = `🔒 *Privacidad en serio:* lo que me cuentes se guarda *cifrado* y solo vos lo ves desde este chat. Estamos comprometidos con tu privacidad.`;
 
@@ -618,7 +603,8 @@ function isPremiumBlocked(jid) {
 }
 
 async function onPremiumBlocked(sock, jid, ctx) {
-    await showPremiumRequired(sock, jid, ctx);
+    // Foto o audio en el plan Gratis (#122, escalón C): lo que sí se puede sin IA y volver, sin precios (#94).
+    await say(sock, jid, financeMenu.NO_AI_TEXT, ctx, { buttons: [financeMenu.BACK_ROW] });
 }
 
 async function handle(sock, jid, text, userSession, ctx) {
@@ -700,6 +686,10 @@ async function handle(sock, jid, text, userSession, ctx) {
         fin.name = spokenName;
         financeStore.saveFinance(jid, fin);
         return await say(sock, jid, `🦁 Listo, *${fin.name}*. ¡Un gusto!`, ctx);
+    }
+    const menuChoice = financeMenu.parseMenuChoice(t);
+    if (menuChoice) {
+        return await handleMenuChoice(sock, jid, menuChoice, userSession, ctx, fin);
     }
     const goalOffer = financeWelcome.parseGoalOffer(t);
     if (goalOffer) {
@@ -916,8 +906,8 @@ async function handleGoalOffer(sock, jid, offer, userSession, ctx, fin) {
     financeStore.saveFinance(jid, fin);
     await say(sock, jid,
         `🎯 *${offer.goalName}*, ¡buena meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
-        `Decime el monto, por ejemplo: "2 millones" o "500 mil"\n\n${BACK_HINT}`,
-        ctx);
+        `Decime el monto, por ejemplo: "2 millones" o "500 mil"`,
+        ctx, { buttons: [financeMenu.BACK_ROW] });
 }
 
 /** Después de guardar: la oferta de meta tras el primer gasto y el tip de fijar el chat tras el segundo. */
@@ -1189,8 +1179,8 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
         financeStore.saveFinance(jid, fin);
         await say(sock, jid,
             `🦁 *${t}* — ¡excelente meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
-            `Decime el monto, por ejemplo: "2 millones" o "500 mil"\n\n${BACK_HINT}`,
-            ctx);
+            `Decime el monto, por ejemplo: "2 millones" o "500 mil"`,
+            ctx, { buttons: [financeMenu.BACK_ROW] });
     } else if (step === 1) {
         // User responded with amount
         const amountMatch = t.match(/([\d.]+)\s*(?:millones|millon|mil|k)?/i);
@@ -1233,9 +1223,44 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
         }
         userSession.errorCount = (userSession.errorCount || 0) + 1;
         await say(sock, jid,
-            `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"\n\n${BACK_HINT}`,
-            ctx);
+            `😅 No entendí el monto. Decilo así: "2 millones", "500 mil" o "1.200.000"`,
+            ctx, { buttons: [financeMenu.BACK_ROW] });
     }
+}
+
+/**
+ * Un botón del menú (o su número escrito, en el menú gratis): cada pantalla trae "⬅️ Volver" (#122, escalón C).
+ * Tocar el menú deja lo que estuviera pendiente de confirmar, igual que "menú".
+ */
+async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
+    fin.pendingConfirm = null;
+    fin.pendingCorrection = null;
+    userSession.phase = PHASE.FIN_MAIN;
+    switch (choice) {
+        case 'gasto':
+            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
+        case 'ingreso':
+            return await say(sock, jid, financeMenu.INCOME_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
+        case 'resumen':
+            return await sendSpendingReport(sock, jid, ctx, fin, { buttons: [financeMenu.BACK_ROW] });
+        case 'meta':
+            return await showGoalsScreen(sock, jid, userSession, ctx, fin);
+        case 'medallas':
+            financeMedals.awardNew(fin);
+            financeStore.saveFinance(jid, fin);
+            return await say(sock, jid, financeMedals.formatMedalList(fin), ctx, { buttons: [financeMenu.BACK_ROW] });
+        default:
+            return await showSettingsMenu(sock, jid, userSession, ctx);
+    }
+}
+
+/** "🎯 Mi meta" sin meta todavía: para qué ahorrar, con las opciones de siempre y ⬅️ Volver. */
+async function showGoalsScreen(sock, jid, userSession, ctx, fin) {
+    userSession.phase = PHASE.FIN_GOALS;
+    fin.goalStep = 0;
+    await say(sock, jid,
+        `🎯 ¡Excelente que pienses en metas! Decime: ¿para qué querés ahorrar?\n\n_(ej: "un viaje", "un carro", "emergencias")_`,
+        ctx, { buttons: financeMenu.goalChoiceButtons(financeWelcome.GOAL_OFFER_BUTTONS) });
 }
 
 /**
@@ -1246,10 +1271,8 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
     const greeting = header ||
         `🦁 ${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]}, *${fin.name}*!`;
     await say(sock, jid,
-        `${greeting}\n\n` +
-        `Elegí una opción o escribime natural (ej: _"compré 18 mil en almuerzo"_) 😉\n\n` +
-        FREE_MENU_OPTIONS,
-        ctx);
+        `${greeting}\n\n${financeMenu.MENU_PROMPT}`,
+        ctx, { buttons: financeMenu.MAIN_MENU_BUTTONS });
 }
 
 /**
@@ -1374,7 +1397,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'goals':
             userSession.phase = PHASE.FIN_GOALS;
             fin.goalStep = 0;
-            await say(sock, jid, `${result.response}\n\n${BACK_HINT}`, ctx);
+            await say(sock, jid, result.response, ctx, { buttons: [financeMenu.BACK_ROW] });
             break;
 
         case 'referral_info':
@@ -1414,37 +1437,22 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
     if (option) {
         switch (option[1]) {
             case '1':
-                await say(sock, jid,
-                    `💸 Perfecto. Decime qué compraste y cuánto:\n\n` +
-                    `_"18 mil en almuerzo"_\n` +
-                    `_"Compré 50 mil en mercado"_`,
-                    ctx);
-                return;
+                return await handleMenuChoice(sock, jid, 'gasto', userSession, ctx, fin);
             case '2':
-                await say(sock, jid,
-                    `💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n` +
-                    `_"Recibí 2 millones de sueldo"_\n` +
-                    `_"Gané 300 mil por un trabajo"_`,
-                    ctx);
-                return;
+                return await handleMenuChoice(sock, jid, 'ingreso', userSession, ctx, fin);
             case '3':
-                await sendSpendingReport(sock, jid, ctx, fin);
-                return;
+                return await handleMenuChoice(sock, jid, 'resumen', userSession, ctx, fin);
             case '4':
-                await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
+                await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx, { buttons: [financeMenu.BACK_ROW] });
                 return;
             case '5':
-                userSession.phase = PHASE.FIN_GOALS;
-                fin.goalStep = 0;
-                await say(sock, jid,
-                    `🎯 ¡Excelente que pienses en metas! Decime: ¿para qué querés ahorrar?\n\n_(ej: "un viaje", "un carro", "emergencias")_\n\n${BACK_HINT}`,
-                    ctx);
-                return;
+                return await handleMenuChoice(sock, jid, 'meta', userSession, ctx, fin);
             case '6':
                 await handleReferralInfo(sock, jid, fin, ctx);
                 return;
             case '7':
-                await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
+                // La vieja opción "IA / planes": sin precios todavía (#94), lo que sí se puede sin IA.
+                await say(sock, jid, financeMenu.NO_AI_TEXT, ctx, { buttons: [financeMenu.BACK_ROW] });
                 return;
             case '8':
                 await handleQueryLoans(sock, jid, fin, ctx);
@@ -1822,23 +1830,22 @@ async function handleSupportRequest(sock, jid, ctx) {
 async function showSettingsMenu(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.FIN_SETTINGS;
     await say(sock, jid,
-        `⚙️ *Mejoras y configuración*\n\n${SETTINGS_OPTIONS}\n\n${BACK_HINT}`,
-        ctx);
+        `⚙️ *Mejoras y configuración*`,
+        ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
 }
 
 async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
     const low = t.trim().toLowerCase();
     if (/^1$|moneda/.test(low)) {
         userSession.phase = PHASE.FIN_SETTINGS_CURRENCY;
-        const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
         await say(sock, jid,
-            `💱 ¿En qué moneda querés ver tus montos? (esto solo cambia cómo se muestran, tu saldo real no cambia)\n\n${options}\n\n${BACK_HINT}`,
-            ctx);
+            `💱 ¿En qué moneda querés ver tus montos? (esto solo cambia cómo se muestran, tu saldo real no cambia)`,
+            ctx, { buttons: financeMenu.currencyButtons() });
         return;
     }
     if (/^2$|feedback|sugerencia/.test(low)) {
         fin.pendingFeedback = true;
-        await say(sock, jid, `💬 Contame qué te gusta de Leo o qué te gustaría que mejore — te leo con toda la atención 🦁\n\n${BACK_HINT}`, ctx);
+        await say(sock, jid, `💬 Contame qué te gusta de Leo o qué te gustaría que mejore — te leo con toda la atención 🦁`, ctx, { buttons: [financeMenu.BACK_ROW] });
         return;
     }
     if (/^3$|volver|menu/.test(low)) {
@@ -1848,17 +1855,17 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
     }
     if (/^4$|informe/.test(low)) {
         userSession.phase = PHASE.FIN_SETTINGS_REPORTS;
-        await say(sock, jid, financeNightPolicy.REPORT_PREF_MENU, ctx);
+        await say(sock, jid, financeMenu.REPORT_PREF_TITLE, ctx, { buttons: financeMenu.REPORT_PREF_BUTTONS });
         return;
     }
-    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:\n\n${SETTINGS_OPTIONS}\n\n${BACK_HINT}`, ctx);
+    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:`, ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
 }
 
 /** Configuración → Informes (#123): diario y semanal, solo semanal o ninguno. */
 async function handleSettingsReports(sock, jid, t, userSession, ctx, fin) {
     const option = financeNightPolicy.parseReportPrefOption(t);
     if (!option) {
-        await say(sock, jid, financeNightPolicy.REPORT_PREF_MENU, ctx);
+        await say(sock, jid, financeMenu.REPORT_PREF_TITLE, ctx, { buttons: financeMenu.REPORT_PREF_BUTTONS });
         return;
     }
     if (option.back) {
@@ -1882,8 +1889,7 @@ async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
         chosen = SUPPORTED_CURRENCIES.find(c => c === upper) || null;
     }
     if (!chosen) {
-        const options = SUPPORTED_CURRENCIES.map((c, i) => `${i + 1}️⃣ ${CURRENCY_LABELS[c]}`).join('\n');
-        await say(sock, jid, `No reconocí esa moneda. Elegí una opción:\n\n${options}\n\n${BACK_HINT}`, ctx);
+        await say(sock, jid, `No reconocí esa moneda. Elegí una opción:`, ctx, { buttons: financeMenu.currencyButtons() });
         return;
     }
     fin.currency = chosen;
@@ -2022,13 +2028,13 @@ function markReviewPrompted(fin) {
 }
 
 /** "¿En qué se va tu plata?": gastos de los últimos 30 días agrupados, con sugerencias y lo que falta clasificar. */
-async function sendSpendingReport(sock, jid, ctx, fin) {
+async function sendSpendingReport(sock, jid, ctx, fin, options) {
     const report = financeInsights.buildSpendingReport(fin);
     if (report.pendingReview.length > 0) {
         markReviewPrompted(fin);
         financeStore.saveFinance(jid, fin);
     }
-    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx);
+    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
 }
 
 async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
@@ -2101,7 +2107,7 @@ async function generateNightReport(sock, jid, fin, ctx) {
         goalExtra +
         reviewBlock +
         `\nVas bien, seguí contándome 🦁\n\n${financeNightPolicy.FEEDBACK_QUESTION}`,
-        ctx);
+        ctx, { buttons: financeMenu.NIGHT_REPORT_BUTTONS });
     financeNightPolicy.markReportSent(fin, Date.now());
 }
 
