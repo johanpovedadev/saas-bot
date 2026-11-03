@@ -12,6 +12,7 @@ const { getCategoriasGenericas } = require('./productService');
 const PHASE = require('../utils/phases');
 const leadsTracker = require('../lion-leads-readonly');
 const chatHistory = require('../lion-chat-readonly');
+const messageButtons = require('../utils/messageButtons');
 
 // Validación y fallback para business.location
 if (!envConfig.business.location || typeof envConfig.business.location !== 'object') {
@@ -248,7 +249,17 @@ async function sendTypingIndicator(sock, jid) {
     }
 }
 
-async function say(sock, jid, text, ctx) {
+/**
+ * Manda un mensaje. `options.buttons` (opcional, #122): filas de { text, data }. En Telegram salen como botones;
+ * en canales sin botones se agregan al texto como opciones numeradas (ver utils/messageButtons.js).
+ * Sin `options` se comporta igual que siempre.
+ */
+async function say(sock, jid, text, ctx, options) {
+    const buttons = options && options.buttons ? messageButtons.normalizeButtons(options.buttons) : [];
+    if (buttons.length > 0) {
+        messageButtons.rememberButtons(ctx, jid, buttons);
+        if (!sock.supportsButtons) text = messageButtons.buttonsAsText(text, buttons);
+    }
     if (!ctx.lastSent) {
         ctx.lastSent = {};
     }
@@ -297,7 +308,9 @@ async function say(sock, jid, text, ctx) {
     }
 
     try {
-        const sentMessage = await sock.sendMessage(sendTargetJid, text);
+        const sentMessage = buttons.length > 0 && sock.supportsButtons
+            ? await sock.sendMessage(sendTargetJid, text, { buttons })
+            : await sock.sendMessage(sendTargetJid, text);
         // Lion Platform (issue #7, FR1/FR2): tracking aditivo para GET
         // /leads y /messages en lion-status-server.js — no cambia nada del
         // envío real, solo registra lo que ya se mandó.
