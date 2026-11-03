@@ -248,7 +248,14 @@ async function sendTypingIndicator(sock, jid) {
     }
 }
 
-async function say(sock, jid, text, ctx) {
+/**
+ * Manda un texto. `opts.buttons` (opcional, #122): botones { text, data } que en Telegram salen dentro del chat y
+ * en WhatsApp como opciones escritas (utils/buttons.js). Sin `opts`, todo sigue igual que siempre.
+ */
+async function say(sock, jid, text, ctx, opts) {
+    const buttons = opts && Array.isArray(opts.buttons) && opts.buttons.length ? opts.buttons : null;
+    const nativeButtons = !!(buttons && sock && sock.supportsButtons);
+    if (buttons && !nativeButtons) text = require('../utils/buttons').withFallback(text, buttons);
     if (!ctx.lastSent) {
         ctx.lastSent = {};
     }
@@ -297,7 +304,9 @@ async function say(sock, jid, text, ctx) {
     }
 
     try {
-        const sentMessage = await sock.sendMessage(sendTargetJid, text);
+        const sentMessage = nativeButtons
+            ? await sock.sendMessage(sendTargetJid, text, { buttons })
+            : await sock.sendMessage(sendTargetJid, text);
         // Lion Platform (issue #7, FR1/FR2): tracking aditivo para GET
         // /leads y /messages en lion-status-server.js — no cambia nada del
         // envío real, solo registra lo que ya se mandó.

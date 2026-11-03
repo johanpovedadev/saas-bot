@@ -7,6 +7,7 @@
  *   - sock.on('message', cb)
  *   - sock.sendMessage(jid, text)
  *   - sock.sendMessage(jid, media, { caption })   // media tipo MessageMedia {data, mimetype, filename}
+ *   - sock.sendMessage(jid, text, { buttons })    // botones dentro del chat (#122); tocar uno = escribir su `data`
  *   - sock.getChatById(jid) -> { sendStateTyping() }
  *   - msg.downloadMedia()   -> { data: base64, mimetype }
  *
@@ -19,6 +20,7 @@ const EventEmitter = require('events');
 const axios = require('axios');
 const { TelegramBot } = require('node-telegram-bot-api');
 const { logger } = require('../utils/logger');
+const { toInlineKeyboard } = require('../utils/buttons');
 
 const TELEGRAM_SUFFIX = '@telegram';
 const MAX_TEXT_LENGTH = 4000;
@@ -90,6 +92,7 @@ class TelegramAdapter extends EventEmitter {
         this.options = options;
         this.bot = new TelegramBot(token, { polling: options.polling !== false });
         this.info = { wid: { _serialized: '@telegram' } };
+        this.supportsButtons = true;
 
         this.bot.on('message', (tgMsg) => {
             try {
@@ -97,6 +100,9 @@ class TelegramAdapter extends EventEmitter {
             } catch (e) {
                 logger.error(`Telegram _onMessage error: ${e.stack || e.message}`);
             }
+        });
+        this.bot.on('callback_query', (query) => {
+            this._onCallbackQuery(query).catch((e) => logger.error(`Telegram callback_query error: ${e.stack || e.message}`));
         });
         this.bot.on('polling_error', (err) => {
             logger.error(`Telegram polling_error: ${err && err.message ? err.message : err}`);
@@ -171,16 +177,52 @@ class TelegramAdapter extends EventEmitter {
         this.emit('message', msg);
     }
 
-    async _sendTextWithMarkdown(chatId, text) {
+    /**
+     * Botón tocado (#122): se responde a Telegram (para que deje de "cargar"), se quitan los botones del mensaje
+     * (así no se tocan dos veces) y se emite como si el usuario hubiera escrito el `data` del botón.
+     */
+    async _onCallbackQuery(query) {
+        if (!query) return;
+        try { await this.bot.answerCallbackQuery(query.id); } catch (e) { logger.debug(`answerCallbackQuery: ${e.message}`); }
+        const tgMsg = query.message;
+        if (!tgMsg || !tgMsg.chat || (tgMsg.chat.type && tgMsg.chat.type !== 'private')) return;
+        if (query.from && query.from.is_bot) return;
+        try {
+            await this.bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: tgMsg.chat.id, message_id: tgMsg.message_id });
+        } catch (e) { logger.debug(`editMessageReplyMarkup: ${e.message}`); }
+        const jid = toJid(tgMsg.chat.id);
+        const text = String(query.data || '');
+        const msgId = `cb_${query.id}`;
+        this.emit('message', {
+            id: { _serialized: msgId, id: msgId },
+            key: { remoteJid: jid, id: msgId, fromMe: false },
+            from: jid,
+            fromMe: false,
+            text,
+            body: text,
+            caption: null,
+            type: null,
+            hasMedia: false,
+            fromButton: true,
+            chatId: tgMsg.chat.id,
+            timestamp: Math.floor(Date.now() / 1000),
+            username: query.from && query.from.username ? `@${query.from.username}` : null,
+            firstName: query.from && query.from.first_name ? query.from.first_name : null,
+            _tg: query
+        });
+    }
+
+    async _sendTextWithMarkdown(chatId, text, extra = {}) {
         try {
             await this.bot.sendMessage(chatId, text, {
                 parse_mode: 'Markdown',
-                disable_web_page_preview: true
+                disable_web_page_preview: true,
+                ...extra
             });
         } catch (e) {
             // Algunos textos tienen markdown desbalanceado -> reintentar en claro.
             try {
-                await this.bot.sendMessage(chatId, text, { disable_web_page_preview: true });
+                await this.bot.sendMessage(chatId, text, { disable_web_page_preview: true, ...extra });
             } catch (e2) {
                 logger.error(`Telegram sendMessage falló (chat ${chatId}): ${e2.message}`);
                 throw e2;
@@ -219,8 +261,11 @@ class TelegramAdapter extends EventEmitter {
         // Texto plano
         if (typeof textOrMedia === 'string') {
             const chunks = chunkText(textOrMedia);
-            for (const chunk of chunks) {
-                await this._sendTextWithMarkdown(chatId, chunk);
+            const keyboard = options && options.buttons ? toInlineKeyboard(options.buttons) : [];
+            for (let i = 0; i < chunks.length; i++) {
+                const isLast = i === chunks.length - 1;
+                const extra = isLast && keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {};
+                await this._sendTextWithMarkdown(chatId, chunks[i], extra);
             }
             return;
         }
