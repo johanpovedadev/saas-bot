@@ -19,6 +19,8 @@ const financeReceipts = require('../../services/financeReceipts');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
+const financeWelcome = require('../../services/financeWelcome');
+const financeEntry = require('../../services/financeEntry');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -625,16 +627,19 @@ async function handle(sock, jid, text, userSession, ctx) {
         if (!userSession.finance || !userSession.finance.name) {
             userSession.finance = persisted;
         } else {
-            // Merge: keep in-memory name/pendingConfirm/pendingFeedback, use DB for everything else
+            // Merge: keep in-memory name/pendingConfirm/pendingFeedback/pendingReferral, use DB for everything else
             const currentName = userSession.finance.name;
             const pending = userSession.finance.pendingConfirm;
             const pendingLoans = userSession.finance.pendingLoanList;
             const pendingFb = userSession.finance.pendingFeedback;
+            const pendingReferral = userSession.finance.pendingReferral;
             userSession.finance = persisted;
             userSession.finance.name = currentName;
             userSession.finance.pendingConfirm = pending;
             userSession.finance.pendingLoanList = pendingLoans;
             userSession.finance.pendingFeedback = pendingFb;
+            // Sin esto, el "sí" a "¿Te invitó alguien con el código…?" se perdía al recargar la cuenta.
+            userSession.finance.pendingReferral = pendingReferral;
         }
     }
     const fin = initFinance(userSession);
@@ -679,6 +684,25 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Solicitud de upgrade (visible en versión gratuita)
     if (await handleUpgradeRequest(sock, jid, t, userSession, ctx, fin)) {
         return;
+    }
+
+    // Usuario nuevo: bienvenida exprés, sin preguntar nombre, objetivo ni meta (#122, escalón A).
+    if (!fin.name) {
+        return await startExpressAccount(sock, jid, t, userSession, ctx, fin);
+    }
+    // "¿cuánto vale?" en cualquier momento: se responde y se sigue donde iba (la fase no cambia).
+    if (financeWelcome.isPriceQuestion(t)) {
+        return await say(sock, jid, financeWelcome.PRICE_ANSWER, ctx);
+    }
+    const spokenName = financeWelcome.parseNameCommand(t);
+    if (spokenName) {
+        fin.name = spokenName;
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, `🦁 Listo, *${fin.name}*. ¡Un gusto!`, ctx);
+    }
+    const goalOffer = financeWelcome.parseGoalOffer(t);
+    if (goalOffer) {
+        return await handleGoalOffer(sock, jid, goalOffer, userSession, ctx, fin);
     }
 
     if (fin.name && userSession.phase !== PHASE.FIN_ONBOARDING && isBackToMenu(t)) {
@@ -841,6 +865,58 @@ async function handle(sock, jid, text, userSession, ctx) {
 
     // Conversational AI
     return await handleConversation(sock, jid, t, userSession, ctx, fin);
+}
+
+/**
+ * Bienvenida exprés (#122, escalón A): crea la cuenta con el nombre del perfil de Telegram y, si el primer mensaje
+ * ya es un gasto (o un código de invitado), lo procesa de una. Si no, un solo mensaje que pide un gasto.
+ */
+async function startExpressAccount(sock, jid, text, userSession, ctx, fin) {
+    fin.name = financeWelcome.displayName(userSession.telegramFirstName);
+    fin.expressWelcome = true;
+    fin.trialStart = fin.trialStart || Date.now();
+    if (!fin.referralCode) fin.referralCode = financeReferral.getOrCreateCode(jid);
+    userSession.phase = PHASE.FIN_MAIN;
+    userSession.errorCount = 0;
+    financeStore.saveFinance(jid, fin);
+    const firstMessage = String(text || '').trim();
+    if (firstMessage && !firstMessage.startsWith('/') && !GREETING_ONLY_RE.test(firstMessage)) {
+        if (financeWelcome.isPriceQuestion(firstMessage)) {
+            return await say(sock, jid, `${financeWelcome.PRICE_ANSWER}\n\n${financeWelcome.WELCOME_TEXT}`, ctx);
+        }
+        const parsed = await financeAi.interpret(firstMessage, userSession, true);
+        if (parsed && (financeEntry.isClearEntry(parsed) || parsed.intent === 'referral_use')) {
+            return await processPossibleTransaction(sock, jid, firstMessage, userSession, ctx, fin);
+        }
+    }
+    await say(sock, jid, financeWelcome.WELCOME_TEXT, ctx);
+}
+
+/** Botones de "¿Querés ponerle una meta a tu ahorro?": elige la meta y pide el monto, o "Después". */
+async function handleGoalOffer(sock, jid, offer, userSession, ctx, fin) {
+    if (offer.later) {
+        fin.goalOfferDeclinedAt = todayInBogota();
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, financeWelcome.GOAL_LATER_TEXT, ctx);
+    }
+    fin.goalTempName = offer.goalName;
+    fin.goalStep = 1;
+    userSession.phase = PHASE.FIN_GOALS;
+    financeStore.saveFinance(jid, fin);
+    await say(sock, jid,
+        `🎯 *${offer.goalName}*, ¡buena meta! ¿Cuánta plata necesitás para cumplirla?\n\n` +
+        `Decime el monto, por ejemplo: "2 millones" o "500 mil"\n\n${BACK_HINT}`,
+        ctx);
+}
+
+/** Después de guardar: la oferta de meta tras el primer gasto y el tip de fijar el chat tras el segundo. */
+async function sendWelcomeFollowUps(sock, jid, wasFirstEntry, fin, ctx) {
+    if (wasFirstEntry && financeWelcome.shouldOfferGoal(fin)) {
+        await say(sock, jid, financeWelcome.GOAL_OFFER_TEXT, ctx, { buttons: financeWelcome.GOAL_OFFER_BUTTONS });
+    } else if (financeWelcome.shouldShowPinTip(fin)) {
+        fin.pinTipShown = true;
+        await say(sock, jid, financeWelcome.PIN_TIP, ctx);
+    }
 }
 
 async function handleOnboarding(sock, jid, text, userSession, ctx, fin) {
@@ -1207,7 +1283,9 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     category: t.category || (t.type === 'expense' ? 'Otros' : 'Ingreso'),
                     description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso')
                 }));
-            if (result.needs_confirmation && result.amount > 0) {
+            // El primer registro de una cuenta nueva se guarda de una si está claro (#122, escalón A).
+            const saveRightAway = fin.expressWelcome && !fin.firstTransactionDone && extra.length === 0 && financeEntry.isClearEntry(result);
+            if (result.needs_confirmation && result.amount > 0 && !saveRightAway) {
                 fin.pendingConfirm = {
                     type,
                     amount: result.amount,
@@ -1588,6 +1666,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         }
     }
     fin.firstTransactionDone = true;
+    await sendWelcomeFollowUps(sock, jid, !prevFin.firstTransactionDone, fin, ctx);
 
     // Medallas (#86): por hábitos y % de meta, sin montos. Cada una con su tarjeta para compartir.
     await sendNewMedals(sock, jid, fin, ctx);
@@ -1861,7 +1940,7 @@ async function showWelcome(sock, jid, ctx, text) {
         await processPossibleTransaction(sock, jid, text, userSession, ctx, fin);
         return;
     }
-    await say(sock, jid, getWelcomeMessage(), ctx);
+    await startExpressAccount(sock, jid, text, userSession, ctx, initFinance(userSession));
 }
 
 async function handleUnknown(sock, jid, text, userSession, ctx) {
@@ -1885,9 +1964,7 @@ async function handleUnknown(sock, jid, text, userSession, ctx) {
         }
         await handleConversation(sock, jid, text, userSession, ctx, fin);
     } else {
-        userSession.phase = PHASE.FIN_ONBOARDING;
-        // Mensaje 1: bienvenida emocional
-        await say(sock, jid, getWelcomeMessage(), ctx);
+        await startExpressAccount(sock, jid, text, userSession, ctx, fin);
     }
 }
 
