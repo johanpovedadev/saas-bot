@@ -66,6 +66,10 @@ gh api -X PUT repos/johanpovedadev/saas-bot/pulls/<n>/merge -f merge_method=merg
 
 - Release: rama `release/x.y.z` con `CHANGELOG.md` + versión en `package.json` → PR a `develop` → PR `develop`→`main`
   → cerrar el issue con un comentario.
+- **Novedades de Leo (#129):** cada release con un cambio que el usuario **ve** agrega una entrada en `NEWS` de
+  `services/financeNews.js` (`id` = la versión, `date` = el día del release, la más nueva arriba). Cada ítem: texto en
+  voseo, corto, **sin montos**, con un `probar` concreto (_"escribí *metas*"_). Sale una vez al final del informe de la
+  noche (y en el reenganche de quien no volvió). Cambios internos (pruebas, docs, refactors) no van.
 - Crear releases o empujar tags desde aquí da 403: los tags los empuja Johan (`git push origin --tags`).
 
 ---
