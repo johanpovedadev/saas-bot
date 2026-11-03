@@ -30,7 +30,6 @@ const MESSAGES = Object.freeze({
 const REPORT_PREF = Object.freeze({ DAILY: 'diario', WEEKLY: 'semanal', NONE: 'ninguno' });
 const REPORT_PREF_OPTIONS = { 1: REPORT_PREF.DAILY, 2: REPORT_PREF.WEEKLY, 3: REPORT_PREF.NONE };
 const REPORT_PREF_BACK_OPTION = '4';
-const REPORT_PREF_MENU = '🔔 *Informes*\n\n1️⃣ Diario y semanal\n2️⃣ Solo semanal\n3️⃣ Ninguno\n4️⃣ Volver';
 const REPORT_PREF_CONFIRMATIONS = Object.freeze({
     [REPORT_PREF.DAILY]: '🔔 Listo: te mando el informe de la noche y el resumen del sábado 🦁',
     [REPORT_PREF.WEEKLY]: '🔔 Listo: te mando solo el resumen del sábado 🦁',
@@ -202,6 +201,6 @@ function handleReportReply(fin, text, now) {
 module.exports = {
     ACTION, nightAction, nightMessage, recordNightAction, lastActivityDate,
     markBalanceKnown, balanceKnown, formatBalanceLine, UNKNOWN_BALANCE_LINE,
-    REPORT_PREF, REPORT_PREF_MENU, reportPref, weeklyAllowed, parseReportPrefCommand, parseReportPrefOption, setReportPref,
+    REPORT_PREF, reportPref, weeklyAllowed, parseReportPrefCommand, parseReportPrefOption, setReportPref,
     FEEDBACK_QUESTION, markReportSent, countReportReply, handleReportReply,
 };
