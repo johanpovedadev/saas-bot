@@ -691,6 +691,10 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (menuChoice) {
         return await handleMenuChoice(sock, jid, menuChoice, userSession, ctx, fin);
     }
+    const goalScreenAction = financeMenu.parseGoalScreenAction(t);
+    if (goalScreenAction) {
+        return await handleGoalScreenAction(sock, jid, goalScreenAction, userSession, ctx, fin);
+    }
     const goalOffer = financeWelcome.parseGoalOffer(t);
     if (goalOffer) {
         return await handleGoalOffer(sock, jid, goalOffer, userSession, ctx, fin);
@@ -891,6 +895,23 @@ async function startExpressAccount(sock, jid, text, userSession, ctx, fin) {
         }
     }
     await say(sock, jid, financeWelcome.WELCOME_TEXT, ctx);
+}
+
+/** [✏️ Cambiar monto] pide el monto nuevo de la misma meta; [🔄 Cambiar meta] pregunta la nueva (#122, escalón D). */
+async function handleGoalScreenAction(sock, jid, action, userSession, ctx, fin) {
+    userSession.phase = PHASE.FIN_GOALS;
+    if (action === 'monto' && fin.goalName) {
+        fin.goalTempName = fin.goalName;
+        fin.goalStep = 1;
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid,
+            `✏️ ¿Cuánta plata necesitás para *${fin.goalName}*?\n\nDecime el monto, por ejemplo: "2 millones" o "500 mil"`,
+            ctx, { buttons: [financeMenu.BACK_ROW] });
+    }
+    fin.goalStep = 0;
+    financeStore.saveFinance(jid, fin);
+    await say(sock, jid, financeMenu.NEW_GOAL_PROMPT, ctx,
+        { buttons: financeMenu.goalChoiceButtons(financeWelcome.GOAL_OFFER_BUTTONS) });
 }
 
 /** Botones de "¿Querés ponerle una meta a tu ahorro?": elige la meta y pide el monto, o "Después". */
@@ -1173,7 +1194,12 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
     const step = fin.goalStep || 0;
 
     if (step === 0) {
-        // User responded with goal name
+        // User responded with goal name. "3" (el número del menú) o un nombre muy corto no es una meta (#122, escalón D).
+        if (!financeMenu.isValidGoalName(t)) {
+            userSession.errorCount = (userSession.errorCount || 0) + 1;
+            return await say(sock, jid, financeMenu.INVALID_GOAL_NAME_TEXT, ctx,
+                { buttons: financeMenu.goalChoiceButtons(financeWelcome.GOAL_OFFER_BUTTONS) });
+        }
         fin.goalTempName = t;
         fin.goalStep = 1;
         financeStore.saveFinance(jid, fin);
@@ -1254,8 +1280,20 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
     }
 }
 
-/** "🎯 Mi meta" sin meta todavía: para qué ahorrar, con las opciones de siempre y ⬅️ Volver. */
+/**
+ * "🎯 Mi meta". Con meta (#122, escalón D): la meta, su avance, la fecha estimada y el próximo escalón, con
+ * [✏️ Cambiar monto] [🔄 Cambiar meta] [⬅️ Volver]. Sin meta: para qué ahorrar, con las opciones de siempre.
+ */
 async function showGoalsScreen(sock, jid, userSession, ctx, fin) {
+    if (fin.goalName) {
+        userSession.phase = PHASE.FIN_MAIN;
+        const today = todayInBogota();
+        const extra = fin.goalTarget > 0
+            ? [financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin), financeGoals.formatNextStep(financeGoals.nextStep(fin, today), fin)]
+            : [];
+        return await say(sock, jid, financeMenu.formatGoalScreen(fin, (n) => formatMoney(n, fin), extra), ctx,
+            { buttons: financeMenu.GOAL_SCREEN_BUTTONS });
+    }
     userSession.phase = PHASE.FIN_GOALS;
     fin.goalStep = 0;
     await say(sock, jid,
@@ -1395,6 +1433,11 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             break;
 
         case 'goals':
+            // Con meta, "metas" muestra la meta y su avance en vez de preguntar otra vez para qué ahorrar.
+            if (fin.goalName) {
+                await showGoalsScreen(sock, jid, userSession, ctx, fin);
+                break;
+            }
             userSession.phase = PHASE.FIN_GOALS;
             fin.goalStep = 0;
             await say(sock, jid, result.response, ctx, { buttons: [financeMenu.BACK_ROW] });

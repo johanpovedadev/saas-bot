@@ -48,6 +48,48 @@ const NIGHT_REPORT_BUTTONS = [
     [{ text: '🔕 No recordar más', data: 'no me mandes informes' }, { text: '📅 Solo el sábado', data: 'solo informe semanal' }],
 ];
 
+// "🎯 Mi meta" con meta existente (#122, escalón D): la meta y su avance, sin volver a preguntar para qué ahorrar.
+const GOAL_SCREEN_PREFIX = 'leo:metas:';
+const GOAL_SCREEN_BUTTONS = [[
+    { text: '✏️ Cambiar monto', data: `${GOAL_SCREEN_PREFIX}monto` },
+    { text: '🔄 Cambiar meta', data: `${GOAL_SCREEN_PREFIX}cambiar` },
+    { text: '⬅️ Volver', data: BACK_DATA },
+]];
+const GOAL_SCREEN_ACTIONS = new Set(['monto', 'cambiar']);
+const MIN_GOAL_NAME_LENGTH = 3;
+const INVALID_GOAL_NAME_TEXT = '🙂 Ese nombre es muy corto para una meta. Decime para qué querés ahorrar, por ejemplo: _un viaje_, _un carro_ o _emergencias_';
+const NEW_GOAL_PROMPT = '🔄 ¿Cuál es tu nueva meta? Elegí una o escribila (ej: _"un carro"_)';
+
+/**
+ * Texto de la pantalla de la meta: nombre, cuánto lleva de cuánto (sin montos si todavía no tiene monto) y las
+ * líneas extra que manda el flujo (fecha estimada, próximo escalón). `money` es formatMoney ya atado a `fin`.
+ */
+function formatGoalScreen(fin, money, extraLines = []) {
+    const lines = [`🎯 Tu meta: *${fin.goalName}*`];
+    if (fin.goalTarget > 0) {
+        const saved = Math.max(0, fin.balance || 0);
+        const pct = Math.min(100, Math.round(saved / fin.goalTarget * 100));
+        lines.push(`Llevás ${money(saved)} de ${money(fin.goalTarget)} (${pct}%)`);
+    } else {
+        lines.push('Todavía no le pusiste monto: tocá *✏️ Cambiar monto* y te digo cuándo llegás.');
+    }
+    return [...lines, ...extraLines.filter(Boolean)].join('\n');
+}
+
+/** "leo:metas:monto" → 'monto'; null si no es un botón de la pantalla de la meta. */
+function parseGoalScreenAction(text) {
+    const t = String(text || '').trim();
+    if (!t.startsWith(GOAL_SCREEN_PREFIX)) return null;
+    const action = t.slice(GOAL_SCREEN_PREFIX.length);
+    return GOAL_SCREEN_ACTIONS.has(action) ? action : null;
+}
+
+/** Un nombre de meta tiene que tener letras y al menos 3 caracteres: "3" (el número del menú) no es una meta. */
+function isValidGoalName(name) {
+    const t = String(name || '').trim();
+    return t.length >= MIN_GOAL_NAME_LENGTH && /\p{L}/u.test(t) && !/^\d+$/.test(t);
+}
+
 /** Agrega la fila "⬅️ Volver" a unos botones (o la deja sola). */
 function withBack(buttons = []) {
     return [...buttons, BACK_ROW];
@@ -76,4 +118,5 @@ module.exports = {
     MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, INCOME_PROMPT, NO_AI_TEXT,
     SETTINGS_BUTTONS, REPORT_PREF_TITLE, REPORT_PREF_BUTTONS, NIGHT_REPORT_BUTTONS, BACK_ROW,
     withBack, parseMenuChoice, currencyButtons, goalChoiceButtons,
+    GOAL_SCREEN_BUTTONS, INVALID_GOAL_NAME_TEXT, NEW_GOAL_PROMPT, formatGoalScreen, parseGoalScreenAction, isValidGoalName,
 };
