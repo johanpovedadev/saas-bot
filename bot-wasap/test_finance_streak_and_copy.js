@@ -69,15 +69,12 @@ function daysAgoStr(n) {
         // 3. Mensaje de racha en saveAndConfirm: reconoce la mejor racha al
         // reiniciar, y celebra cuando se supera el record anterior.
         {
-            // El parser determinista (sin IA) pide confirmacion antes de
-            // guardar - hace falta un "si" seguido, igual que en el resto
-            // del flow (ver test_finance_loans.js). Se parte de
+            // Se parte de
             // firstTransactionDone=true y una transaccion previa para no
             // pisar el mensaje especial del primer movimiento (tarjeta de
             // hito), que es un camino aparte de lo que aca se prueba.
-            // El flow recarga desde financeStore entre el mensaje que pide
-            // confirmacion y el "si" que la cierra - hay que PERSISTIR el
-            // estado inicial (no solo dejarlo en memoria) para que
+            // El flow recarga desde financeStore en cada mensaje - hay que
+            // PERSISTIR el estado inicial (no solo dejarlo en memoria) para que
             // firstTransactionDone/streak/bestStreak sobrevivan esa recarga.
             const oldTx = [{ type: 'expense', amount: 5000, category: 'Otros', description: 'previo', date: '2026-08-01', timestamp: 1 }];
             const jid = '573000000701@c.us';
@@ -85,8 +82,8 @@ function daysAgoStr(n) {
             financeStore.saveFinance(jid, finBase);
             const ctx = freshCtx();
             ctx.sessions[jid] = { phase: 'fin_main', finance: { ...finBase } };
-            await send(ctx, jid, '10 mil en almuerzo');
-            const r = await send(ctx, jid, 'si');
+            // Monto y descripción claros: se guarda de una, sin "sí" (#122, escalón B).
+            const r = await send(ctx, jid, '10 mil en almuerzo');
             assert.ok(/mejor racha sigue siendo 2/i.test(r), 'debe reconocer la mejor racha al reiniciar en 1, no ignorarla');
             console.log('OK: el mensaje de racha reconoce la mejor marca cuando la actual se reinicia');
 
@@ -95,15 +92,14 @@ function daysAgoStr(n) {
             financeStore.saveFinance(jid2, finBase2);
             const ctx2 = freshCtx();
             ctx2.sessions[jid2] = { phase: 'fin_main', finance: { ...finBase2 } };
-            await send(ctx2, jid2, '10 mil en almuerzo'); // streak 2->3, supera el record anterior
-            const r2 = await send(ctx2, jid2, 'si');
+            const r2 = await send(ctx2, jid2, '10 mil en almuerzo'); // streak 2->3, supera el record anterior
             assert.ok(/mejor racha hasta ahora/i.test(r2), 'debe celebrar cuando supera su propio record');
             console.log('OK: superar el record anterior se celebra como tal');
         }
 
-        // 4. Bienvenida: enfoque en lo que se va a lograr, no en ausencia de miedo.
-        // El primer contacto real lo maneja showWelcome (no handle) - handler.js
-        // lo llama para el primer mensaje de un jid nunca visto.
+        // 4. Bienvenida exprés (#122, escalón A): un solo mensaje que invita a contar un gasto de hoy, sin
+        // preguntar el nombre, y sin liderar con miedo. El primer contacto real lo maneja showWelcome (no handle) -
+        // handler.js lo llama para el primer mensaje de un jid nunca visto.
         {
             const jid = '573000000703@c.us';
             const ctx = freshCtx();
@@ -111,9 +107,10 @@ function daysAgoStr(n) {
             sent.length = 0;
             await financeFlow.showWelcome(sock, jid, ctx);
             const r = sent.join('\n');
-            assert.ok(/vas a saber|vas a poder decidir/i.test(r), 'la bienvenida debe enfocarse en lo que la persona va a lograr');
+            assert.strictEqual(sent.length, 1, 'la bienvenida es un solo mensaje');
+            assert.ok(/Contame un gasto de hoy/i.test(r) && !/c[oó]mo te llamo/i.test(r), 'invita a contar un gasto, sin pedir el nombre');
             assert.ok(!/sin reg[aá]/i.test(r), 'no deberia liderar con lo que Leo NO es (marco de miedo/ausencia)');
-            console.log('OK: mensaje de bienvenida con enfoque en deseo/logro');
+            console.log('OK: bienvenida exprés: un solo mensaje que invita a contar un gasto');
         }
 
         // 5. Cierre del onboarding: el primer registro se enmarca como paso

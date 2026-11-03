@@ -99,7 +99,8 @@ function rowToFinance(row) {
         goalStep: extra.goalStep || 0,
         goalTempName: extra.goalTempName || '',
         goalType: extra.goalType || '',
-        notifiedNewFeatures: extra.notifiedNewFeatures || false,
+        // Novedades de Leo ya vistas (#129): la versión más nueva que le llegó.
+        lastNewsSeen: extra.lastNewsSeen || '',
         lastReportDate: extra.lastReportDate || '',
         milestonesSent: extra.milestonesSent || [],
         medals: extra.medals || [],
@@ -110,6 +111,24 @@ function rowToFinance(row) {
         currency: extra.currency || 'COP',
         reviewPromptedAt: extra.reviewPromptedAt || 0,
         lastWeeklyReportDate: extra.lastWeeklyReportDate || '',
+        // Informe de la noche según actividad (#123): avisos mandados y desde cuándo Leo sabe el saldo real.
+        nightNudge: extra.nightNudge || null,
+        balanceSetAt: extra.balanceSetAt || '',
+        // Bienvenida exprés (#122, escalón A): "Después" a la oferta de meta y el tip de fijar el chat, una vez.
+        expressWelcome: extra.expressWelcome || false,
+        goalOfferDeclinedAt: extra.goalOfferDeclinedAt || '',
+        pinTipShown: extra.pinTipShown || false,
+        // Corregir con botones (#122, escalón B): el último registro y la corrección a medias.
+        lastEntryGroup: extra.lastEntryGroup || 0,
+        lastEntryAt: extra.lastEntryAt || 0,
+        pendingCorrection: extra.pendingCorrection || null,
+        // Qué informes quiere (#123, punto 3) y si le sirven (punto 4): 👍/👎 y respuestas tras el informe.
+        reportPref: extra.reportPref || 'diario',
+        reportFeedback: extra.reportFeedback || { up: 0, down: 0 },
+        lastNightReportAt: extra.lastNightReportAt || 0,
+        reportReplies: extra.reportReplies || 0,
+        reportRepliedAt: extra.reportRepliedAt || 0,
+        reportPrefAskedAt: extra.reportPrefAskedAt || 0,
         // Ahorro mensual que el usuario aparta para su meta ("ahorro 2 millones al mes"), cifrado como goalTarget.
         cardStatement: extra.cardStatement && financeCrypto.isEncrypted(extra.cardStatement)
             ? JSON.parse(financeCrypto.decrypt(extra.cardStatement) || 'null')
@@ -158,7 +177,7 @@ function financeToRow(jid, fin) {
             goalStep: fin.goalStep || 0,
             goalTempName: fin.goalTempName || '',
             goalType: fin.goalType || '',
-            notifiedNewFeatures: fin.notifiedNewFeatures || false,
+            lastNewsSeen: fin.lastNewsSeen || '',
             lastReportDate: fin.lastReportDate || '',
             milestonesSent: fin.milestonesSent || [],
             medals: fin.medals || [],
@@ -169,6 +188,20 @@ function financeToRow(jid, fin) {
             currency: fin.currency || 'COP',
             reviewPromptedAt: fin.reviewPromptedAt || 0,
             lastWeeklyReportDate: fin.lastWeeklyReportDate || '',
+            nightNudge: fin.nightNudge || null,
+            balanceSetAt: fin.balanceSetAt || '',
+            expressWelcome: fin.expressWelcome || false,
+            goalOfferDeclinedAt: fin.goalOfferDeclinedAt || '',
+            pinTipShown: fin.pinTipShown || false,
+            lastEntryGroup: fin.lastEntryGroup || 0,
+            lastEntryAt: fin.lastEntryAt || 0,
+            pendingCorrection: fin.pendingCorrection || null,
+            reportPref: fin.reportPref || 'diario',
+            reportFeedback: fin.reportFeedback || { up: 0, down: 0 },
+            lastNightReportAt: fin.lastNightReportAt || 0,
+            reportReplies: fin.reportReplies || 0,
+            reportRepliedAt: fin.reportRepliedAt || 0,
+            reportPrefAskedAt: fin.reportPrefAskedAt || 0,
             goalMonthly: goalMonthlyEnc,
             cardStatement: cardStatementEnc,
             learnedRules: rulesEnc

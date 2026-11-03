@@ -59,15 +59,38 @@ function check(cond, msg) {
                 needs_confirmation: true,
                 response: '¿Es correcto? 20 mil en almuerzo'
             };
+            // Todo claro (monto y descripción): se guardan las 2 de una, con los botones de corregir (#122, escalón B).
             sent.length = 0;
             await applyIntent(sock, JID, result, userSession, ctx, fin);
-            check(fin.transactions.length === 0, 'con needs_confirmation, nada se guarda todavia (queda pendiente)');
+            check(fin.transactions.length === 2, `claras: las 2 se guardan de una (got: ${fin.transactions.length})`);
+            check(fin.balance === 100000 - 20000 - 15000, `el saldo descuenta AMBOS montos (got: ${fin.balance})`);
+            check(new Set(fin.transactions.map(t => t.entryGroup)).size === 1, 'las 2 quedan en el mismo grupo (un solo Borrar)');
+            check(/Corregir/.test(sent.join('\n')) && /Borrar/.test(sent.join('\n')), 'la confirmación trae [Corregir] [Borrar]');
+        }
+
+        {
+            // Dudoso (la primera sin descripción): queda pendiente y al confirmar no se pierde ninguna.
+            const ctx = freshCtx();
+            const fin = freshFin();
+            const userSession = { errorCount: 0 };
+            const result = {
+                intent: 'register_expense',
+                amount: 20000, category: 'Alimentacion', description: '',
+                additional_transactions: [
+                    { type: 'expense', amount: 15000, category: 'Transporte', description: 'bus' }
+                ],
+                needs_confirmation: true,
+                response: '¿Es correcto? 20 mil'
+            };
+            sent.length = 0;
+            await applyIntent(sock, JID, result, userSession, ctx, fin);
+            check(fin.transactions.length === 0, 'dudoso con needs_confirmation: nada se guarda todavia (queda pendiente)');
             check(/También anoté/.test(sent.join('\n')) && /bus/.test(sent.join('\n')),
                 'el mensaje de confirmacion menciona la 2da transaccion (transporte/bus)');
 
             const r = await (async () => { sent.length = 0; await handleConfirmation(sock, JID, 'sí', userSession, ctx, fin); return sent.join('\n'); })();
             check(fin.transactions.length === 2, `al confirmar, se registran las 2 transacciones (got: ${fin.transactions.length})`);
-            check(fin.transactions.some(t => t.description === 'almuerzo' && t.amount === 20000), 'la primera transaccion (almuerzo) quedo registrada');
+            check(fin.transactions.some(t => t.amount === 20000), 'la primera transaccion quedo registrada');
             check(fin.transactions.some(t => t.description === 'bus' && t.amount === 15000), 'la segunda transaccion (bus) NO se perdio - quedo registrada');
             check(fin.balance === 100000 - 20000 - 15000, `el saldo descuenta AMBOS montos (got: ${fin.balance})`);
         }
@@ -99,14 +122,14 @@ function check(cond, msg) {
             const userSession = { errorCount: 0 };
             const result = {
                 intent: 'register_expense',
-                amount: 20000, category: 'Alimentacion', description: 'almuerzo',
+                amount: 20000, category: 'Alimentacion', description: '',
                 additional_transactions: [{ type: 'expense', amount: 15000, category: 'Transporte', description: 'bus' }],
                 needs_confirmation: true,
                 response: '¿Es correcto?'
             };
             await applyIntent(sock, JID, result, userSession, ctx, fin);
             await handleConfirmation(sock, JID, 'no', userSession, ctx, fin);
-            check(fin.transactions.length === 0, 'al cancelar con "no", NINGUNA de las 2 se guarda');
+            check(fin.transactions.length === 0, 'dudoso: al cancelar con "no", NINGUNA de las 2 se guarda');
         }
 
         console.log(failures === 0 ? '\n✅ TODO OK' : `\n❌ ${failures} FALLOS`);

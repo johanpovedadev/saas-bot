@@ -102,9 +102,9 @@ function cleanupJid(jid) {
         assert.strictEqual(financeAdmin.getAiCredits(inviteeJid), 0, 'antes de la recompensa el invitado no tiene creditos');
 
         // Primer movimiento real del invitado -> dispara la recompensa
-        const r1 = await send(ctx, inviteeJid, '18 mil en almuerzo');
-        assert.ok(/es correcto/i.test(r1) || /confirmo/i.test(r1) || /1/.test(r1), 'debe pedir confirmacion del registro');
-        const r2 = await send(ctx, inviteeJid, 'si');
+        // Un gasto claro se guarda de una (#122, escalón B): la recompensa sale en ese mismo mensaje.
+        const r2 = await send(ctx, inviteeJid, '18 mil en almuerzo');
+        assert.ok(/registrad/i.test(r2), 'el gasto queda registrado');
         assert.ok(/MOVIMIENTOS CON IA/i.test(r2), 'debe avisarle al invitado que gano movimientos con IA');
         assert.ok(!/D[ÍI]AS DE MASTER/i.test(r2), 'ya no debe mencionar dias de Master');
 
@@ -124,38 +124,35 @@ function cleanupJid(jid) {
         assert.strictEqual(financeReferral.getRewardedCount(inviterJid), 1);
         console.log('OK: financeReferral cuenta 1 invitado y 1 recompensado para el inviter');
 
-        // 5. Onboarding: a un usuario NUEVO se le pregunta el codigo de invitacion
-        // apenas da su nombre, antes del diagnostico - y si escribe un codigo
-        // valido, se aplica de una vez (sin depender de que lo tipee despues).
+        // 5. Bienvenida exprés (#122, escalón A): el código ya no es una pregunta de la bienvenida, se acepta en
+        // cualquier momento. Un usuario NUEVO que escribe el código de primero lo confirma y queda aplicado.
         const newbieJid = '573000000403@c.us';
         cleanupJid(newbieJid);
         try {
             const ctx2 = freshCtx();
             ctx2.sessions[newbieJid] = { phase: 'fin_onboarding' };
-            const n1 = await send(ctx2, newbieJid, 'Valentina');
-            assert.ok(/invit/i.test(n1), 'apenas da el nombre debe preguntar si alguien lo invito');
-            assert.strictEqual(ctx2.sessions[newbieJid].phase, 'fin_referral_onboarding');
-            assert.ok(!/qu[eé] es lo que quieres lograr/i.test(n1), 'todavia no debe mostrar el diagnostico en el mismo mensaje');
-
-            const n2 = await send(ctx2, newbieJid, code); // mismo codigo del inviter (un codigo puede ser usado por varios invitados)
+            const n1 = await send(ctx2, newbieJid, code); // mismo codigo del inviter (un codigo puede ser usado por varios invitados)
+            assert.ok(/invit/i.test(n1), `el codigo como primer mensaje pregunta si alguien lo invito: ${n1}`);
+            assert.ok(!/qu[eé] es lo que quieres lograr|c[oó]mo te llamo/i.test(n1), 'sin diagnostico ni pedir el nombre');
+            const n2 = await send(ctx2, newbieJid, 'si');
             assert.ok(/gan/i.test(n2), 'debe confirmar que se aplico el codigo y que ganaron movimientos con IA');
-            assert.strictEqual(ctx2.sessions[newbieJid].phase, 'fin_diagnostic', 'despues de responder sobre el codigo debe pasar al diagnostico');
-            console.log('OK: el onboarding pregunta por el codigo de invitacion apenas entra el usuario nuevo, antes del diagnostico');
+            assert.ok(ctx2.sessions[newbieJid].finance.invitedBy, 'queda invitedBy');
+            assert.strictEqual(ctx2.sessions[newbieJid].phase, 'fin_main');
+            console.log('OK: el codigo de invitacion se acepta como primer mensaje del usuario nuevo, sin pasos de bienvenida');
         } finally {
             cleanupJid(newbieJid);
         }
 
-        // 5b. Un segundo usuario nuevo que SI puede usar un codigo fresco (no reusado)
+        // 5b. Un usuario nuevo sin codigo entra directo, sin diagnostico ni invitacion
         const newbie2Jid = '573000000404@c.us';
         cleanupJid(newbie2Jid);
         try {
             const ctx3 = freshCtx();
             ctx3.sessions[newbie2Jid] = { phase: 'fin_onboarding' };
-            await send(ctx3, newbie2Jid, 'Julian');
-            const m2 = await send(ctx3, newbie2Jid, 'no');
-            assert.ok(/qu[eé] es lo que quieres lograr/i.test(m2), 'responder "no" debe pasar directo al diagnostico sin aplicar nada');
-            assert.ok(!ctx3.sessions[newbie2Jid].finance.invitedBy, 'no debe quedar invitedBy si respondio "no"');
-            console.log('OK: responder "no" (o cualquier texto sin codigo) pasa al diagnostico sin aplicar invitacion');
+            const m1 = await send(ctx3, newbie2Jid, 'hola');
+            assert.ok(!/qu[eé] es lo que quieres lograr/i.test(m1), 'sin diagnostico');
+            assert.ok(!ctx3.sessions[newbie2Jid].finance.invitedBy, 'no debe quedar invitedBy sin codigo');
+            console.log('OK: un usuario nuevo sin codigo entra directo, sin diagnostico ni invitacion');
         } finally {
             cleanupJid(newbie2Jid);
         }
