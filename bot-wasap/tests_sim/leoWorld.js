@@ -29,6 +29,8 @@ function setEnv() {
     process.env.FINANCE_ENCRYPTION_KEY = process.env.FINANCE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('base64');
     process.env.TIME_WRITING_SIMULATION_MS = '1';
     process.env.FINANCE_AI_USAGE_LOG = USAGE_LOG;
+    // La promo de lanzamiento (#143 C) daría 15 días a todo antiguo: cada escenario dice si la quiere (c.existing).
+    process.env.LEO_TRIAL_PROMO_UNTIL = '2000-01-01';
     process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'warn';   // sin el log de cada mensaje en la salida
 }
 
@@ -110,7 +112,11 @@ async function createLeoWorld({ ai = 'sim' } = {}) {
             delete outbox[jid];
             ctx.sessions[jid] = ctx.sessions[jid] || { phase: PHASE.FIN_ONBOARDING };
             let message = text;
-            if (voice) {
+            // Como handlers/handler.js: un audio pasa por el bloqueo de IA antes de transcribirse.
+            if (voice && flow.isPremiumBlocked(jid)) {
+                await flow.onPremiumBlocked(sock, jid, ctx);
+                message = null;
+            } else if (voice) {
                 message = await financeAi.interpretAudio(Buffer.from(String(text)).toString('base64'), ctx.sessions[jid]);
                 if (!message) { (outbox[jid] = outbox[jid] || []).push('No pude entender el contenido. Intenta escribirlo como texto.'); }
             }

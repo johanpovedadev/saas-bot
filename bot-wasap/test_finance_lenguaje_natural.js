@@ -14,6 +14,7 @@ const fs = require('fs');
 const TMP_DB = path.join(os.tmpdir(), `leo_lenguaje_${process.pid}.db`);
 process.env.NODE_ENV = 'test';
 process.env.BUSINESS_KEY = 'finance';
+process.env.LEO_TRIAL_PROMO_UNTIL = '2000-01-01';   // sin la promo de los 15 días (#143 C): esta prueba no es de eso
 process.env.FINANCE_DB_PATH = TMP_DB;
 process.env.FINANCE_ENCRYPTION_KEY = process.env.FINANCE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('base64');
 process.env.TIME_WRITING_SIMULATION_MS = '1';

@@ -3,7 +3,9 @@
  * 15 días de Leo con IA gratis (#143, parte C). IA simulada, sin red.
  *  - Un usuario nuevo tiene IA 15 días (promo de lanzamiento hasta LEO_TRIAL_PROMO_UNTIL, y desde ahí la regla).
  *  - Aviso cuando quedan 3 días (día 12), mensaje al terminar (día 15), y después sigue gratis sin IA. Sin precios.
- *  - Un antiguo inactivo 7 días que vuelve a registrar recibe 15 días UNA sola vez; uno activo no.
+ *  - Un antiguo inactivo 7 días que vuelve a registrar recibe 15 días UNA sola vez.
+ *  - Promo de lanzamiento (Johan, 4 nov): un antiguo activo también los recibe hasta el 15 de noviembre, aunque lo
+ *    primero que mande sea un audio. Después de esa fecha, un antiguo activo no.
  *  - Tope de 300 interacciones; quien ya tiene IA por plan no cambia.
  * Base temporal, IDs de prueba. Uso: node test_finance_prueba_ia_15_dias.js
  */
@@ -34,7 +36,9 @@ const NEW = '573000009801@telegram';
 const OLD = '573000009802@telegram';
 const ACTIVE = '573000009803@telegram';
 const PAID = '573000009804@telegram';
-const JIDS = [NEW, OLD, ACTIVE, PAID];
+const AUDIO = '573000009809@telegram';
+const AFTER = '573000009810@telegram';
+const JIDS = [NEW, OLD, ACTIVE, PAID, AUDIO, AFTER];
 const DAY = 24 * 60 * 60 * 1000;
 const TODAY = todayInBogota();
 const daysAgo = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10);
@@ -146,17 +150,42 @@ function setTrialEnd(jid, until) {
         assert.ok(!r.includes(trial.MESSAGES.welcomeBack), 'una sola vez');
         console.log('OK: un antiguo inactivo 7 días que vuelve recibe 15 días de IA una sola vez');
 
-        // --- 5. Un activo y uno con plan: no cambia nada ---
+        // --- 5. Promo: un antiguo activo también recibe los 15 días; con plan, no ---
         financeStore.saveFinance(ACTIVE, { name: 'Activa', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(2), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
         ctx.sessions[ACTIVE] = { phase: PHASE.FIN_MAIN };
         r = await send(ACTIVE, 'almuerzo 15 mil');
-        assert.ok(!r.includes(trial.MESSAGES.welcomeBack) && !financeStore.loadFinance(ACTIVE).aiTrialUntil, `un activo no recibe la prueba: ${r}`);
+        fin = financeStore.loadFinance(ACTIVE);
+        assert.ok(r.includes(trial.MESSAGES.promo) && fin.aiTrialUntil > Date.now() && fin.aiTrial.source === 'lanzamiento' && fin.aiTrial.promo === true, `un antiguo activo en la promo: ${r}`);
+        assert.ok(!PRICES.test(trial.MESSAGES.promo));
+        r = await send(ACTIVE, 'pan 2 mil');
+        assert.ok(!r.includes(trial.MESSAGES.promo), 'el aviso sale una sola vez');
         financeAdmin.setTier(PAID, 'master', 30);
         financeStore.saveFinance(PAID, { name: 'Johan', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(9), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
         ctx.sessions[PAID] = { phase: PHASE.FIN_MAIN };
         r = await send(PAID, 'almuerzo 15 mil');
-        assert.ok(!r.includes(trial.MESSAGES.welcomeBack) && !financeStore.loadFinance(PAID).aiTrialUntil, 'con plan no se le da la prueba');
-        console.log('OK: un usuario activo y uno con plan no cambian');
+        assert.ok(!r.includes(trial.MESSAGES.welcomeBack) && !r.includes(trial.MESSAGES.promo) && !financeStore.loadFinance(PAID).aiTrialUntil, 'con plan no se le da la prueba');
+        console.log('OK: en la promo, un antiguo activo recibe 15 días (una vez); con plan, no');
+
+        // --- 6. El caso de Johan: antiguo cuyo primer mensaje es un AUDIO ---
+        financeStore.saveFinance(AUDIO, { name: 'Antiguo', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(1), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
+        assert.strictEqual(financeFlow.isPremiumBlocked(AUDIO), false, 'el audio pasa: se le dan los 15 días antes de bloquear');
+        assert.strictEqual(financeStore.loadFinance(AUDIO).aiTrial.source, 'lanzamiento');
+        // handler.js transcribe y manda el texto al flujo: ahí se le cuenta.
+        ctx.sessions[AUDIO] = { phase: PHASE.FIN_MAIN };
+        r = await send(AUDIO, 'almuerzo 15 mil');
+        assert.ok(r.includes(trial.MESSAGES.promo), `con el texto del audio se le cuenta: ${r}`);
+        assert.deepStrictEqual(financeStore.loadFinance(AUDIO).transactions.map((t) => t.amount), [9000, 15000]);
+        console.log('OK: un antiguo que manda un audio de primeras recibe los 15 días y el audio pasa');
+
+        // --- 7. Pasada la promo, un antiguo activo ya no ---
+        process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-01';
+        financeStore.saveFinance(AFTER, { name: 'Despues', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(2), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
+        assert.strictEqual(financeFlow.isPremiumBlocked(AFTER), true, 'pasada la promo, un antiguo activo sin plan no tiene IA');
+        ctx.sessions[AFTER] = { phase: PHASE.FIN_MAIN };
+        r = await send(AFTER, 'almuerzo 15 mil');
+        assert.ok(!r.includes(trial.MESSAGES.promo) && !financeStore.loadFinance(AFTER).aiTrialUntil, `pasada la promo, nada: ${r}`);
+        process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-15';
+        console.log('OK: pasada la promo, un antiguo activo no recibe la prueba');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

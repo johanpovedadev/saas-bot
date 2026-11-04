@@ -207,7 +207,8 @@ function getUserTier(jid) {
  */
 function canUseAi(jid) {
     try {
-        // Un plan con IA, o los 15 días de IA gratis (#143, parte C).
+        // El administrador (Johan) siempre tiene IA. Después: un plan con IA, o los 15 días de IA gratis (#143, parte C).
+        if (isAdminJid(jid)) return true;
         return financeAdmin.canConsumeAi(jid) || financeAiTrial.isActive(financeStore.loadFinance(jid), Date.now());
     } catch (e) {
         logger.error(`[canUseAi] ${jid}: ${e.message}`);
@@ -622,10 +623,26 @@ function syncPremiumFromAdmin(jid, fin) {
  * NO depende de la sesión en memoria). Devuelve true si el usuario NO debe
  * consumir funciones de IA (audio/imagen) por no tener plan con IA activo.
  */
+/**
+ * 15 días de IA para un antiguo (#143, parte C): al volver después de 7 días, o en la promo de lanzamiento si nunca
+ * la tuvo. Se mira con cada mensaje, audio o foto (antes solo al anotar un gasto escrito, y un audio de primeras
+ * se bloqueaba). Quien ya tiene IA por plan, o el administrador, no la necesita. Devuelve la fuente o null.
+ */
+function grantTrialIfDue(jid, fin) {
+    if (isAdminJid(jid) || financeAdmin.canConsumeAi(jid)) return null;
+    const source = financeAiTrial.trialDueFor(fin, todayInBogota(), Date.now());
+    if (!source) return null;
+    financeAiTrial.startTrial(fin, Date.now(), source);
+    financeStore.saveFinance(jid, fin);
+    logger.info(`[${jid}] 15 días de IA: ${source}`);
+    return source;
+}
+
 function isPremiumBlocked(jid) {
     try {
         const persisted = financeStore.loadFinance(jid);
         if (!persisted) return false;
+        grantTrialIfDue(jid, persisted);
         return !canUseAi(jid);
     } catch (e) {
         logger.error(`[isPremiumBlocked] ${jid}: ${e.message}`);
@@ -709,6 +726,14 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Usuario nuevo: bienvenida exprés, sin preguntar nombre, objetivo ni meta (#122, escalón A).
     if (!fin.name) {
         return await startExpressAccount(sock, jid, t, userSession, ctx, fin);
+    }
+    // Antiguo: ¿le tocan los 15 días de IA? Si se los dimos (aquí o con el audio/foto que trajo este texto), se le
+    // cuenta una vez antes de responder.
+    grantTrialIfDue(jid, fin);
+    const trialAnnouncement = financeAiTrial.announcementFor(fin);
+    if (trialAnnouncement) {
+        financeStore.saveFinance(jid, fin);
+        await say(sock, jid, trialAnnouncement, ctx);
     }
     // "¿cuánto vale?" en cualquier momento: se responde y se sigue donde iba (la fase no cambia).
     if (financeWelcome.isPriceQuestion(t)) {
@@ -1636,10 +1661,12 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     // gate (usa handleFreeUser). Si el cupo se agotó (p.ej. media de una llamada
     // previa), bloquea.
     // Primero el plan; si no tiene, los 15 días de IA gratis (tope de 300 interacciones, #143 parte C).
-    const fromTrial = !financeAdmin.canConsumeAi(jid);
+    // El administrador no gasta cupo ni prueba (siempre tiene IA).
+    const isAdmin = isAdminJid(jid);
+    const fromTrial = !isAdmin && !financeAdmin.canConsumeAi(jid);
     // En la prueba, sin ningún proveedor de IA configurado: lo mismo que el plan Gratis, sin gastar interacciones.
     if (fromTrial && !financeAiProvider.isAvailable()) return await handleFreeUser(sock, jid, text, userSession, ctx, fin);
-    const consumption = fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid);
+    const consumption = isAdmin ? { allowed: true } : (fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid));
     if (!consumption.allowed) {
         await showPremiumRequired(sock, jid, ctx);
         return;
@@ -1777,9 +1804,6 @@ async function handleEntryAction(sock, jid, action, ctx, fin) {
 }
 
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
-    // Volvió después de 7 días o más sin registrar: 15 días de IA, una sola vez (#143, parte C). Se mira antes
-    // de guardar este movimiento, y no aplica a quien ya tiene IA por su plan.
-    const backFromBreak = !financeAdmin.canConsumeAi(jid) && financeAiTrial.returnTrialDue(fin, todayInBogota(), Date.now());
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1843,11 +1867,6 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
-
-    if (backFromBreak) {
-        financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.RETURN);
-        await say(sock, jid, financeAiTrial.MESSAGES.welcomeBack, ctx);
-    }
 
     // Referral reward: first real transaction triggers +15 movimientos con IA
     // para ambos (sin límite de tiempo para usarlos, ver financeAdmin.addAiCredits).
@@ -2489,6 +2508,8 @@ function startNightReporter(sock, ctx) {
 }
 
 module.exports = {
+    // Solo para pruebas (test_finance_admin_con_ia.js).
+    _test: { canUseAi },
     config: {
         business: {
             id: 'FINANCE_LEO',
