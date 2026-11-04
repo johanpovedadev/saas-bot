@@ -33,6 +33,24 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.9.0] - 2026-11-04
+
+Leo con IA de verdad (OpenRouter), 15 días de IA gratis, gráficas, modo privado y el lenguaje de Mundo Helados.
+
+### Agregado
+
+- **IA por OpenRouter** con respaldo automático en Gemini; costo real de cada llamada y `/costo_ia` (#145, #143).
+- **IA con herramientas y anclaje de montos** al estilo del agente de Mundo Helados: la IA elige qué hacer, el código
+  lo hace y ningún monto que no esté en el mensaje se guarda (#146).
+- **15 días de IA gratis** para los nuevos (promo de lanzamiento hasta el 15 nov) y una vez para quien vuelve tras
+  7 días; aviso el día 12, sin precios (#147).
+- **Mensajes cortos** y sin volver a preguntar lo que ya se dijo (presentador) (#148, #144).
+- **"Lo de siempre"**: los gastos que más se repiten como botones de un toque (#149).
+- **Hablar como la gente**: "15k", "luca y media", "un palo", "5 cocas a 7 mil cada una", "ayer" (#150).
+- **Audios y fotos** como si fueran texto (#151).
+- **Simulador** de conversaciones con los casos reales donde se trababan los usuarios (#152).
+- **Modo privado** para ocultar la plata y **gráficas** en los informes (#140, #141, #139).
+
 ## [1.8.0] - 2026-11-02
 
 Versión gratis de Leo: que nadie se trabe. Sale de revisar dónde abandonaron los usuarios reales y de probar Manny.
