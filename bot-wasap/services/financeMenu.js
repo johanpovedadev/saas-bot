@@ -28,10 +28,9 @@ const EXPENSE_PROMPT = '💸 Perfecto. Decime qué compraste y cuánto:\n\n_"18 
 const INCOME_PROMPT = '💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n_"Recibí 2 millones de sueldo"_\n_"Gané 300 mil por un trabajo"_';
 
 // Lo que hace la IA (fotos, audios) no está en el plan Gratis: se dice qué sí se puede, sin precios ni callejón.
-const NO_AI_TEXT = '🦁 Las fotos y los audios todavía no están en tu plan. Sin IA podés hacer casi todo:\n\n' +
-    '• Escribirme un gasto: _"almuerzo 15 mil"_\n' +
-    '• Ver tu resumen y tu meta\n' +
-    '• Ganar medallas por constancia';
+// Corto (#144, bloque 5): lo que sí puede hacer, en dos líneas.
+const NO_AI_TEXT = '🦁 Las fotos y los audios los leo con la IA, que no está en tu plan.\n' +
+    'Escribime el gasto y lo anoto igual: _"almuerzo 15 mil"_';
 
 // Mismo orden que el menú de texto de siempre: escribir 1 moneda, 2 feedback, 3 volver, 4 informes sigue igual.
 const SETTINGS_BUTTONS = [
