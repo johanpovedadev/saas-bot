@@ -2,7 +2,7 @@
 
 const PHASE = require('../../utils/phases');
 const messageButtons = require('../../utils/messageButtons');
-const { say, sendImage } = require('../../services/bot_core');
+const { say: coreSay, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
@@ -28,6 +28,7 @@ const privacy = require('../../utils/financePrivacy');
 const financeCharts = require('../../services/financeCharts');
 const financeAiProvider = require('../../services/financeAiProvider');
 const financeAiTrial = require('../../services/financeAiTrial');
+const financePresenter = require('../../services/financePresenter');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -35,17 +36,34 @@ const cardStatement = require('../../services/financeCardStatement');
 const { parseAmountText } = require('../../utils/financeAmount');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
+/**
+ * Toda respuesta de Leo pasa por el presentador (#144, bloque 1): máximo 3 líneas (lo demás detrás de
+ * "➕ Ver más"), una sola pregunta, sin "escribí el número" y sin repetir el saludo del día. `options.full`
+ * deja el mensaje entero (informes y pantallas que la persona pidió para leer).
+ */
+async function say(sock, jid, text, ctx, options = {}) {
+    const today = todayInBogota();
+    if (!ctx.leoGreetedOn) ctx.leoGreetedOn = {};
+    if (!ctx.leoMore) ctx.leoMore = {};
+    const shown = financePresenter.present(text, { full: options.full, greetedToday: ctx.leoGreetedOn[jid] === today });
+    if (shown.greeted) ctx.leoGreetedOn[jid] = today;
+    const buttons = [...(options.buttons || [])];
+    if (shown.more) {
+        ctx.leoMore[jid] = shown.more;
+        buttons.push([financePresenter.MORE_BUTTON]);
+    }
+    const { full, ...rest } = options;
+    return coreSay(sock, jid, shown.text, ctx, buttons.length > 0 ? { ...rest, buttons } : (Object.keys(rest).length ? rest : undefined));
+}
+
+/** say() con el mensaje entero: informes y pantallas que la persona pidió para leer. */
+function sayFull(sock, jid, text, ctx, options = {}) {
+    return say(sock, jid, text, ctx, { ...options, full: true });
+}
+
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
     PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_SETTINGS_REPORTS, PHASE.FIN_FEEDBACK
-];
-
-const CONFIRM_VARIANTS = [
-    'Anotado 🦁 Vamos sumando.',
-    'Recibido. El león nunca olvida 🔥',
-    'Guardado. Así se hace.',
-    'Listo, ya quedó contigo 🦁',
-    'Hecho. Un paso más cerca de tus metas 💪'
 ];
 
 // "menú", "cancelar"... en cualquier paso (#122, escalón A): limpia la fase y lo pendiente y vuelve al menú.
@@ -348,7 +366,7 @@ async function showPremiumRequired(sock, jid, ctx) {
     const waLink = payment.adminWhatsapp
         ? `https://wa.me/${payment.adminWhatsapp}?text=${encodeURIComponent('Quiero pagar mi Leo Pro')}`
         : '';
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Tu plan Gratis no incluye IA.*\n\n` +
         `Para registrar con IA (texto, fotos de facturas y notas de voz), elegí un plan:\n\n` +
         `✨ *Basic* — $${payment.basicPrice.toLocaleString('es-CO')} COP/mes\n` +
@@ -666,7 +684,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         if (fin.name && !canUseAi(jid)) {
             return await showQuickMenu(sock, jid, fin, ctx);
         }
-        return await say(sock, jid,
+        return await sayFull(sock, jid,
             `😊 Podés decirme cosas como:\n\n` +
             `💸 *"Compré 18 mil en almuerzo"*\n` +
             `💰 *"Recibí 2 millones de sueldo"*\n` +
@@ -711,6 +729,12 @@ async function handle(sock, jid, text, userSession, ctx) {
         fin.name = spokenName;
         financeStore.saveFinance(jid, fin);
         return await say(sock, jid, `🦁 Listo, *${fin.name}*. ¡Un gusto!`, ctx);
+    }
+    // ➕ Ver más (#144): lo que el presentador dejó para después, entero.
+    if (t === financePresenter.MORE_DATA) {
+        const more = (ctx.leoMore && ctx.leoMore[jid]) || '';
+        if (ctx.leoMore) delete ctx.leoMore[jid];
+        return await sayFull(sock, jid, more || '🦁 Eso era todo.', ctx);
     }
     const menuChoice = financeMenu.parseMenuChoice(t);
     if (menuChoice) {
@@ -859,7 +883,7 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (MEDALS_COMMAND.test(command)) {
         financeMedals.awardNew(fin);
         financeStore.saveFinance(jid, fin);
-        return await say(sock, jid, financeMedals.formatMedalList(fin), ctx);
+        return await sayFull(sock, jid, financeMedals.formatMedalList(fin), ctx);
     }
     if (SHARE_COMMAND.test(command)) {
         await sendShareCard(sock, jid, fin, ctx);
@@ -1135,7 +1159,7 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     // queda sin volver (ver informe de retencion). Se cambia el eje de "que
     // hacer ahora" a "que vas a lograr" - el primer registro se enmarca como
     // el paso 1 hacia la meta, no como una tarea suelta.
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *${fin.goalName}* — ¡esa es tu meta! ` +
         (fin.goalTarget > 0
             ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${privacy.money(fin.goalTarget, fin, { kind: privacy.KINDS.GOAL })} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
@@ -1306,7 +1330,7 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
         case 'medallas':
             financeMedals.awardNew(fin);
             financeStore.saveFinance(jid, fin);
-            return await say(sock, jid, financeMedals.formatMedalList(fin), ctx, { buttons: [financeMenu.BACK_ROW] });
+            return await sayFull(sock, jid, financeMedals.formatMedalList(fin), ctx, { buttons: [financeMenu.BACK_ROW] });
         default:
             return await showSettingsMenu(sock, jid, userSession, ctx);
     }
@@ -1323,7 +1347,7 @@ async function showGoalsScreen(sock, jid, userSession, ctx, fin) {
         const extra = fin.goalTarget > 0
             ? [financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin), financeGoals.formatNextStep(financeGoals.nextStep(fin, today), fin)]
             : [];
-        return await say(sock, jid, financeMenu.formatGoalScreen(fin, (n) => formatMoney(n, fin), extra), ctx,
+        return await sayFull(sock, jid, financeMenu.formatGoalScreen(fin, (n) => formatMoney(n, fin), extra), ctx,
             { buttons: financeMenu.GOAL_SCREEN_BUTTONS });
     }
     userSession.phase = PHASE.FIN_GOALS;
@@ -1376,7 +1400,11 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'register_income': {
             const type = result.intent === 'register_expense' ? 'expense' : 'income';
             const cat = result.category || (type === 'expense' ? 'Otros' : 'Ingreso');
-            const desc = result.description || (type === 'expense' ? 'Compra' : 'Ingreso');
+            // Lo que el mensaje ya dice (#144, bloque 2): medio de pago y día se guardan sin preguntar, y no
+            // quedan pegados a la descripción ("almuerzo 15 mil con la Rappi ayer").
+            const details = financeEntry.extractDetails(result.sourceText || '', todayInBogota());
+            const medium = result.medium || details.medium;
+            const desc = financeEntry.cleanDetailWords(result.description || (type === 'expense' ? 'Compra' : 'Ingreso'));
             // Si el mensaje reportó VARIAS transacciones a la vez (ej: "gasté
             // 20mil en comida y 15mil en transporte"), las demás vienen en
             // additional_transactions - se validan y se guardan en cola junto
@@ -1400,7 +1428,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     amount: result.amount,
                     category: cat,
                     description: desc,
-                    medium: result.medium,
+                    medium,
+                    entryDate: details.date,
                     date: result.date || 'hoy',
                     extra
                 };
@@ -1412,7 +1441,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             } else if (result.amount > 0) {
                 // Si es el total de la foto de un recibo, se guardan sus productos (igual que al confirmar con "sí").
                 const receiptExtra = financeReceipts.receiptExtraFor(userSession, { type, amount: result.amount });
-                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc, medium: result.medium }, ...extra], fin, ctx, receiptExtra);
+                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc, medium, date: details.date }, ...extra.map((t) => ({ ...t, date: details.date }))], fin, ctx, receiptExtra);
             } else {
                 await say(sock, jid, result.response ||
                     (type === 'expense'
@@ -1494,7 +1523,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             break;
 
         case 'health_score':
-            await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
+            await sayFull(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
             break;
 
         case 'goals':
@@ -1551,7 +1580,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
             case '3':
                 return await handleMenuChoice(sock, jid, 'resumen', userSession, ctx, fin);
             case '4':
-                await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx, { buttons: [financeMenu.BACK_ROW] });
+                await sayFull(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx, { buttons: [financeMenu.BACK_ROW] });
                 return;
             case '5':
                 return await handleMenuChoice(sock, jid, 'meta', userSession, ctx, fin);
@@ -1583,6 +1612,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
         await showQuickMenu(sock, jid, fin, ctx);
         return;
     }
+    result.sourceText = t;
     await applyIntent(sock, jid, result, userSession, ctx, fin);
     if (result.intent === 'chat' || result.intent === 'help' || result.intent === 'onboarding_name') {
         await showQuickMenu(sock, jid, fin, ctx);
@@ -1614,6 +1644,7 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         return;
     }
 
+    result.sourceText = text;
     await applyIntent(sock, jid, result, userSession, ctx, fin);
 }
 
@@ -1682,7 +1713,7 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         } else {
             // Si el gasto viene de la foto de un recibo, se guardan sus productos para comparar precios entre tiendas.
             const receiptExtra = financeReceipts.receiptExtraFor(userSession, confirm);
-            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description, medium: confirm.medium },
+            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description, medium: confirm.medium, date: confirm.entryDate },
                 ...(Array.isArray(confirm.extra) ? confirm.extra : [])];
             await saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra);
         }
@@ -1714,7 +1745,7 @@ async function saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra = {}) {
         const e = entries[i];
         const isLast = i === entries.length - 1;
         await saveAndConfirm(sock, jid, e.type, e.amount, e.category, e.description, fin, ctx,
-            { ...(i === 0 ? receiptExtra : {}), ...(e.medium ? { medium: e.medium } : {}), entryGroup: group },
+            { ...(i === 0 ? receiptExtra : {}), ...(e.medium ? { medium: e.medium } : {}), ...(e.date ? { date: e.date } : {}), entryGroup: group },
             isLast ? { buttons: financeCorrections.entryButtons(group) } : {});
     }
     financeCorrections.rememberEntryGroup(fin, group, Date.now());
@@ -1751,9 +1782,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     fin.transactions.push(tx);
     // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
     fin.balance += financeCorrections.balanceEffect(tx);
-    if (type === 'expense') fin.todaySpending += amount;
-
-    const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
+    if (type === 'expense' && tx.date === todayInBogota()) fin.todaySpending += amount;
 
     // #8 — racha (con protector y niveles, #85)
     const streakEvent = bumpStreak(fin);
@@ -1788,19 +1817,16 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
             ? `💎 Plan *Gratis* — escribí "Actualizar a Pro" para desbloquear la IA 🦁\n`
             : '';
 
+    // Corto (#144): lo que se anotó, el saldo y la racha en 3 líneas; el resto queda detrás de "➕ Ver más".
+    const dayLabel = tx.date === todayInBogota() ? '' : ` (${tx.date})`;
     await say(sock, jid,
-        `✅ *${type === 'expense' ? 'Compra registrada' : 'Ingreso registrado'}!*\n` +
-        confirmMsg + '\n\n' +
-        `${type === 'expense' ? '💸' : '💰'} ${privacy.money(amount, fin)} — ${description}\n` +
-        `🏷️ ${category}\n\n` +
-        balanceLine + '\n' +
-        todayMsg +
+        `✅ *Registrado:* ${type === 'expense' ? '💸' : '💰'} ${privacy.money(amount, fin)} — ${description} · ${category}${dayLabel}\n` +
+        balanceLine + (todayMsg ? ` · ${todayMsg.trim()}` : '') + '\n' +
         streakMsg +
         (streakEventLines.length ? `${streakEventLines.join('\n')}\n` : '') +
         milestoneMsg +
         planLine +
-        (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
-        `\n¿Algo más? 🦁`,
+        (fin.firstTransactionDone ? '' : `💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`),
         ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
@@ -1878,7 +1904,7 @@ async function handleQueryLoans(sock, jid, fin, ctx) {
     const loans = (fin.loans || []).filter(l => l.status !== 'pagado');
     if (loans.length === 0) {
         fin.pendingLoanList = null;
-        await say(sock, jid,
+        await sayFull(sock, jid,
             `🤝 No tenés préstamos pendientes registrados — todo al día 🦁\n\n` +
             `Cuando prestes o te presten plata, decímelo así: _"le presté a Juan 50 mil"_ o _"le debo a Pedro 30 mil"_.`,
             ctx);
@@ -1906,7 +1932,7 @@ async function handleQueryLoans(sock, jid, fin, ctx) {
     }
     text += `\nEscribí el *número* cuando alguno se pague, y lo marco como listo ✅`;
 
-    await say(sock, jid, text, ctx);
+    await sayFull(sock, jid, text, ctx);
 }
 
 async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
@@ -1931,7 +1957,7 @@ async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
  */
 async function handleSupportRequest(sock, jid, ctx) {
     const payment = financeAdmin.getPaymentInfo();
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `💙 Si Leo te ha servido para ponerle orden a tus finanzas, me encantaría que me invites lo que sientas justo — así sea poquito, de corazón 🙏\n\n` +
         `📲 *Cómo apoyar:*\n` +
         `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
@@ -2142,7 +2168,7 @@ async function sendSpendingReport(sock, jid, ctx, fin, options) {
         markReviewPrompted(fin);
         financeStore.saveFinance(jid, fin);
     }
-    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
+    await sayFull(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
     if (report.expenseCount > 0) {
         const data = financeCharts.donutData(fin, todayInBogota(), report.days, `Últimos ${report.days} días`);
         await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(data, fin), '📊 Tus gastos en una imagen');
@@ -2213,7 +2239,7 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal =
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
     if (pendingReview.length > 0 && !reveal) markReviewPrompted(fin);
 
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
         (reveal ? '👀 _Con montos, solo en este mensaje: tu modo privado sigue prendido._\n\n' : '') +
         `📊 *Hoy con Leo:*\n` +
@@ -2251,7 +2277,7 @@ async function handleReferralInfo(sock, jid, fin, ctx) {
     const inviteeCount = financeReferral.getInviteeCount(jid);
     const rewardedCount = financeReferral.getRewardedCount(jid);
     const creditsLeft = financeAdmin.getAiCredits(jid);
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Tu código de invitación:* ${code}\n\n` +
         `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 MOVIMIENTOS CON IA* (sin vencimiento)! 🎉\n\n` +
         `📊 Personas invitadas: ${inviteeCount}\n` +
@@ -2443,7 +2469,7 @@ function startNightReporter(sock, ctx) {
             adminJids,
             loadFinance: financeStore.loadFinance,
             saveFinance: financeStore.saveFinance,
-            send: (jid, text) => say(sock, jid, text, ctx),
+            send: (jid, text) => sayFull(sock, jid, text, ctx),
             sendImage: (jid, render, caption) => sendChart(sock, jid, ctx, render, caption)
         }).catch((e) => logger.error(`[informe semanal] ${e.message}`));
     }, CHECK_INTERVAL);

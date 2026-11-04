@@ -28,10 +28,12 @@ const FIELD_PROMPTS = Object.freeze({
 const CORRECTION_WINDOW_MS = 30 * 60 * 1000;   // "fue con tarjeta" y la respuesta a "¿Qué cambio?" valen 30 min
 // La tarjeta de crédito no baja el saldo (se descuenta al pagarla), igual que en la bandeja de correos.
 const MEDIUMS_THAT_MOVE_BALANCE = new Set([MEDIUM.BANK, MEDIUM.CASH, MEDIUM.TRANSFER]);
+// Vocabulario de medios (#144, bloque 2): Rappi/RappiCard/tarjeta → tarjeta; Nequi, Daviplata, Bancolombia,
+// transferencia, PSE → banco; efectivo / plata en mano → efectivo. "Envío" queda para cuando lo dicen así.
 const MEDIUM_WORDS = [
-    { medium: MEDIUM.CARD, re: /\b(tarjeta|credito|rappicard)\b/ },
-    { medium: MEDIUM.TRANSFER, re: /\b(envio|transferencia|transferi|nequi|daviplata)\b/ },
-    { medium: MEDIUM.BANK, re: /\b(banco|debito|bancolombia|davivienda|bbva|cuenta)\b/ },
+    { medium: MEDIUM.CARD, re: /\b(tarjeta|credito|rappicard|rappi)\b/ },
+    { medium: MEDIUM.BANK, re: /\b(banco|debito|bancolombia|davivienda|bbva|cuenta|nequi|daviplata|transferencia|transferi|pse)\b/ },
+    { medium: MEDIUM.TRANSFER, re: /\b(envio|envie|giro)\b/ },
     { medium: MEDIUM.CASH, re: /\b(efectivo|cash|plata en mano)\b/ },
 ];
 const MEDIUM_LABELS = Object.freeze({ [MEDIUM.CARD]: 'tarjeta', [MEDIUM.BANK]: 'banco', [MEDIUM.TRANSFER]: 'envío', [MEDIUM.CASH]: 'efectivo' });
