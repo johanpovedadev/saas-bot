@@ -8,6 +8,8 @@
 // Las recomendaciones SIEMPRE usan datos reales del usuario (nunca mensajes vagos).
 // ============================================================================
 
+const privacy = require('../utils/financePrivacy');
+
 const DEFAULT_WEIGHTS = {
     cashFlow: 0.25,
     expenseDistribution: 0.25,
@@ -221,7 +223,8 @@ function buildHealthMessage(fin) {
         `• Tasa de ahorro: ${factors.savingsRate}/100\n` +
         `• Fondo de emergencia: ${factors.emergencyFund}/100`;
     const recs = recommendations.length > 0 ? `\n\n${recommendations.join('\n\n')}` : '';
-    return header + breakdown + recs + `\n\n¿Querés que empecemos a mejorar alguno de esos números? Decime _"metas"_ 🦁`;
+    // Modo privado (#139): las recomendaciones mezclan ahorro y gastos; con el modo prendido se tapan todos los montos.
+    return privacy.maskAllAmounts(header + breakdown + recs + `\n\n¿Querés que empecemos a mejorar alguno de esos números? Decime _"metas"_ 🦁`, fin);
 }
 
 module.exports = { computeScore, buildHealthMessage, getWeights, DEFAULT_WEIGHTS };

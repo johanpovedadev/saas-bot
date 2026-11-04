@@ -10,7 +10,7 @@
  * contaron una por una).
  */
 
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 const { parseAmountText } = require('../utils/financeAmount');
 
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -64,12 +64,14 @@ function owed(fin, today) {
 }
 
 function formatOwed(info, fin) {
-    const money = (n) => formatMoney(n, fin);
+    // Modo privado (#139): lo que queda después de pagar es saldo y se oculta; la deuda es un gasto ya registrado.
+    const money = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
+    const balance = privacy.moneyFn(fin, privacy.KINDS.BALANCE);
     const s = info.statement;
     const lines = [`💳 *${s.cuenta}:* pagá ${money(info.pendiente)} antes del *${shortDate(s.fechaPago)}*` +
         (s.pagoMinimo && !(s.pagado > 0) ? ` (mínimo ${money(s.pagoMinimo)})` : '')];
     if (info.nuevas > 0) lines.push(`   + ${money(info.nuevas)} de compras nuevas (van al próximo extracto)`);
-    lines.push(`   → al pagar el extracto te quedaría ${money((fin.balance || 0) - info.pendiente)}`);
+    lines.push(`   → al pagar el extracto te quedaría ${balance((fin.balance || 0) - info.pendiente)}`);
     return lines.join('\n');
 }
 
@@ -88,7 +90,8 @@ function parsePayment(text, fin, today) {
  * historial (no es gasto: las compras ya se contaron). Devuelve el texto de confirmación.
  */
 function applyPayment(fin, amount, today) {
-    const money = (n) => formatMoney(n, fin);
+    const money = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
+    const balance = privacy.moneyFn(fin, privacy.KINDS.BALANCE);
     fin.balance = (fin.balance || 0) - amount;
     const s = activeStatement(fin, today);
     if (s) s.pagado = (s.pagado || 0) + amount;
@@ -99,7 +102,7 @@ function applyPayment(fin, amount, today) {
     const pendiente = s ? Math.max(0, s.pagoTotal - s.pagado) : 0;
     return `✅ Pago de la tarjeta: ${money(amount)}. No lo cuento como gasto (las compras ya estaban anotadas).\n` +
         (s ? (pendiente > 0 ? `💳 Te falta ${money(pendiente)} del extracto.` : '🎉 ¡Extracto pagado completo! Cero intereses.') + '\n' : '') +
-        `💵 Te queda: ${money(fin.balance)}`;
+        `💵 Te queda: ${balance(fin.balance)}`;
 }
 
 module.exports = { sanitizeStatement, activeStatement, owed, formatOwed, parsePayment, applyPayment };

@@ -13,7 +13,7 @@
  * Funciones puras: reciben `fin` y la fecha de hoy; finance.flow.js solo las llama.
  */
 
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 const { parseAmountText } = require('../utils/financeAmount');
 const { MEDIUM, mediumOf } = require('../utils/financeMedium');
 
@@ -139,7 +139,7 @@ function groupEntries(fin, group) {
 }
 
 function describeEntry(tx, fin) {
-    return `${tx.type === 'expense' ? '💸' : '💰'} ${formatMoney(tx.amount, fin)} — ${tx.description}`;
+    return `${tx.type === 'expense' ? '💸' : '💰'} ${privacy.money(tx.amount, fin)} — ${tx.description}`;
 }
 
 /** Borra todo lo que se guardó de ese mensaje y devuelve el saldo. Texto para el usuario. */
@@ -166,7 +166,7 @@ function startCorrection(fin, { group, index, field }, now) {
     if (index === null && entries.length > 1) {
         return {
             text: '✏️ ¿Cuál corrijo?',
-            buttons: entries.map((t, i) => [{ text: `${t.description} (${formatMoney(t.amount, fin)})`, data: `${DATA_PREFIX}corregir:${group}:${i}` }]),
+            buttons: entries.map((t, i) => [{ text: `${t.description} (${privacy.money(t.amount, fin)})`, data: `${DATA_PREFIX}corregir:${group}:${i}` }]),
         };
     }
     const position = index === null ? 0 : index;
@@ -188,7 +188,7 @@ function applyFieldChange(fin, tx, field, raw, today) {
     if (field === 'monto') {
         const amount = parseAmountText(value);
         if (!amount) return null;
-        return changeKeepingBalance(fin, tx, today, () => { tx.amount = amount; }, `el monto quedó en ${formatMoney(amount, fin)}`);
+        return changeKeepingBalance(fin, tx, today, () => { tx.amount = amount; }, `el monto quedó en ${privacy.money(amount, fin)}`);
     }
     if (field === 'medio') {
         const medium = parseMedium(value);

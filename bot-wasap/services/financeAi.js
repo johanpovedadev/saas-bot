@@ -3,6 +3,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 const receipts = require('./financeReceipts');
 
 // gemini-2.0-flash fue retirado por Google (2026): con él, Leo caía siempre al modo sin IA y las fotos de recibos no
@@ -21,6 +22,7 @@ function buildFinanceContext(userSession) {
         totalTransactions: (fin.transactions || []).length,
         isPremium: !!fin.isPremium,
         tier,
+        privateMode: Boolean(fin.privateMode || fin.privateModeAll),
         tierLabel: tier === 'master' ? 'Master (IA sin límites)'
             : tier === 'basic' ? 'Basic (60 interacciones de IA al mes)'
                 : 'Gratis (sin IA)',
@@ -45,7 +47,7 @@ Contexto del usuario:
 - Total transacciones: ${c.totalTransactions}
 - Plan: ${c.tierLabel}
 - Premium: ${c.isPremium ? 'SI' : 'NO'}
-
+${c.privateMode ? '- MODO PRIVADO: el usuario ocultó su plata. NUNCA digas su saldo, lo ahorrado ni montos de la meta; habla de su meta en % y en tiempo.\n' : ''}
 Últimas transacciones: ${JSON.stringify(c.recentTransactions)}
 
 Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
@@ -132,6 +134,7 @@ async function interpret(message, userSession, forceFallback) {
             const parsed = JSON.parse(text);
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.additional_transactions)) parsed.additional_transactions = [];
+            parsed.fromAi = true; // texto libre de la IA: el flujo le tapa los montos en modo privado (#139)
             return parsed;
         } catch (e) {
             logger.warn(`financeAi intento ${attempt}: ${e.message}`);
@@ -320,7 +323,10 @@ function goalProgressBar(current, target, fin) {
     const pct = Math.min(100, Math.round((current / target) * 100));
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
-    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — llevás ${formatMoney(current, fin)} de ${formatMoney(target, fin)}`;
+    const bar = `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}%`;
+    // Modo privado (#139): la meta se cuenta en %, sin plata.
+    if (privacy.hides(fin, privacy.KINDS.GOAL)) return bar;
+    return `${bar} — llevás ${formatMoney(current, fin)} de ${formatMoney(target, fin)}`;
 }
 
 function fallbackInterpret(message, userSession) {
@@ -560,7 +566,7 @@ function fallbackInterpret(message, userSession) {
             category: '',
             description: '',
             needs_confirmation: false,
-            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: ${formatMoney(balance, fin)}\n💸 Comprado hoy: ${formatMoney(today, fin)}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
+            response: `📊 *Tu estado financiero ${name}:*\n\n💵 Saldo disponible: ${privacy.money(balance, fin, { kind: privacy.KINDS.BALANCE })}\n💸 Comprado hoy: ${privacy.money(today, fin)}\n📈 Transacciones: ${(fin.transactions || []).length}\n${goalLine}\n¿Necesitas algo más?`
         };
     }
 
