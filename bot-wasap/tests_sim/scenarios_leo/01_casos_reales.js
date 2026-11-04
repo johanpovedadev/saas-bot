@@ -81,6 +81,18 @@ add('AUDIO-varios', 'Audios', 'Un audio con dos gastos en letras registra los do
     t.ok(JSON.stringify(amounts(c)) === '[15000,3000]', 'no quedaron los 2 gastos del audio', JSON.stringify(c.fin().transactions));
 }, { needsAi: true });
 
+add('ANTIGUO-audio', 'Prueba de IA', 'Antiguo sin plan en la promo: su primer mensaje es un audio y Leo lo toma (Johan, 4 nov)', async ({ c, t }) => {
+    const before = process.env.LEO_TRIAL_PROMO_UNTIL;
+    process.env.LEO_TRIAL_PROMO_UNTIL = '2999-12-31';
+    try {
+        c.existing({ aiTrialUntil: 0, aiTrial: null });
+        await t.say(c, 'almuerzo quince mil', { voice: true, has: ['15 días', 'Registrado'], hasNot: [...STUCK, 'no está en tu plan'] });
+        t.ok(JSON.stringify(amounts(c)) === '[15000]', 'el gasto del audio no quedó', JSON.stringify(c.fin().transactions));
+    } finally {
+        process.env.LEO_TRIAL_PROMO_UNTIL = before;
+    }
+}, { needsAi: true });
+
 add('LUCAS', 'Lenguaje', '"almuerzo 15 lucas ayer" se guarda de una con la fecha de ayer', async ({ c, t }) => {
     c.existing();
     await t.say(c, 'almuerzo 15 lucas ayer', { has: ['Registrado'], hasNot: STUCK });

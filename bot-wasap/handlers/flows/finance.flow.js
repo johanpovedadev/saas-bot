@@ -622,10 +622,26 @@ function syncPremiumFromAdmin(jid, fin) {
  * NO depende de la sesión en memoria). Devuelve true si el usuario NO debe
  * consumir funciones de IA (audio/imagen) por no tener plan con IA activo.
  */
+/**
+ * 15 días de IA para un antiguo (#143, parte C): al volver después de 7 días, o en la promo de lanzamiento si nunca
+ * la tuvo. Se mira con cada mensaje, audio o foto (antes solo al anotar un gasto escrito, y un audio de primeras
+ * se bloqueaba). Quien ya tiene IA por plan, o el administrador, no la necesita. Devuelve la fuente o null.
+ */
+function grantTrialIfDue(jid, fin) {
+    if (isAdminJid(jid) || financeAdmin.canConsumeAi(jid)) return null;
+    const source = financeAiTrial.trialDueFor(fin, todayInBogota(), Date.now());
+    if (!source) return null;
+    financeAiTrial.startTrial(fin, Date.now(), source);
+    financeStore.saveFinance(jid, fin);
+    logger.info(`[${jid}] 15 días de IA: ${source}`);
+    return source;
+}
+
 function isPremiumBlocked(jid) {
     try {
         const persisted = financeStore.loadFinance(jid);
         if (!persisted) return false;
+        grantTrialIfDue(jid, persisted);
         return !canUseAi(jid);
     } catch (e) {
         logger.error(`[isPremiumBlocked] ${jid}: ${e.message}`);
@@ -709,6 +725,14 @@ async function handle(sock, jid, text, userSession, ctx) {
     // Usuario nuevo: bienvenida exprés, sin preguntar nombre, objetivo ni meta (#122, escalón A).
     if (!fin.name) {
         return await startExpressAccount(sock, jid, t, userSession, ctx, fin);
+    }
+    // Antiguo: ¿le tocan los 15 días de IA? Si se los dimos (aquí o con el audio/foto que trajo este texto), se le
+    // cuenta una vez antes de responder.
+    grantTrialIfDue(jid, fin);
+    const trialAnnouncement = financeAiTrial.announcementFor(fin);
+    if (trialAnnouncement) {
+        financeStore.saveFinance(jid, fin);
+        await say(sock, jid, trialAnnouncement, ctx);
     }
     // "¿cuánto vale?" en cualquier momento: se responde y se sigue donde iba (la fase no cambia).
     if (financeWelcome.isPriceQuestion(t)) {
@@ -1777,9 +1801,6 @@ async function handleEntryAction(sock, jid, action, ctx, fin) {
 }
 
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
-    // Volvió después de 7 días o más sin registrar: 15 días de IA, una sola vez (#143, parte C). Se mira antes
-    // de guardar este movimiento, y no aplica a quien ya tiene IA por su plan.
-    const backFromBreak = !financeAdmin.canConsumeAi(jid) && financeAiTrial.returnTrialDue(fin, todayInBogota(), Date.now());
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1843,11 +1864,6 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
-
-    if (backFromBreak) {
-        financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.RETURN);
-        await say(sock, jid, financeAiTrial.MESSAGES.welcomeBack, ctx);
-    }
 
     // Referral reward: first real transaction triggers +15 movimientos con IA
     // para ambos (sin límite de tiempo para usarlos, ver financeAdmin.addAiCredits).
