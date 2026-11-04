@@ -1,16 +1,31 @@
 'use strict';
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
+const aiProvider = require('./financeAiProvider');
 const privacy = require('../utils/financePrivacy');
 const receipts = require('./financeReceipts');
 
 // gemini-2.0-flash fue retirado por Google (2026): con él, Leo caía siempre al modo sin IA y las fotos de recibos no
 // se leían. El modelo se puede cambiar sin tocar código con FINANCE_AI_MODEL.
+/** Modelo de Gemini directo (respaldo). El de OpenRouter lo decide financeAiProvider (#143). */
 function modeloFinanzas() {
-    return process.env.FINANCE_AI_MODEL || 'models/gemini-3.1-flash-lite';
+    return aiProvider.geminiModel();
 }
+
+/** Sin texto: el JSON de la IA puede venir envuelto en ```json ... ```. */
+function stripJsonFence(text) {
+    let t = String(text || '').trim();
+    if (t.startsWith('```json')) t = t.slice(7, -3).trim();
+    else if (t.startsWith('```')) t = t.slice(3, -3).trim();
+    return t;
+}
+
+function jidOf(userSession) {
+    return (userSession && userSession.jid) || (userSession && userSession.finance && userSession.finance.jid) || '';
+}
+
+const MEDIA_TIMEOUT_MS = 30000;
 
 function buildFinanceContext(userSession) {
     const fin = userSession.finance || {};
@@ -107,31 +122,21 @@ async function interpret(message, userSession, forceFallback) {
     if (forceFallback) {
         return fallbackInterpret(message, userSession);
     }
-    const key = process.env.GEMINI_API_KEY;
-    if (!key || key.includes('TU_') || key.includes('AQUI') || key.length < 20) {
-        logger.warn('financeAi: Gemini key no disponible, usando fallback');
+    if (!aiProvider.isAvailable()) {
+        logger.warn('financeAi: sin proveedor de IA (OpenRouter ni Gemini), usando fallback');
         return fallbackInterpret(message, userSession);
     }
 
-    const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({
-        model: modeloFinanzas(),
-        generationConfig: { responseMimeType: 'application/json' }
-    });
-
-    const prompt = buildSystemPrompt(userSession) + `\n\nMensaje del usuario: "${message}"`;
+    // Todo pasa por el proveedor (#143): OpenRouter con respaldo en Gemini.
+    const messages = [
+        { role: 'system', content: buildSystemPrompt(userSession) },
+        { role: 'user', content: `Mensaje del usuario: "${message}"` },
+    ];
 
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-            const result = await Promise.race([
-                model.generateContent(prompt),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 20000))
-            ]);
-            const response = await result.response;
-            let text = response.text().trim();
-            if (text.startsWith('```json')) text = text.slice(7, -3).trim();
-            else if (text.startsWith('```')) text = text.slice(3, -3).trim();
-            const parsed = JSON.parse(text);
+            const result = await aiProvider.chat({ messages, jid: jidOf(userSession), json: true });
+            const parsed = JSON.parse(stripJsonFence(result.text));
             if (!parsed.intent) parsed.intent = 'chat';
             if (!Array.isArray(parsed.additional_transactions)) parsed.additional_transactions = [];
             parsed.fromAi = true; // texto libre de la IA: el flujo le tapa los montos en modo privado (#139)
@@ -147,31 +152,22 @@ async function interpret(message, userSession, forceFallback) {
     return fallbackInterpret(message, userSession);
 }
 
-async function interpretAudio(audioBase64, userSession) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key || key.includes('TU_') || key.length < 20) {
-        logger.warn('financeAi: Gemini key no disponible para audio');
+async function interpretAudio(audioBase64, userSession, mimeType = 'audio/ogg; codecs=opus') {
+    if (!aiProvider.isAvailable()) {
+        logger.warn('financeAi: sin proveedor de IA para audio');
         return null;
     }
-
-    const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: modeloFinanzas() });
 
     const prompt = `Eres un asistente de transcripción. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz. No agregues nada, no interpretes, solo transcribe. Si el usuario menciona un gasto, cantidad o monto, inclúyelo tal cual lo dijo. Ejemplos de salidas correctas:\n- "Compré almuerzo por quince mil pesos"\n- "Ayer gasté treinta mil en el mercado"\n- "Hoy pagué el servicio de luz"\n- "Hola Leo, ¿cómo estás?"`;
 
     try {
-        const audioPart = {
-            inlineData: {
-                mimeType: 'audio/ogg; codecs=opus',
-                data: audioBase64
-            }
-        };
-        const result = await Promise.race([
-            model.generateContent([prompt, audioPart]),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
-        ]);
-        const response = await result.response;
-        const text = response.text().trim();
+        // OpenRouter si el modelo acepta audio (input_audio); si falla, Gemini directo (financeAiProvider).
+        const result = await aiProvider.chat({
+            messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'audio', mimeType, data: audioBase64 }] }],
+            jid: jidOf(userSession),
+            timeoutMs: MEDIA_TIMEOUT_MS,
+        });
+        const text = result.text.trim();
         if (!text) return null;
         logger.info(`financeAi interpretAudio transcripción: "${text.substring(0, 80)}"`);
         return text;
@@ -182,23 +178,20 @@ async function interpretAudio(audioBase64, userSession) {
 }
 
 async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key || key.includes('TU_') || key.length < 20) {
-        logger.warn('financeAi: Gemini key no disponible para imagen');
+    if (!aiProvider.isAvailable()) {
+        logger.warn('financeAi: sin proveedor de IA para imagen');
         return null;
     }
 
-    const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: modeloFinanzas(), generationConfig: { responseMimeType: 'application/json' } });
-
     try {
-        const imagePart = { inlineData: { mimeType, data: imageBase64 } };
-        const result = await Promise.race([
-            model.generateContent([receipts.RECEIPT_PROMPT, imagePart]),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
-        ]);
-        const response = await result.response;
-        const text = response.text().trim();
+        // Foto del recibo como image_url (OpenRouter) o inlineData (Gemini directo), ver financeAiProvider.
+        const result = await aiProvider.chat({
+            messages: [{ role: 'user', content: [{ type: 'text', text: receipts.RECEIPT_PROMPT }, { type: 'image', mimeType, data: imageBase64 }] }],
+            jid: jidOf(userSession),
+            json: true,
+            timeoutMs: MEDIA_TIMEOUT_MS,
+        });
+        const text = result.text.trim();
         if (!text) return null;
         // Una sola llamada: total para registrar el gasto + productos para comparar precios entre tiendas.
         const receipt = receipts.parseReceiptJson(text);
