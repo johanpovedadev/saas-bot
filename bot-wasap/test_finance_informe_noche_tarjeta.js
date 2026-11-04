@@ -27,7 +27,8 @@ const sock = {
     sendMessage: async (jid, payload) => { sent.push(typeof payload === 'string' ? payload : payload.text); },
     getChatById: async () => null
 };
-const lastReport = () => sent[sent.length - 1] || '';
+// El último mensaje de TEXTO: después del informe puede ir su gráfica (#139), que no es texto.
+const lastReport = () => [...sent].reverse().find((m) => typeof m === 'string') || '';
 
 (async () => {
     try {

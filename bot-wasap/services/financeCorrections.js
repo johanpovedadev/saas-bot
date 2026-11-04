@@ -13,8 +13,8 @@
  * Funciones puras: reciben `fin` y la fecha de hoy; finance.flow.js solo las llama.
  */
 
-const { formatMoney } = require('../utils/financeMoney');
-const { parseAmountText } = require('../utils/financeAmount');
+const privacy = require('../utils/financePrivacy');
+const { parseAmountText, normalizeSpokenAmounts } = require('../utils/financeAmount');
 const { MEDIUM, mediumOf } = require('../utils/financeMedium');
 
 const DATA_PREFIX = 'leo:';
@@ -28,16 +28,19 @@ const FIELD_PROMPTS = Object.freeze({
 const CORRECTION_WINDOW_MS = 30 * 60 * 1000;   // "fue con tarjeta" y la respuesta a "¿Qué cambio?" valen 30 min
 // La tarjeta de crédito no baja el saldo (se descuenta al pagarla), igual que en la bandeja de correos.
 const MEDIUMS_THAT_MOVE_BALANCE = new Set([MEDIUM.BANK, MEDIUM.CASH, MEDIUM.TRANSFER]);
+// Vocabulario de medios (#144, bloque 2): Rappi/RappiCard/tarjeta → tarjeta; Nequi, Daviplata, Bancolombia,
+// transferencia, PSE → banco; efectivo / plata en mano → efectivo. "Envío" queda para cuando lo dicen así.
 const MEDIUM_WORDS = [
-    { medium: MEDIUM.CARD, re: /\b(tarjeta|credito|rappicard)\b/ },
-    { medium: MEDIUM.TRANSFER, re: /\b(envio|transferencia|transferi|nequi|daviplata)\b/ },
-    { medium: MEDIUM.BANK, re: /\b(banco|debito|bancolombia|davivienda|bbva|cuenta)\b/ },
+    { medium: MEDIUM.CARD, re: /\b(tarjeta|credito|rappicard|rappi)\b/ },
+    { medium: MEDIUM.BANK, re: /\b(banco|debito|bancolombia|davivienda|bbva|cuenta|nequi|daviplata|transferencia|transferi|pse)\b/ },
+    { medium: MEDIUM.TRANSFER, re: /\b(envio|envie|giro)\b/ },
     { medium: MEDIUM.CASH, re: /\b(efectivo|cash|plata en mano)\b/ },
 ];
 const MEDIUM_LABELS = Object.freeze({ [MEDIUM.CARD]: 'tarjeta', [MEDIUM.BANK]: 'banco', [MEDIUM.TRANSFER]: 'envío', [MEDIUM.CASH]: 'efectivo' });
 const PAYMENT_AFTER_SAVE = /^(?:fue |lo pague |la pague |pague |era |eso fue )?(?:con|en|por) (?:la |el )?([a-z ]+)$/;
 const QUANTITY = /^(\d{1,3})\s+(.+?)\s+(?:a\s+)?(\$?\s*\d[\d.,]*\s*(?:mil|k)?)\s+(?:cada una|cada uno|c\/u|cada)$/;
-const PART_SEPARATOR = /\s*(?:,|;|\s+y\s+)\s*/;
+// Comas, punto y coma, "y", y el punto seguido de un audio transcrito ("Almuerzo 14 mil. Pan 2 mil"; "30.000" no).
+const PART_SEPARATOR = /\s*(?:,|;|\s+y\s+|\.\s+)\s*/;
 
 function normalize(text) {
     return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -78,7 +81,8 @@ function splitEntryParts(text) {
  * (sin IA para el plan Gratis). Devuelve un resultado con `additional_transactions`, o null si no aplica (el mensaje
  * se interpreta como siempre).
  */
-async function interpretEntries(text, interpret) {
+async function interpretEntries(rawText, interpret) {
+    const text = normalizeSpokenAmounts(rawText);
     const parts = splitEntryParts(text);
     const quantity = parts.length === 1 ? parseQuantity(parts[0]) : null;
     if (parts.length === 1 && !quantity) return null;
@@ -139,7 +143,7 @@ function groupEntries(fin, group) {
 }
 
 function describeEntry(tx, fin) {
-    return `${tx.type === 'expense' ? '💸' : '💰'} ${formatMoney(tx.amount, fin)} — ${tx.description}`;
+    return `${tx.type === 'expense' ? '💸' : '💰'} ${privacy.money(tx.amount, fin)} — ${tx.description}`;
 }
 
 /** Borra todo lo que se guardó de ese mensaje y devuelve el saldo. Texto para el usuario. */
@@ -166,7 +170,7 @@ function startCorrection(fin, { group, index, field }, now) {
     if (index === null && entries.length > 1) {
         return {
             text: '✏️ ¿Cuál corrijo?',
-            buttons: entries.map((t, i) => [{ text: `${t.description} (${formatMoney(t.amount, fin)})`, data: `${DATA_PREFIX}corregir:${group}:${i}` }]),
+            buttons: entries.map((t, i) => [{ text: `${t.description} (${privacy.money(t.amount, fin)})`, data: `${DATA_PREFIX}corregir:${group}:${i}` }]),
         };
     }
     const position = index === null ? 0 : index;
@@ -188,7 +192,7 @@ function applyFieldChange(fin, tx, field, raw, today) {
     if (field === 'monto') {
         const amount = parseAmountText(value);
         if (!amount) return null;
-        return changeKeepingBalance(fin, tx, today, () => { tx.amount = amount; }, `el monto quedó en ${formatMoney(amount, fin)}`);
+        return changeKeepingBalance(fin, tx, today, () => { tx.amount = amount; }, `el monto quedó en ${privacy.money(amount, fin)}`);
     }
     if (field === 'medio') {
         const medium = parseMedium(value);
@@ -248,6 +252,19 @@ function applyPaymentAfterSave(fin, text, today, now) {
     return { text: confirmationAfterChange(fin, entries[0], label), buttons: entryButtons(fin.lastEntryGroup) };
 }
 
+/**
+ * corregir_ultimo de la IA (#143): cambia un campo del último registro (de un solo movimiento). { text, buttons }
+ * o null si no hay un último registro que se pueda corregir así.
+ */
+function correctLast(fin, field, value, today, now) {
+    if (!fin.lastEntryGroup || now - (fin.lastEntryAt || 0) > CORRECTION_WINDOW_MS) return null;
+    const entries = groupEntries(fin, fin.lastEntryGroup);
+    if (entries.length !== 1 || !FIELDS[field]) return null;
+    const label = applyFieldChange(fin, entries[0], field, value, today);
+    if (!label) return null;
+    return { text: confirmationAfterChange(fin, entries[0], label), buttons: entryButtons(fin.lastEntryGroup) };
+}
+
 /** Recuerda el último grupo guardado (para "fue con tarjeta"). */
 function rememberEntryGroup(fin, group, now) {
     fin.lastEntryGroup = group;
@@ -257,5 +274,5 @@ function rememberEntryGroup(fin, group, now) {
 module.exports = {
     parseQuantity, splitEntryParts, interpretEntries,
     entryButtons, parseEntryAction, deleteGroup, startCorrection, applyPendingCorrection, applyPaymentAfterSave,
-    rememberEntryGroup, parseMedium, balanceEffect,
+    rememberEntryGroup, parseMedium, balanceEffect, correctLast,
 };

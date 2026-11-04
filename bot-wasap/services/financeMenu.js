@@ -9,8 +9,10 @@
  */
 
 const { SUPPORTED_CURRENCIES, CURRENCY_LABELS } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 
 const MENU_PREFIX = 'leo:menu:';
+const REVEAL_DATA = 'leo:ver-montos';
 const BACK_DATA = 'menu';
 const BACK_ROW = Object.freeze([{ text: '⬅️ Volver', data: BACK_DATA }]);
 
@@ -26,10 +28,9 @@ const EXPENSE_PROMPT = '💸 Perfecto. Decime qué compraste y cuánto:\n\n_"18 
 const INCOME_PROMPT = '💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n_"Recibí 2 millones de sueldo"_\n_"Gané 300 mil por un trabajo"_';
 
 // Lo que hace la IA (fotos, audios) no está en el plan Gratis: se dice qué sí se puede, sin precios ni callejón.
-const NO_AI_TEXT = '🦁 Las fotos y los audios todavía no están en tu plan. Sin IA podés hacer casi todo:\n\n' +
-    '• Escribirme un gasto: _"almuerzo 15 mil"_\n' +
-    '• Ver tu resumen y tu meta\n' +
-    '• Ganar medallas por constancia';
+// Corto (#144, bloque 5): lo que sí puede hacer, en dos líneas.
+const NO_AI_TEXT = '🦁 Las fotos y los audios los leo con la IA, que no está en tu plan.\n' +
+    'Escribime el gasto y lo anoto igual: _"almuerzo 15 mil"_';
 
 // Mismo orden que el menú de texto de siempre: escribir 1 moneda, 2 feedback, 3 volver, 4 informes sigue igual.
 const SETTINGS_BUTTONS = [
@@ -69,7 +70,10 @@ function formatGoalScreen(fin, money, extraLines = []) {
     if (fin.goalTarget > 0) {
         const saved = Math.max(0, fin.balance || 0);
         const pct = Math.min(100, Math.round(saved / fin.goalTarget * 100));
-        lines.push(`Llevás ${money(saved)} de ${money(fin.goalTarget)} (${pct}%)`);
+        // Modo privado (#139): la meta en %, sin plata.
+        lines.push(privacy.hides(fin, privacy.KINDS.GOAL)
+            ? `Llevás el ${pct} % de tu meta`
+            : `Llevás ${money(saved)} de ${money(fin.goalTarget)} (${pct}%)`);
     } else {
         lines.push('Todavía no le pusiste monto: tocá *✏️ Cambiar monto* y te digo cuándo llegás.');
     }
@@ -88,6 +92,25 @@ function parseGoalScreenAction(text) {
 function isValidGoalName(name) {
     const t = String(name || '').trim();
     return t.length >= MIN_GOAL_NAME_LENGTH && /\p{L}/u.test(t) && !/^\d+$/.test(t);
+}
+
+/** Configuración con el botón del modo privado (#139): 5 = ocultar / mostrar la plata. */
+function settingsButtons(fin) {
+    const hidden = privacy.hides(fin, privacy.KINDS.BALANCE);
+    return [...SETTINGS_BUTTONS, [hidden
+        ? { text: '👀 Mostrar mi plata', data: 'mostrar saldo' }
+        : { text: '🙈 Ocultar mi plata', data: 'ocultar saldo' }]];
+}
+
+/** Botones del informe de la noche; con el modo privado, [👀 Ver montos] (solo ese mensaje, no lo apaga). */
+function nightReportButtons(fin) {
+    return privacy.hides(fin, privacy.KINDS.BALANCE)
+        ? [...NIGHT_REPORT_BUTTONS, [{ text: '👀 Ver montos', data: REVEAL_DATA }]]
+        : NIGHT_REPORT_BUTTONS;
+}
+
+function isRevealRequest(text) {
+    return String(text || '').trim() === REVEAL_DATA;
 }
 
 /** Agrega la fila "⬅️ Volver" a unos botones (o la deja sola). */
@@ -117,6 +140,6 @@ function goalChoiceButtons(goalOfferButtons) {
 module.exports = {
     MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, INCOME_PROMPT, NO_AI_TEXT,
     SETTINGS_BUTTONS, REPORT_PREF_TITLE, REPORT_PREF_BUTTONS, NIGHT_REPORT_BUTTONS, BACK_ROW,
-    withBack, parseMenuChoice, currencyButtons, goalChoiceButtons,
+    withBack, parseMenuChoice, currencyButtons, goalChoiceButtons, settingsButtons, nightReportButtons, isRevealRequest,
     GOAL_SCREEN_BUTTONS, INVALID_GOAL_NAME_TEXT, NEW_GOAL_PROMPT, formatGoalScreen, parseGoalScreenAction, isValidGoalName,
 };

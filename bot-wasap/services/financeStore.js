@@ -72,6 +72,10 @@ function rowToFinance(row) {
             : (Array.isArray(extra.loans) ? extra.loans : []))
         : [];
     // Reglas que Leo aprendió de las respuestas del usuario (números y comercios): cifradas como los movimientos.
+    // Modo privado (#139): cifrado como el resto de lo que dice algo de la plata del usuario.
+    const privacySettings = extra.privacy && financeCrypto.isEncrypted(extra.privacy)
+        ? JSON.parse(financeCrypto.decrypt(extra.privacy) || '{}')
+        : {};
     const learnedRules = extra.learnedRules && financeCrypto.isEncrypted(extra.learnedRules)
         ? JSON.parse(financeCrypto.decrypt(extra.learnedRules) || '{}')
         : {};
@@ -101,6 +105,12 @@ function rowToFinance(row) {
         goalType: extra.goalType || '',
         // Novedades de Leo ya vistas (#129): la versión más nueva que le llegó.
         lastNewsSeen: extra.lastNewsSeen || '',
+        // 15 días de IA gratis (#143, parte C).
+        aiTrialUntil: extra.aiTrialUntil || 0,
+        aiTrialReturnUsed: extra.aiTrialReturnUsed || false,
+        aiTrial: extra.aiTrial || null,
+        privateMode: Boolean(privacySettings.privateMode),
+        privateModeAll: Boolean(privacySettings.privateModeAll),
         lastReportDate: extra.lastReportDate || '',
         milestonesSent: extra.milestonesSent || [],
         medals: extra.medals || [],
@@ -149,7 +159,8 @@ function financeToRow(jid, fin) {
     const rulesEnc = financeCrypto.encrypt(JSON.stringify(fin.learnedRules || {}));
     const goalMonthlyEnc = financeCrypto.encryptAmount(fin.goalMonthly || 0);
     const cardStatementEnc = fin.cardStatement ? financeCrypto.encrypt(JSON.stringify(fin.cardStatement)) : '';
-    if (cardStatementEnc === null || balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null || goalMonthlyEnc === null) {
+    const privacyEnc = financeCrypto.encrypt(JSON.stringify({ privateMode: Boolean(fin.privateMode), privateModeAll: Boolean(fin.privateModeAll) }));
+    if (privacyEnc === null || cardStatementEnc === null || balanceEnc === null || todayEnc === null || txsEnc === null || goalTargetEnc === null || loansEnc === null || rulesEnc === null || goalMonthlyEnc === null) {
         logger.error(`financeStore: cifrado no disponible (Falta FINANCE_ENCRYPTION_KEY), no se persisten datos de ${jid}`);
         return null;
     }
@@ -178,6 +189,10 @@ function financeToRow(jid, fin) {
             goalTempName: fin.goalTempName || '',
             goalType: fin.goalType || '',
             lastNewsSeen: fin.lastNewsSeen || '',
+            aiTrialUntil: fin.aiTrialUntil || 0,
+            aiTrialReturnUsed: fin.aiTrialReturnUsed || false,
+            aiTrial: fin.aiTrial || null,
+            privacy: privacyEnc,
             lastReportDate: fin.lastReportDate || '',
             milestonesSent: fin.milestonesSent || [],
             medals: fin.medals || [],

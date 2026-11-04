@@ -7,7 +7,7 @@
  * sin inventar cifras; las sugerencias salen de reglas sobre esos mismos números.
  */
 
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
 const { DISCLAIMER } = require('../utils/financeDisclaimer');
 const cardStatement = require('./financeCardStatement');
 const { todayInBogota } = require('../utils/financeDate');
@@ -105,17 +105,17 @@ function savingTips(report, fin) {
     const topAnt = report.antSpending[0];
     if (topAnt) {
         const saving = Math.round(topAnt.total * SAVING_ON_ANT_SPENDING);
-        tips.push(`🐜 *${topAnt.name}* se repite ${topAnt.count} veces (${formatMoney(topAnt.total, fin)}). Si lo bajás a la mitad, te ahorrás ~${formatMoney(saving, fin)} al mes.`);
+        tips.push(`🐜 *${topAnt.name}* se repite ${topAnt.count} veces (${privacy.money(topAnt.total, fin)}). Si lo bajás a la mitad, te ahorrás ~${privacy.money(saving, fin)} al mes.`);
     }
     const top = report.byCategory[0];
     if (top && top.share >= TOP_CATEGORY_ALERT_SHARE) {
         tips.push(`${CATEGORY_EMOJI[top.category] || '🧾'} *${top.category}* es el ${top.share}% de lo que gastás. Es donde más rinde recortar.`);
     }
     if (report.byNeed[NEED.OPTIONAL] > 0) {
-        tips.push(`✂️ Marcaste ${formatMoney(report.byNeed[NEED.OPTIONAL], fin)} como prescindible: es lo primero que podés quitar.`);
+        tips.push(`✂️ Marcaste ${privacy.money(report.byNeed[NEED.OPTIONAL], fin)} como prescindible: es lo primero que podés quitar.`);
     }
     if (report.cardOwed > 0 && (fin.balance || 0) - report.cardOwed < 0) {
-        tips.push(`⚠️ Lo de la tarjeta (${formatMoney(report.cardOwed, fin)}) es más que lo que te queda: apartá plata para pagarla.`);
+        tips.push(`⚠️ Lo de la tarjeta (${privacy.money(report.cardOwed, fin)}) es más que lo que te queda: apartá plata para pagarla.`);
     }
     return tips;
 }
@@ -125,7 +125,7 @@ function incomeTips(report, fin) {
     const tips = [];
     const main = report.incomeBySource[0];
     if (main) {
-        tips.push(`💰 Tu ingreso más grande este mes fue *${main.name}* (${main.count} ${main.count === 1 ? 'vez' : 'veces'}, ${formatMoney(main.total, fin)}). Pensá cómo repetirlo o ampliarlo una vez más por semana.`);
+        tips.push(`💰 Tu ingreso más grande este mes fue *${main.name}* (${main.count} ${main.count === 1 ? 'vez' : 'veces'}, ${privacy.money(main.total, fin)}). Pensá cómo repetirlo o ampliarlo una vez más por semana.`);
     } else {
         tips.push('💰 Este mes no registraste ingresos: anotá todo lo que te entra para ver cuál fuente vale la pena crecer.');
     }
@@ -139,10 +139,10 @@ function incomeTips(report, fin) {
 
 function formatMediumLines(report, fin) {
     const lines = [];
-    if (report.byMedium[MEDIUM.CARD] > 0) lines.push(`   💳 Tarjeta (lo pagás a fin de mes): ${formatMoney(report.byMedium[MEDIUM.CARD], fin)}`);
-    for (const [account, total] of Object.entries(report.bankByAccount)) lines.push(`   🏦 ${account}: ${formatMoney(total, fin)}`);
-    if (report.byMedium[MEDIUM.TRANSFER] > 0) lines.push(`   📤 Envíos: ${formatMoney(report.byMedium[MEDIUM.TRANSFER], fin)}`);
-    if (report.byMedium[MEDIUM.CASH] > 0) lines.push(`   💵 Efectivo: ${formatMoney(report.byMedium[MEDIUM.CASH], fin)}`);
+    if (report.byMedium[MEDIUM.CARD] > 0) lines.push(`   💳 Tarjeta (lo pagás a fin de mes): ${privacy.money(report.byMedium[MEDIUM.CARD], fin)}`);
+    for (const [account, total] of Object.entries(report.bankByAccount)) lines.push(`   🏦 ${account}: ${privacy.money(total, fin)}`);
+    if (report.byMedium[MEDIUM.TRANSFER] > 0) lines.push(`   📤 Envíos: ${privacy.money(report.byMedium[MEDIUM.TRANSFER], fin)}`);
+    if (report.byMedium[MEDIUM.CASH] > 0) lines.push(`   💵 Efectivo: ${privacy.money(report.byMedium[MEDIUM.CASH], fin)}`);
     return lines;
 }
 
@@ -150,7 +150,7 @@ function formatMediumLines(report, fin) {
 function formatPendingReview(pending, fin, limit = MAX_PENDING_SHOWN) {
     if (pending.length === 0) return '';
     const shown = pending.slice(0, limit);
-    const lines = shown.map((tx, i) => `${i + 1}) ${tx.description} · ${formatMoney(tx.amount, fin)} · ${tx.date.slice(5).replace('-', '/')}`);
+    const lines = shown.map((tx, i) => `${i + 1}) ${tx.description} · ${privacy.money(tx.amount, fin)} · ${tx.date.slice(5).replace('-', '/')}`);
     return `❓ *Sin clasificar (${pending.length})* — contame en qué fue:\n${lines.join('\n')}\n` +
         `Respondé con el número y qué fue, así: *1 mercado urgente*\n` +
         `_(urgente · necesario · prescindible: así sé qué se puede quitar)_\n`;
@@ -158,7 +158,9 @@ function formatPendingReview(pending, fin, limit = MAX_PENDING_SHOWN) {
 
 /** Mensaje completo de "¿En qué se va tu plata?". */
 function formatSpendingReport(report, fin) {
-    const money = (amount) => formatMoney(amount, fin);
+    // Modo privado (#139): el saldo se oculta; los gastos solo con "ocultar todo" (quedan los porcentajes).
+    const money = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
+    const balance = privacy.moneyFn(fin, privacy.KINDS.BALANCE);
     const out = [`📊 *¿En qué se va tu plata, ${fin.name}?*`, `_Últimos ${report.days || REPORT_DAYS} días_`, ''];
 
     if (report.expenseCount === 0) {
@@ -186,11 +188,11 @@ function formatSpendingReport(report, fin) {
         }
     }
 
-    out.push('', `💵 Te queda: *${money(fin.balance || 0)}*`);
+    out.push('', `💵 Te queda: *${balance(fin.balance || 0)}*`);
     if (report.cardInfo) {
         out.push(cardStatement.formatOwed(report.cardInfo, fin));
     } else if (report.cardOwed > 0) {
-        out.push(`💳 Compras con tarjeta del mes: ${money(report.cardOwed)} → te quedaría ${money((fin.balance || 0) - report.cardOwed)} al pagarlas`);
+        out.push(`💳 Compras con tarjeta del mes: ${money(report.cardOwed)} → te quedaría ${balance((fin.balance || 0) - report.cardOwed)} al pagarlas`);
     }
 
     if (report.expenseCount > 0) {

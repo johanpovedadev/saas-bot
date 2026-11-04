@@ -2,7 +2,7 @@
 
 const PHASE = require('../../utils/phases');
 const messageButtons = require('../../utils/messageButtons');
-const { say, sendImage } = require('../../services/bot_core');
+const { say: coreSay, sendImage } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const financeAi = require('../../services/financeAi');
 const financeStore = require('../../services/financeStore');
@@ -24,6 +24,12 @@ const financeEntry = require('../../services/financeEntry');
 const financeCorrections = require('../../services/financeCorrections');
 const financeMenu = require('../../services/financeMenu');
 const financeNews = require('../../services/financeNews');
+const privacy = require('../../utils/financePrivacy');
+const financeCharts = require('../../services/financeCharts');
+const financeAiProvider = require('../../services/financeAiProvider');
+const financeAiTrial = require('../../services/financeAiTrial');
+const financePresenter = require('../../services/financePresenter');
+const financeFrequent = require('../../services/financeFrequent');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -31,17 +37,34 @@ const cardStatement = require('../../services/financeCardStatement');
 const { parseAmountText } = require('../../utils/financeAmount');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
+/**
+ * Toda respuesta de Leo pasa por el presentador (#144, bloque 1): máximo 3 líneas (lo demás detrás de
+ * "➕ Ver más"), una sola pregunta, sin "escribí el número" y sin repetir el saludo del día. `options.full`
+ * deja el mensaje entero (informes y pantallas que la persona pidió para leer).
+ */
+async function say(sock, jid, text, ctx, options = {}) {
+    const today = todayInBogota();
+    if (!ctx.leoGreetedOn) ctx.leoGreetedOn = {};
+    if (!ctx.leoMore) ctx.leoMore = {};
+    const shown = financePresenter.present(text, { full: options.full, greetedToday: ctx.leoGreetedOn[jid] === today });
+    if (shown.greeted) ctx.leoGreetedOn[jid] = today;
+    const buttons = [...(options.buttons || [])];
+    if (shown.more) {
+        ctx.leoMore[jid] = shown.more;
+        buttons.push([financePresenter.MORE_BUTTON]);
+    }
+    const { full, ...rest } = options;
+    return coreSay(sock, jid, shown.text, ctx, buttons.length > 0 ? { ...rest, buttons } : (Object.keys(rest).length ? rest : undefined));
+}
+
+/** say() con el mensaje entero: informes y pantallas que la persona pidió para leer. */
+function sayFull(sock, jid, text, ctx, options = {}) {
+    return say(sock, jid, text, ctx, { ...options, full: true });
+}
+
 const FIN_PHASES = [
     PHASE.FIN_ONBOARDING, PHASE.FIN_REFERRAL_ONBOARDING, PHASE.FIN_DIAGNOSTIC, PHASE.FIN_GOAL_ONBOARDING, PHASE.FIN_GOALS,
     PHASE.FIN_CHECKIN, PHASE.FIN_MAIN, PHASE.FIN_SETTINGS, PHASE.FIN_SETTINGS_CURRENCY, PHASE.FIN_SETTINGS_REPORTS, PHASE.FIN_FEEDBACK
-];
-
-const CONFIRM_VARIANTS = [
-    'Anotado 🦁 Vamos sumando.',
-    'Recibido. El león nunca olvida 🔥',
-    'Guardado. Así se hace.',
-    'Listo, ya quedó contigo 🦁',
-    'Hecho. Un paso más cerca de tus metas 💪'
 ];
 
 // "menú", "cancelar"... en cualquier paso (#122, escalón A): limpia la fase y lo pendiente y vuelve al menú.
@@ -184,7 +207,8 @@ function getUserTier(jid) {
  */
 function canUseAi(jid) {
     try {
-        return financeAdmin.canConsumeAi(jid);
+        // Un plan con IA, o los 15 días de IA gratis (#143, parte C).
+        return financeAdmin.canConsumeAi(jid) || financeAiTrial.isActive(financeStore.loadFinance(jid), Date.now());
     } catch (e) {
         logger.error(`[canUseAi] ${jid}: ${e.message}`);
         return false;
@@ -343,7 +367,7 @@ async function showPremiumRequired(sock, jid, ctx) {
     const waLink = payment.adminWhatsapp
         ? `https://wa.me/${payment.adminWhatsapp}?text=${encodeURIComponent('Quiero pagar mi Leo Pro')}`
         : '';
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Tu plan Gratis no incluye IA.*\n\n` +
         `Para registrar con IA (texto, fotos de facturas y notas de voz), elegí un plan:\n\n` +
         `✨ *Basic* — $${payment.basicPrice.toLocaleString('es-CO')} COP/mes\n` +
@@ -409,6 +433,13 @@ async function handlePm2CommandTelegram(sock, jid, action, businessKeyRaw, ctx) 
 async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
     if (!isAdminJid(jid)) return false;
     const t = (text || '').trim();
+
+    // /costo_ia (#143): cuánto va costando la IA de Leo (hoy, el mes y por usuario), sin textos de nadie.
+    if (/^\/?costo_ia$/i.test(t)) {
+        const summary = financeAiProvider.costSummary(financeAiProvider.readUsage(), todayInBogota());
+        await say(sock, jid, financeAiProvider.formatCostSummary(summary), ctx);
+        return true;
+    }
 
     // Prender/apagar otros bots (WhatsApp) desde el chat de Telegram. Solo el
     // admin de finanzas (isAdminJid ya validado arriba) — el dueño dinamico
@@ -630,6 +661,8 @@ async function handle(sock, jid, text, userSession, ctx) {
         }
     }
     const fin = initFinance(userSession);
+    // El proveedor de IA registra el costo por usuario (hasheado), así que la sesión lleva su jid (#143).
+    if (!userSession.jid) userSession.jid = jid;
     // Un número escrito justo después de unos botones equivale a tocar ese botón (#122, escalón 0).
     const t = messageButtons.resolveButtonReply(ctx, jid, (text || '').trim()).trim();
     if (!t) return;
@@ -652,7 +685,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         if (fin.name && !canUseAi(jid)) {
             return await showQuickMenu(sock, jid, fin, ctx);
         }
-        return await say(sock, jid,
+        return await sayFull(sock, jid,
             `😊 Podés decirme cosas como:\n\n` +
             `💸 *"Compré 18 mil en almuerzo"*\n` +
             `💰 *"Recibí 2 millones de sueldo"*\n` +
@@ -681,11 +714,28 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (financeWelcome.isPriceQuestion(t)) {
         return await say(sock, jid, financeWelcome.PRICE_ANSWER, ctx);
     }
+    // Modo privado (#139): "ocultar saldo" / "ocultar todo" / "mostrar saldo", en cualquier paso.
+    const privacyCommand = privacy.parsePrivacyCommand(t);
+    if (privacyCommand) {
+        const reply = privacy.applyPrivacyCommand(fin, privacyCommand);
+        financeStore.saveFinance(jid, fin);
+        return await say(sock, jid, reply, ctx);
+    }
+    // [👀 Ver montos] debajo del informe: ese informe otra vez con los montos, sin apagar el modo privado.
+    if (financeMenu.isRevealRequest(t)) {
+        return await generateNightReport(sock, jid, privacy.revealed(fin), ctx, { reveal: true });
+    }
     const spokenName = financeWelcome.parseNameCommand(t);
     if (spokenName) {
         fin.name = spokenName;
         financeStore.saveFinance(jid, fin);
         return await say(sock, jid, `🦁 Listo, *${fin.name}*. ¡Un gusto!`, ctx);
+    }
+    // ➕ Ver más (#144): lo que el presentador dejó para después, entero.
+    if (t === financePresenter.MORE_DATA) {
+        const more = (ctx.leoMore && ctx.leoMore[jid]) || '';
+        if (ctx.leoMore) delete ctx.leoMore[jid];
+        return await sayFull(sock, jid, more || '🦁 Eso era todo.', ctx);
     }
     const menuChoice = financeMenu.parseMenuChoice(t);
     if (menuChoice) {
@@ -702,6 +752,14 @@ async function handle(sock, jid, text, userSession, ctx) {
 
     if (fin.name && userSession.phase !== PHASE.FIN_ONBOARDING && isBackToMenu(t)) {
         return await backToMenu(sock, jid, userSession, ctx, fin);
+    }
+
+    // Un botón de "lo de siempre" (#144, bloque 3): se registra con su categoría y medio de siempre.
+    const frequentTap = financeFrequent.parseFrequentTap(t, fin, todayInBogota());
+    if (frequentTap) {
+        fin.pendingConfirm = null;
+        userSession.phase = PHASE.FIN_MAIN;
+        return await saveEntryGroup(sock, jid, [frequentTap], fin, ctx);
     }
 
     // [✏️ Corregir] [🗑️ Borrar] de un registro, la respuesta a "¿Qué cambio?" y "fue con tarjeta" (#122, escalón B).
@@ -807,7 +865,7 @@ async function handle(sock, jid, text, userSession, ctx) {
             fin.balance = amount;
             financeNightPolicy.markBalanceKnown(fin, todayInBogota());
             financeStore.saveFinance(jid, fin);
-            return await say(sock, jid, `✅ Listo, tu saldo quedó en ${formatMoney(amount, fin)}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
+            return await say(sock, jid, `✅ Listo, tu saldo quedó en ${privacy.money(amount, fin, { kind: privacy.KINDS.BALANCE })}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
         }
     }
     // "pagué la tarjeta": baja el saldo sin contarlo como gasto (las compras ya se anotaron). Sin IA.
@@ -826,10 +884,15 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await say(sock, jid, reply, ctx);
     }
 
+    // "gráfica" / "ver gráfica" / "resumen en imagen" (#139). Sin IA.
+    if (CHART_COMMAND.test(command)) {
+        return await sendMonthChart(sock, jid, ctx, fin);
+    }
+
     if (MEDALS_COMMAND.test(command)) {
         financeMedals.awardNew(fin);
         financeStore.saveFinance(jid, fin);
-        return await say(sock, jid, financeMedals.formatMedalList(fin), ctx);
+        return await sayFull(sock, jid, financeMedals.formatMedalList(fin), ctx);
     }
     if (SHARE_COMMAND.test(command)) {
         await sendShareCard(sock, jid, fin, ctx);
@@ -846,7 +909,7 @@ async function handle(sock, jid, text, userSession, ctx) {
         fin.goalMonthly = monthlyGoal;
         financeStore.saveFinance(jid, fin);
         const projection = financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin);
-        return await say(sock, jid, `✅ Listo: ${formatMoney(monthlyGoal, fin)} al mes para *${fin.goalName}*.` + (projection ? `\n${projection}` : ''), ctx);
+        return await say(sock, jid, `✅ Listo: ${privacy.money(monthlyGoal, fin, { kind: privacy.KINDS.SAVING })} al mes para *${fin.goalName}*.` + (projection ? `\n${projection}` : ''), ctx);
     }
 
     // "¿dónde está más barata la leche?" / "precio leche": con los recibos del propio usuario, sin IA.
@@ -880,6 +943,8 @@ async function startExpressAccount(sock, jid, text, userSession, ctx, fin) {
     fin.name = financeWelcome.displayName(userSession.telegramFirstName);
     fin.expressWelcome = true;
     fin.trialStart = fin.trialStart || Date.now();
+    // 15 días de Leo con IA para los nuevos (#143, parte C).
+    if (!fin.aiTrialUntil) financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.NEW);
     if (!fin.referralCode) fin.referralCode = financeReferral.getOrCreateCode(jid);
     userSession.phase = PHASE.FIN_MAIN;
     userSession.errorCount = 0;
@@ -1103,10 +1168,10 @@ async function handleGoalOnboarding(sock, jid, text, userSession, ctx, fin) {
     // queda sin volver (ver informe de retencion). Se cambia el eje de "que
     // hacer ahora" a "que vas a lograr" - el primer registro se enmarca como
     // el paso 1 hacia la meta, no como una tarea suelta.
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *${fin.goalName}* — ¡esa es tu meta! ` +
         (fin.goalTarget > 0
-            ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${formatMoney(fin.goalTarget, fin)} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
+            ? `Imaginate viendo, día a día, cómo te acercás de verdad a ${privacy.money(fin.goalTarget, fin, { kind: privacy.KINDS.GOAL })} — no calculando a ojo, sino sabiendo exacto. Vamos paso a paso.\n\n`
             : `Cuando quieras decime cuánta plata necesitás y armamos el camino juntos.\n\n`) +
         `Tu primer paso es registrar cualquier movimiento de hoy — así de simple:\n\n` +
         `_"Compré 18 mil en almuerzo"_\n` +
@@ -1142,13 +1207,13 @@ async function handleCheckin(sock, jid, text, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     const txCount = fin.transactions.length;
     const goalLine = fin.goalName && fin.goalTarget
-        ? `🎯 Avance de meta "${fin.goalName}": ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
+        ? `🎯 Avance de meta "${fin.goalName}": ${privacy.money(fin.balance || 0, fin, { kind: privacy.KINDS.GOAL })} de ${privacy.money(fin.goalTarget, fin, { kind: privacy.KINDS.GOAL })}\n`
         : '';
     await say(sock, jid,
         `🦁 ¡Qué bueno verte de nuevo, *${fin.name}*!\n\n` +
         (txCount > 0
             ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora.\n` +
-              `💵 Balance: ${formatMoney(fin.balance, fin)}\n` +
+              `💵 Balance: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}\n` +
               goalLine +
               `🔥 ${fin.streak >= 2 ? fin.streak + ' días seguidos\n' : ''}\n`
             : `Todavía no has registrado nada.\n\n`),
@@ -1239,7 +1304,7 @@ async function handleGoals(sock, jid, text, userSession, ctx, fin) {
                 }
                 financeStore.saveFinance(jid, fin);
                 await say(sock, jid,
-                    `🎯 *Meta guardada!* Vas a ahorrar ${formatMoney(val, fin)} para "${fin.goalName}".\n\n` +
+                    `🎯 *Meta guardada!* Vas a ahorrar ${privacy.money(val, fin, { kind: privacy.KINDS.GOAL })} para "${fin.goalName}".\n\n` +
                     `Yo voy a recordártelo y vamos viendo el progreso juntos. ¡Empecemos!\n\n` +
                     `Podés registrar tu primer movimiento:\n` +
                     `_"Compré 15 mil en desayuno"_ o _"Recibí 500 mil de freelance"_`,
@@ -1264,7 +1329,9 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     switch (choice) {
         case 'gasto':
-            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
+            // Lo de siempre (#144, bloque 3): los gastos que más repite, en un toque.
+            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx,
+                { buttons: [...financeFrequent.frequentButtons(fin, todayInBogota()), financeMenu.BACK_ROW] });
         case 'ingreso':
             return await say(sock, jid, financeMenu.INCOME_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
         case 'resumen':
@@ -1274,7 +1341,7 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
         case 'medallas':
             financeMedals.awardNew(fin);
             financeStore.saveFinance(jid, fin);
-            return await say(sock, jid, financeMedals.formatMedalList(fin), ctx, { buttons: [financeMenu.BACK_ROW] });
+            return await sayFull(sock, jid, financeMedals.formatMedalList(fin), ctx, { buttons: [financeMenu.BACK_ROW] });
         default:
             return await showSettingsMenu(sock, jid, userSession, ctx);
     }
@@ -1291,7 +1358,7 @@ async function showGoalsScreen(sock, jid, userSession, ctx, fin) {
         const extra = fin.goalTarget > 0
             ? [financeGoals.formatProjection(financeGoals.projectGoal(fin, today), fin), financeGoals.formatNextStep(financeGoals.nextStep(fin, today), fin)]
             : [];
-        return await say(sock, jid, financeMenu.formatGoalScreen(fin, (n) => formatMoney(n, fin), extra), ctx,
+        return await sayFull(sock, jid, financeMenu.formatGoalScreen(fin, (n) => formatMoney(n, fin), extra), ctx,
             { buttons: financeMenu.GOAL_SCREEN_BUTTONS });
     }
     userSession.phase = PHASE.FIN_GOALS;
@@ -1310,7 +1377,8 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
         `🦁 ${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]}, *${fin.name}*!`;
     await say(sock, jid,
         `${greeting}\n\n${financeMenu.MENU_PROMPT}`,
-        ctx, { buttons: financeMenu.MAIN_MENU_BUTTONS });
+        // Lo de siempre va después del menú: así los números de siempre (1 gasto ... 6 configuración) no cambian.
+        ctx, { buttons: [...financeMenu.MAIN_MENU_BUTTONS, ...financeFrequent.frequentButtons(fin, todayInBogota())] });
 }
 
 /**
@@ -1323,7 +1391,9 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
 const RECOGNIZED_INTENTS = new Set([
     'register_expense', 'register_income', 'register_loan', 'query_loans', 'query',
     'chat', 'help', 'goal_query', 'upgrade', 'health_score', 'goals',
-    'referral_info', 'referral_use', 'apoyar', 'configuracion'
+    'referral_info', 'referral_use', 'apoyar', 'configuracion',
+    // Herramientas de la IA (#143, parte B)
+    'ask_amount', 'correct_last', 'spending_report', 'set_goal'
 ]);
 
 async function applyIntent(sock, jid, result, userSession, ctx, fin) {
@@ -1342,7 +1412,11 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
         case 'register_income': {
             const type = result.intent === 'register_expense' ? 'expense' : 'income';
             const cat = result.category || (type === 'expense' ? 'Otros' : 'Ingreso');
-            const desc = result.description || (type === 'expense' ? 'Compra' : 'Ingreso');
+            // Lo que el mensaje ya dice (#144, bloque 2): medio de pago y día se guardan sin preguntar, y no
+            // quedan pegados a la descripción ("almuerzo 15 mil con la Rappi ayer").
+            const details = financeEntry.extractDetails(result.sourceText || '', todayInBogota());
+            const medium = result.medium || details.medium;
+            const desc = financeEntry.cleanDetailWords(result.description || (type === 'expense' ? 'Compra' : 'Ingreso'), { dated: Boolean(details.date) });
             // Si el mensaje reportó VARIAS transacciones a la vez (ej: "gasté
             // 20mil en comida y 15mil en transporte"), las demás vienen en
             // additional_transactions - se validan y se guardan en cola junto
@@ -1354,7 +1428,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     type: t.type,
                     amount: Number(t.amount),
                     category: t.category || (t.type === 'expense' ? 'Otros' : 'Ingreso'),
-                    description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso')
+                    description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso'),
+                    medium: t.medium
                 }));
             // Claro (monto y descripción) → se guarda de una, con [✏️ Corregir] [🗑️ Borrar] [📋 Menú] (#122, escalón B).
             // Dudoso → "¿Es correcto?" como antes.
@@ -1365,6 +1440,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     amount: result.amount,
                     category: cat,
                     description: desc,
+                    medium,
+                    entryDate: details.date,
                     date: result.date || 'hoy',
                     extra
                 };
@@ -1376,7 +1453,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             } else if (result.amount > 0) {
                 // Si es el total de la foto de un recibo, se guardan sus productos (igual que al confirmar con "sí").
                 const receiptExtra = financeReceipts.receiptExtraFor(userSession, { type, amount: result.amount });
-                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc }, ...extra], fin, ctx, receiptExtra);
+                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc, medium, date: details.date }, ...extra.map((t) => ({ ...t, date: details.date }))], fin, ctx, receiptExtra);
             } else {
                 await say(sock, jid, result.response ||
                     (type === 'expense'
@@ -1418,18 +1495,47 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             // "¿Cómo voy con mi meta?" también dice en qué fecha llega (#83).
             const projection = result.intent === 'goal_query' && fin.goalTarget > 0
                 ? financeGoals.formatProjection(financeGoals.projectGoal(fin, todayInBogota()), fin) : '';
-            const text = projection ? `${result.response}\n\n${projection}` : result.response;
+            const aiText = result.fromAi ? privacy.maskAllAmounts(result.response, fin) : result.response;
+            const text = projection ? `${aiText}\n\n${projection}` : aiText;
             // Si la respuesta de la IA da consejos de plata, va con el aviso de que Leo no es asesor financiero.
             await say(sock, jid, withDisclaimer(text), ctx);
             break;
         }
+
+        // Herramientas de la IA (#143, parte B)
+        case 'ask_amount':
+            await say(sock, jid, result.response, ctx);
+            break;
+
+        case 'correct_last': {
+            const corrected = financeCorrections.correctLast(fin, result.field, result.value, todayInBogota(), Date.now());
+            if (corrected) {
+                financeStore.saveFinance(jid, fin);
+                await say(sock, jid, corrected.text, ctx, { buttons: corrected.buttons });
+            } else {
+                await say(sock, jid, '✏️ No encontré un registro reciente para corregir. Tocá *✏️ Corregir* debajo del gasto 🦁', ctx);
+            }
+            break;
+        }
+
+        case 'spending_report':
+            await sendSpendingReport(sock, jid, ctx, fin);
+            break;
+
+        case 'set_goal':
+            fin.goalName = result.goalName || fin.goalName || 'Mi meta';
+            fin.goalType = getGoalType(fin.goalName).key;
+            fin.goalTarget = result.amount;
+            financeStore.saveFinance(jid, fin);
+            await showGoalsScreen(sock, jid, userSession, ctx, fin);
+            break;
 
         case 'upgrade':
             await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
             break;
 
         case 'health_score':
-            await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
+            await sayFull(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx);
             break;
 
         case 'goals':
@@ -1486,7 +1592,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
             case '3':
                 return await handleMenuChoice(sock, jid, 'resumen', userSession, ctx, fin);
             case '4':
-                await say(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx, { buttons: [financeMenu.BACK_ROW] });
+                await sayFull(sock, jid, withDisclaimer(financeScore.buildHealthMessage(fin), { force: true }), ctx, { buttons: [financeMenu.BACK_ROW] });
                 return;
             case '5':
                 return await handleMenuChoice(sock, jid, 'meta', userSession, ctx, fin);
@@ -1518,6 +1624,7 @@ async function handleFreeUser(sock, jid, t, userSession, ctx, fin) {
         await showQuickMenu(sock, jid, fin, ctx);
         return;
     }
+    result.sourceText = t;
     await applyIntent(sock, jid, result, userSession, ctx, fin);
     if (result.intent === 'chat' || result.intent === 'help' || result.intent === 'onboarding_name') {
         await showQuickMenu(sock, jid, fin, ctx);
@@ -1528,11 +1635,16 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     // Consume cupo de IA (Basic). Master ilimitado; free nunca llega aquí por el
     // gate (usa handleFreeUser). Si el cupo se agotó (p.ej. media de una llamada
     // previa), bloquea.
-    const consumption = financeAdmin.consumeAiUsage(jid);
+    // Primero el plan; si no tiene, los 15 días de IA gratis (tope de 300 interacciones, #143 parte C).
+    const fromTrial = !financeAdmin.canConsumeAi(jid);
+    // En la prueba, sin ningún proveedor de IA configurado: lo mismo que el plan Gratis, sin gastar interacciones.
+    if (fromTrial && !financeAiProvider.isAvailable()) return await handleFreeUser(sock, jid, text, userSession, ctx, fin);
+    const consumption = fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid);
     if (!consumption.allowed) {
         await showPremiumRequired(sock, jid, ctx);
         return;
     }
+    if (fromTrial) financeStore.saveFinance(jid, fin);
 
     const result = await financeAi.interpret(text, userSession);
 
@@ -1544,6 +1656,7 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
         return;
     }
 
+    result.sourceText = text;
     await applyIntent(sock, jid, result, userSession, ctx, fin);
 }
 
@@ -1612,7 +1725,7 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         } else {
             // Si el gasto viene de la foto de un recibo, se guardan sus productos para comparar precios entre tiendas.
             const receiptExtra = financeReceipts.receiptExtraFor(userSession, confirm);
-            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description },
+            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description, medium: confirm.medium, date: confirm.entryDate },
                 ...(Array.isArray(confirm.extra) ? confirm.extra : [])];
             await saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra);
         }
@@ -1644,7 +1757,7 @@ async function saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra = {}) {
         const e = entries[i];
         const isLast = i === entries.length - 1;
         await saveAndConfirm(sock, jid, e.type, e.amount, e.category, e.description, fin, ctx,
-            { ...(i === 0 ? receiptExtra : {}), entryGroup: group },
+            { ...(i === 0 ? receiptExtra : {}), ...(e.medium ? { medium: e.medium } : {}), ...(e.date ? { date: e.date } : {}), entryGroup: group },
             isLast ? { buttons: financeCorrections.entryButtons(group) } : {});
     }
     financeCorrections.rememberEntryGroup(fin, group, Date.now());
@@ -1664,6 +1777,9 @@ async function handleEntryAction(sock, jid, action, ctx, fin) {
 }
 
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
+    // Volvió después de 7 días o más sin registrar: 15 días de IA, una sola vez (#143, parte C). Se mira antes
+    // de guardar este movimiento, y no aplica a quien ya tiene IA por su plan.
+    const backFromBreak = !financeAdmin.canConsumeAi(jid) && financeAiTrial.returnTrialDue(fin, todayInBogota(), Date.now());
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1676,14 +1792,9 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ...extra
     };
     fin.transactions.push(tx);
-    if (type === 'expense') {
-        fin.balance -= amount;
-        fin.todaySpending += amount;
-    } else {
-        fin.balance += amount;
-    }
-
-    const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
+    // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
+    fin.balance += financeCorrections.balanceEffect(tx);
+    if (type === 'expense' && tx.date === todayInBogota()) fin.todaySpending += amount;
 
     // #8 — racha (con protector y niveles, #85)
     const streakEvent = bumpStreak(fin);
@@ -1692,11 +1803,11 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     // #7 — saldo negativo: si solo hay gastos, mostrar gasto del día
     const hasIncome = fin.transactions.some(t => t.type === 'income');
     const balanceLine = !hasIncome && fin.balance < 0
-        ? `💸 Comprado hoy: ${formatMoney(fin.todaySpending, fin)}`
-        : `💵 Saldo: ${formatMoney(fin.balance, fin)}`;
+        ? `💸 Comprado hoy: ${privacy.money(fin.todaySpending, fin)}`
+        : `💵 Saldo: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}`;
 
     const todayMsg = fin.todaySpending > 0
-        ? `📊 Hoy: ${formatMoney(fin.todaySpending, fin)}\n`
+        ? `📊 Hoy: ${privacy.money(fin.todaySpending, fin)}\n`
         : '';
     // Racha protegida: si acaba de reiniciar en 1 pero ya tenia una racha
     // mejor antes, no se muestra como si arrancara de cero — se reconoce lo
@@ -1713,27 +1824,30 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const milestoneMsg = fin.streak === 5 && !isNewRecord ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 && !isNewRecord ? `🏆 10 días! Imparable.\n` : '';
 
     // #5 — oferta solo 1 vez al día para usuarios sin plan con IA
-    const planLine = isFinPremium(fin) ? ''
+    // En los 15 días de IA (#143, parte C) ya tiene IA: no se le dice "Plan Gratis, desbloqueá la IA".
+    const planLine = (isFinPremium(fin) || financeAiTrial.isActive(fin, Date.now())) ? ''
         : (daysSince(fin.trialLastShown || 0) >= 1)
             ? `💎 Plan *Gratis* — escribí "Actualizar a Pro" para desbloquear la IA 🦁\n`
             : '';
 
+    // Corto (#144): lo que se anotó, el saldo y la racha en 3 líneas; el resto queda detrás de "➕ Ver más".
+    const dayLabel = tx.date === todayInBogota() ? '' : ` (${tx.date})`;
     await say(sock, jid,
-        `✅ *${type === 'expense' ? 'Compra registrada' : 'Ingreso registrado'}!*\n` +
-        confirmMsg + '\n\n' +
-        `${type === 'expense' ? '💸' : '💰'} ${formatMoney(amount, fin)} — ${description}\n` +
-        `🏷️ ${category}\n\n` +
-        balanceLine + '\n' +
-        todayMsg +
+        `✅ *Registrado:* ${type === 'expense' ? '💸' : '💰'} ${privacy.money(amount, fin)} — ${description} · ${category}${dayLabel}\n` +
+        balanceLine + (todayMsg ? ` · ${todayMsg.trim()}` : '') + '\n' +
         streakMsg +
         (streakEventLines.length ? `${streakEventLines.join('\n')}\n` : '') +
         milestoneMsg +
         planLine +
-        (fin.firstTransactionDone ? '' : `\n💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`) +
-        `\n¿Algo más? 🦁`,
+        (fin.firstTransactionDone ? '' : `💡 Con lo que llevás registrado, si guardás aunque sea \$2.000 diarios, en 3 meses tenés \$180.000. No es magia, es constancia. Vamos paso a paso 🦁\n`),
         ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
+
+    if (backFromBreak) {
+        financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.RETURN);
+        await say(sock, jid, financeAiTrial.MESSAGES.welcomeBack, ctx);
+    }
 
     // Referral reward: first real transaction triggers +15 movimientos con IA
     // para ambos (sin límite de tiempo para usarlos, ver financeAdmin.addAiCredits).
@@ -1803,7 +1917,7 @@ async function handleQueryLoans(sock, jid, fin, ctx) {
     const loans = (fin.loans || []).filter(l => l.status !== 'pagado');
     if (loans.length === 0) {
         fin.pendingLoanList = null;
-        await say(sock, jid,
+        await sayFull(sock, jid,
             `🤝 No tenés préstamos pendientes registrados — todo al día 🦁\n\n` +
             `Cuando prestes o te presten plata, decímelo así: _"le presté a Juan 50 mil"_ o _"le debo a Pedro 30 mil"_.`,
             ctx);
@@ -1831,7 +1945,7 @@ async function handleQueryLoans(sock, jid, fin, ctx) {
     }
     text += `\nEscribí el *número* cuando alguno se pague, y lo marco como listo ✅`;
 
-    await say(sock, jid, text, ctx);
+    await sayFull(sock, jid, text, ctx);
 }
 
 async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
@@ -1856,7 +1970,7 @@ async function markLoanAsPaid(sock, jid, loanId, fin, ctx) {
  */
 async function handleSupportRequest(sock, jid, ctx) {
     const payment = financeAdmin.getPaymentInfo();
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `💙 Si Leo te ha servido para ponerle orden a tus finanzas, me encantaría que me invites lo que sientas justo — así sea poquito, de corazón 🙏\n\n` +
         `📲 *Cómo apoyar:*\n` +
         `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
@@ -1874,7 +1988,7 @@ async function showSettingsMenu(sock, jid, userSession, ctx) {
     userSession.phase = PHASE.FIN_SETTINGS;
     await say(sock, jid,
         `⚙️ *Mejoras y configuración*`,
-        ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
+        ctx, { buttons: financeMenu.settingsButtons(userSession.finance) });
 }
 
 async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
@@ -1901,7 +2015,7 @@ async function handleSettingsMenu(sock, jid, t, userSession, ctx, fin) {
         await say(sock, jid, financeMenu.REPORT_PREF_TITLE, ctx, { buttons: financeMenu.REPORT_PREF_BUTTONS });
         return;
     }
-    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:`, ctx, { buttons: financeMenu.SETTINGS_BUTTONS });
+    await say(sock, jid, `No tengo esa opción 🙂 Elegí una:`, ctx, { buttons: financeMenu.settingsButtons(fin) });
 }
 
 /** Configuración → Informes (#123): diario y semanal, solo semanal o ninguno. */
@@ -1940,7 +2054,7 @@ async function handleSettingsCurrency(sock, jid, t, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     await say(sock, jid,
         `Listo ✅ tus montos ahora se ven en *${CURRENCY_LABELS[chosen]}* — esto es solo visual, tu saldo real no cambia.\n\n` +
-        `Ejemplo: tu saldo ahora se ve así → ${formatMoney(fin.balance || 0, fin)}`,
+        `Ejemplo: tu saldo ahora se ve así → ${privacy.money(fin.balance || 0, fin, { kind: privacy.KINDS.BALANCE })}`,
         ctx);
 }
 
@@ -1991,7 +2105,7 @@ async function showWelcome(sock, jid, ctx, text) {
             `🦁 ¡${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]} *${fin.name}*! Aquí al tanto de tu plata.\n` +
             (txCount > 0
                 ? `Llevás *${txCount} registro${txCount !== 1 ? 's' : ''}* hasta ahora. ${fin.streak >= 3 ? '🔥 ' + fin.streak + ' días seguidos!' : ''}\n` +
-                  `💵 Balance: ${formatMoney(fin.balance, fin)}\n\n`
+                  `💵 Balance: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}\n\n`
                 : `Todavía no registraste nada. Podés arrancar cuando quieras.\n\n`),
             ctx);
         if (!canUseAi(jid)) {
@@ -2067,7 +2181,11 @@ async function sendSpendingReport(sock, jid, ctx, fin, options) {
         markReviewPrompted(fin);
         financeStore.saveFinance(jid, fin);
     }
-    await say(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
+    await sayFull(sock, jid, financeInsights.formatSpendingReport(report, fin), ctx, options);
+    if (report.expenseCount > 0) {
+        const data = financeCharts.donutData(fin, todayInBogota(), report.days, `Últimos ${report.days} días`);
+        await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(data, fin), '📊 Tus gastos en una imagen');
+    }
 }
 
 async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
@@ -2083,8 +2201,14 @@ async function confirmReview(sock, jid, ctx, { tx, remaining, autoApplied }) {
  * Genera el informe nocturno para un usuario y lo envía.
  * Llamar desde un scheduler externo o setInterval a las 9 p. m. (hora de Colombia).
  */
-async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
+/**
+ * Informe de la noche. Con `reveal` (botón [👀 Ver montos], #139) es el mismo informe con los montos, solo en ese
+ * mensaje: no marca novedades, revisión ni la hora del informe, y no trae botones.
+ */
+async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal = false } = {}) {
     if (!fin || !fin.name || !fin.transactions || fin.transactions.length === 0) return;
+    // Modo privado (#139): saldo y meta se ocultan; los gastos del día solo con "ocultar todo".
+    const gasto = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
     // t.date se guarda como 'YYYY-MM-DD' (ver saveAndConfirm) — toDateString()
     // nunca hace match con eso (formato 'Wed Sep 03 2026'), por eso el informe
     // mostraba $0 en gastos/ingresos de hoy aunque el saldo sí fuera correcto.
@@ -2096,19 +2220,20 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
     const byMedium = sumExpensesByMedium(todayTx);
     const hasNonCash = byMedium[MEDIUM.CARD] + byMedium[MEDIUM.BANK] + byMedium[MEDIUM.TRANSFER] > 0;
     const bankLines = Object.entries(sumBankExpensesByAccount(todayTx))
-        .map(([account, total]) => `   🏦 Con ${account}: ${formatMoney(total, fin)}\n`).join('');
+        .map(([account, total]) => `   🏦 Con ${account}: ${gasto(total)}\n`).join('');
     const breakdown = hasNonCash
-        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${formatMoney(byMedium[MEDIUM.CARD], fin)}\n` : '') +
+        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${gasto(byMedium[MEDIUM.CARD])}\n` : '') +
           bankLines +
-          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${formatMoney(byMedium[MEDIUM.TRANSFER], fin)}\n` : '') +
-          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${formatMoney(byMedium[MEDIUM.CASH], fin)}\n` : '')
+          (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${gasto(byMedium[MEDIUM.TRANSFER])}\n` : '') +
+          (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${gasto(byMedium[MEDIUM.CASH])}\n` : '')
         : '';
     const pct = fin.goalTarget > 0 ? Math.min(100, Math.round((fin.balance || 0) / fin.goalTarget * 100)) : 0;
     const filled = Math.round(pct / 10);
     const empty = 10 - filled;
     const goalLine = fin.goalName
         ? (fin.goalTarget > 0
-            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}% — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`
+            ? `🎯 Meta: ${fin.goalName}\n[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${pct}%` +
+              (privacy.hides(fin, privacy.KINDS.GOAL) ? '\n' : ` — ${formatMoney((fin.balance || 0), fin)} de ${formatMoney(fin.goalTarget, fin)}\n`)
             : `🎯 Meta: ${fin.goalName} (sin monto aún)\n`)
         : '';
     // Racha, nivel del león y protectores (#85).
@@ -2121,21 +2246,22 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
     const goalExtra = (projectionText ? `${projectionText}\n` : '') + (nextStepText ? `${nextStepText}\n` : '') +
         (goalDayText ? `${goalDayText}\n` : '');
     // Novedades de Leo, una vez por versión (#129).
-    const news = financeNews.pendingNews(fin, { registeredOn });
+    const news = reveal ? [] : financeNews.pendingNews(fin, { registeredOn });
     const newsBlock = news.length > 0 ? `\n${financeNews.formatNews(news)}\n` : '';
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
-    if (pendingReview.length > 0) markReviewPrompted(fin);
+    if (pendingReview.length > 0 && !reveal) markReviewPrompted(fin);
 
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Informe de la noche, ${fin.name}*\n\n` +
+        (reveal ? '👀 _Con montos, solo en este mensaje: tu modo privado sigue prendido._\n\n' : '') +
         `📊 *Hoy con Leo:*\n` +
-        `💸 Compraste: ${formatMoney(todayExpense, fin)}\n` +
+        `💸 Compraste: ${gasto(todayExpense)}\n` +
         breakdown +
-        `💰 Te entró: ${formatMoney(todayIncome, fin)}\n` +
+        `💰 Te entró: ${gasto(todayIncome)}\n` +
         // Sin ingresos el "balance del día" solo repetía lo comprado en negativo y confundía con el saldo.
         (todayIncome > 0
-            ? `📈 Balance del día: ${formatMoney((todayIncome - todayExpense), fin)}\n`
+            ? `📈 Balance del día: ${gasto(todayIncome - todayExpense)}\n`
             : '') +
         `${financeNightPolicy.formatBalanceLine(fin)}\n` +
         streakLine +
@@ -2143,8 +2269,17 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn } = {}) {
         goalExtra +
         reviewBlock +
         newsBlock +
-        `\nVas bien, seguí contándome 🦁\n\n${financeNightPolicy.FEEDBACK_QUESTION}`,
-        ctx, { buttons: financeMenu.NIGHT_REPORT_BUTTONS });
+        `\nVas bien, seguí contándome 🦁` + (reveal ? '' : `\n\n${financeNightPolicy.FEEDBACK_QUESTION}`),
+        ctx, reveal ? undefined : { buttons: financeMenu.nightReportButtons(fin) });
+    if (reveal) return;
+    // Una sola imagen para no saturar (#139): la barra de la meta o, sin meta, la dona de hoy.
+    const goalBar = financeCharts.goalBarData(fin, today);
+    if (goalBar) {
+        await sendChart(sock, jid, ctx, () => financeCharts.renderGoalBar(goalBar, fin), `🎯 ${fin.goalName}`);
+    } else if (todayExpense > 0) {
+        const todayDonut = financeCharts.donutData(fin, today, 1, 'Hoy');
+        await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(todayDonut, fin), '📊 Tus gastos de hoy');
+    }
     financeNightPolicy.markReportSent(fin, Date.now());
     if (news.length > 0) financeNews.markNewsSeen(fin);
 }
@@ -2155,7 +2290,7 @@ async function handleReferralInfo(sock, jid, fin, ctx) {
     const inviteeCount = financeReferral.getInviteeCount(jid);
     const rewardedCount = financeReferral.getRewardedCount(jid);
     const creditsLeft = financeAdmin.getAiCredits(jid);
-    await say(sock, jid,
+    await sayFull(sock, jid,
         `🦁 *Tu código de invitación:* ${code}\n\n` +
         `Compartí este código con amigues. Cuando tu invite registre su primer movimiento, ¡TANTO ELLES COMO VOS ganan *+15 MOVIMIENTOS CON IA* (sin vencimiento)! 🎉\n\n` +
         `📊 Personas invitadas: ${inviteeCount}\n` +
@@ -2240,6 +2375,9 @@ async function runNightReportSweep(sock, ctx) {
                 await say(sock, jid, financeNightPolicy.nightMessage(action), ctx);
             }
             financeNightPolicy.recordNightAction(fin, action, bogotaToday);
+            // 15 días de IA (#143, parte C): aviso cuando quedan 3 días y mensaje al terminar, sin precios.
+            const trialNotice = financeAiTrial.dueNotice(fin, Date.now());
+            if (trialNotice) await say(sock, jid, financeAiTrial.noticeText(trialNotice), ctx);
             fin.lastReportDate = today;
             financeStore.saveFinance(jid, fin);
         } catch (e) {
@@ -2249,6 +2387,33 @@ async function runNightReportSweep(sock, ctx) {
 }
 
 const SHARE_COMMAND = /^(compartir|mi tarjeta|compartir (mi )?tarjeta|compartir logros)$/;
+const CHART_COMMAND = /^(ver (la |mi )?grafica|grafica|graficas|mi grafica|resumen en imagen)$/;
+const DAYS_IN_MONTH_SO_FAR = (today) => Number(today.slice(8, 10));
+
+/**
+ * Manda un gráfico como foto (#139). Además va el texto de siempre, para quien no carga imágenes; si `canvas`
+ * falla, queda solo el texto (se registra, nunca rompe el informe).
+ */
+async function sendChart(sock, jid, ctx, render, caption) {
+    try {
+        const png = render();
+        await sock.sendMessage(jid, financeCharts.toMedia(png, 'leo.png'), { caption });
+        return true;
+    } catch (e) {
+        logger.error(`[${jid}] No se pudo armar el gráfico: ${e.message}`);
+        return false;
+    }
+}
+
+/** "gráfica": la dona de los gastos del mes. */
+async function sendMonthChart(sock, jid, ctx, fin) {
+    const today = todayInBogota();
+    const data = financeCharts.donutData(fin, today, DAYS_IN_MONTH_SO_FAR(today), 'Este mes');
+    if (data.slices.length === 0) {
+        return await say(sock, jid, '📊 Todavía no tengo gastos de este mes para graficar. Contame uno, por ejemplo: _almuerzo 15 mil_ 🦁', ctx);
+    }
+    await sendChart(sock, jid, ctx, () => financeCharts.renderDonut(data, fin), '📊 Tus gastos de este mes');
+}
 const MEDALS_COMMAND = /^(medallas|mis medallas|logros|mis logros)$/;
 
 /** Manda las medallas nuevas con su tarjeta. Sin montos en la imagen ni en el texto. */
@@ -2317,7 +2482,8 @@ function startNightReporter(sock, ctx) {
             adminJids,
             loadFinance: financeStore.loadFinance,
             saveFinance: financeStore.saveFinance,
-            send: (jid, text) => say(sock, jid, text, ctx)
+            send: (jid, text) => sayFull(sock, jid, text, ctx),
+            sendImage: (jid, render, caption) => sendChart(sock, jid, ctx, render, caption)
         }).catch((e) => logger.error(`[informe semanal] ${e.message}`));
     }, CHECK_INTERVAL);
 }

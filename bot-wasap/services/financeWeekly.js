@@ -9,7 +9,8 @@
 const insights = require('./financeInsights');
 const goals = require('./financeGoals');
 const streak = require('./financeStreak');
-const { formatMoney } = require('../utils/financeMoney');
+const privacy = require('../utils/financePrivacy');
+const charts = require('./financeCharts');
 const financeNightPolicy = require('./financeNightPolicy');
 
 const SATURDAY = 6;
@@ -47,7 +48,7 @@ function expensesBetween(fin, from, to) {
 }
 
 function buildWeeklyMessage(fin, today) {
-    const money = (n) => formatMoney(n, fin);
+    const money = privacy.moneyFn(fin, privacy.KINDS.EXPENSE);
     const report = insights.buildSpendingReport(fin, today, WEEK_DAYS);
     const previous = expensesBetween(fin, shift(today, -2 * WEEK_DAYS + 1), shift(today, -WEEK_DAYS));
     const monthToDate = expensesBetween(fin, `${today.slice(0, 7)}-01`, today);
@@ -71,8 +72,11 @@ function buildWeeklyMessage(fin, today) {
     ].join('\n');
 }
 
-/** Manda el informe a los admins que tengan cuenta en Leo. Devuelve a cuántos se envió. */
-async function runWeeklySweep({ now = new Date(), adminJids, loadFinance, saveFinance, send }) {
+/**
+ * Manda el informe a los admins que tengan cuenta en Leo. Devuelve a cuántos se envió. Con `sendImage(jid, render,
+ * caption)` también van la dona de la semana y las barras de los 7 días (#139); sin él, solo el texto.
+ */
+async function runWeeklySweep({ now = new Date(), adminJids, loadFinance, saveFinance, send, sendImage }) {
     const today = bogotaParts(now).date;
     let enviados = 0;
     for (const jid of adminJids) {
@@ -80,6 +84,11 @@ async function runWeeklySweep({ now = new Date(), adminJids, loadFinance, saveFi
         if (!fin || !fin.name || !isWeeklyTime(now, fin.lastWeeklyReportDate)) continue;
         if (!financeNightPolicy.weeklyAllowed(fin)) continue;
         await send(jid, buildWeeklyMessage(fin, today));
+        if (sendImage) {
+            const donut = charts.donutData(fin, today, WEEK_DAYS, 'Esta semana');
+            if (donut.slices.length > 0) await sendImage(jid, () => charts.renderDonut(donut, fin), '📊 Tu semana por categoría');
+            await sendImage(jid, () => charts.renderWeekBars(charts.weekBarsData(fin, today), fin), '🗓️ Tu semana día por día');
+        }
         fin.lastWeeklyReportDate = today;
         saveFinance(jid, fin);
         enviados += 1;

@@ -14,6 +14,18 @@
  */
 const NEWS = [
     {
+        id: '1.9.0',
+        date: '2026-11-03',
+        items: [
+            { text: 'Leo ahora entiende mejor lo que le escribís, y en *un audio* podés contarme todos tus gastos del día', probar: 'mandame un audio con tus gastos de hoy' },
+            { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
+            { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
+            { text: 'Tus gastos de siempre ahora están *a un toque*', probar: 'escribí *menú* y tocá tu gasto de siempre' },
+            { text: 'Te entiendo como hablás: lucas, barras, un palo, "el lunes"', probar: 'escribí _almuerzo 15 lucas el lunes_' },
+            { text: 'Si me decís con qué pagaste y cuándo, ya no te lo pregunto', probar: 'escribí _almuerzo 15 mil con la Rappi ayer_' },
+        ],
+    },
+    {
         id: '1.8.0',
         date: '2026-11-03',
         items: [

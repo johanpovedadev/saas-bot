@@ -6,6 +6,9 @@
  * quedaba como $1) o sin descripción se pregunta antes de guardar. Función pura.
  */
 
+const { parseRelativeDay } = require('../utils/financeDate');
+const corrections = require('./financeCorrections');
+
 const MIN_CLEAR_AMOUNT = 100;            // menos de $100 casi siempre es un número mal leído
 const GENERIC_DESCRIPTIONS = new Set(['', 'compra', 'gasto', 'ingreso', 'otros', 'x']);
 
@@ -16,4 +19,34 @@ function isClearEntry(result) {
     return Number.isFinite(amount) && amount >= MIN_CLEAR_AMOUNT && !GENERIC_DESCRIPTIONS.has(description);
 }
 
-module.exports = { isClearEntry, MIN_CLEAR_AMOUNT };
+// Lo que el mensaje ya dice además del monto (#144, bloque 2): "almuerzo 15 mil con la Rappi ayer" se guarda con
+// tarjeta y con la fecha de ayer, sin preguntar. Esas palabras no van en la descripción.
+const MEDIUM_PHRASE = /\s*\b(?:con|en|por|de)\s+(?:la\s+|el\s+|mi\s+)?(?:rappi\s?card|rappi|tarjeta(?:\s+de\s+cr[eé]dito)?|nequi|daviplata|bancolombia|transferencia|pse|efectivo|plata en mano|banco|d[eé]bito)\b/gi;
+const DAY_PHRASE = /\s*\b(?:antier|anteayer|antes de ayer|ayer|hoy|(?:el|este|del)\s+(?:domingo|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado)(?:\s+pasado)?)\b/gi;
+// Marcas de medios de pago sueltas (el parser ya pudo haber quitado el "con la"); "tarjeta" no, porque puede ser
+// lo que se compró ("tarjeta de regalo").
+const BARE_MEDIUM_BRAND = /\s*\b(?:rappi\s?card|rappi|nequi|daviplata|bancolombia|pse)\b/gi;
+
+function extractDetails(text, today) {
+    return {
+        medium: String(text || '').match(MEDIUM_PHRASE) ? corrections.parseMedium(text) || undefined : undefined,
+        date: parseRelativeDay(text, today) || undefined,
+    };
+}
+
+// Un día de la semana suelto al final ("Gasolina lunes": el parser ya quitó el "el"). Solo se quita si el mensaje
+// sí dijo el día; si no, puede ser parte de lo que se compró ("almuerzo de los lunes").
+const TRAILING_WEEKDAY = /\s+(?:domingo|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado)(?:\s+pasado)?\s*$/i;
+
+/**
+ * La descripción sin el medio de pago ni el día ("Almuerzo con la rappi ayer" → "Almuerzo"). `dated`: el mensaje
+ * dijo el día (extractDetails().date).
+ */
+function cleanDetailWords(description, { dated = false } = {}) {
+    let cleaned = String(description || '').replace(MEDIUM_PHRASE, '').replace(DAY_PHRASE, '').replace(BARE_MEDIUM_BRAND, '')
+        .replace(/\s{2,}/g, ' ').trim();
+    if (dated) cleaned = cleaned.replace(TRAILING_WEEKDAY, '').trim();
+    return cleaned || String(description || '').trim();
+}
+
+module.exports = { isClearEntry, extractDetails, cleanDetailWords, MIN_CLEAR_AMOUNT };
