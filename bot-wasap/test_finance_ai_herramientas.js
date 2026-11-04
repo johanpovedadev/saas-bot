@@ -173,7 +173,7 @@ const gasto = (monto, descripcion, extra = {}) => ({ name: 'registrar_gasto', ar
         r = await send('no, fue 18 mil', [{ name: 'corregir_ultimo', args: { campo: 'monto', valor: '18 mil' } }]);
         assert.deepStrictEqual(saved().map((t) => t.amount), [18000], r);
         r = await send('ah, y fue con nequi', [{ name: 'corregir_ultimo', args: { campo: 'medio', valor: 'nequi' } }]);
-        assert.strictEqual(saved()[0].medium, 'envio', r);
+        assert.strictEqual(saved()[0].medium, 'banco', r); // Nequi cuenta como banco (#144, bloque 2)
         // corregir_ultimo con un monto inventado: no.
         r = await send('corregilo', [{ name: 'corregir_ultimo', args: { campo: 'monto', valor: '99000' } }]);
         assert.deepStrictEqual(saved().map((t) => t.amount), [18000], r);

@@ -19,6 +19,7 @@ const NEWS = [
         items: [
             { text: 'Leo ahora entiende mejor lo que le escribís, fotos y audios', probar: 'mandame un audio con tus gastos de hoy' },
             { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
+            { text: 'Si me decís con qué pagaste y cuándo, ya no te lo pregunto', probar: 'escribí _almuerzo 15 mil con la Rappi ayer_' },
             { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
         ],
     },
