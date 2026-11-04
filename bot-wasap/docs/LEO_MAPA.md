@@ -22,6 +22,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeStreak.js` | Racha, protector 🛡️ y niveles del león: `bump(fin, now)`, `statusLine(fin)`, `levelFor(fin)`. |
 | `services/financeMedals.js` | Medallas: lista `MEDALS` (cada una con `check(fin)`), `awardNew(fin)`, `formatMedalList(fin)`. |
 | `services/financeCard.js` | Imágenes (canvas): `generateCard()` para medallas, `generateShareCard()` para "compartir". |
+| `services/financeCharts.js` | Gráficas (canvas, #139): dona por categoría, barras de 7 días y barra de la meta. `*Data()` arma los datos, `render*()` da el PNG, `buildChartLabels()` todo texto dibujado (sin montos en modo privado). |
 | `services/financeCardStatement.js` | Extracto de la tarjeta: `owed()`, `formatOwed()`, `parsePayment()`, `applyPayment()`. |
 | `services/financeEmailImport.js` + `financeEmailParsers.js` | Leen correos de RappiCard, Binance, RappiPay, BBVA. |
 | `services/financeEmailInbox.js` | Bandeja `data/correos_entrantes`: correos o ajustes `{ movimientos, saldo, tarjeta }`. |
