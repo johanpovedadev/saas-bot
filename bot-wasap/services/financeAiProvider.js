@@ -103,8 +103,10 @@ function toOpenRouterBody(messages, { json, temperature, tools }) {
         usage: { include: true },
     };
     if (typeof temperature === 'number') body.temperature = temperature;
-    if (json) body.response_format = { type: 'json_object' };
-    if (tools && tools.length > 0) {
+    const withTools = Boolean(tools && tools.length > 0);
+    // Con herramientas la IA responde con tool_calls; el formato JSON es solo para respuestas de texto.
+    if (json && !withTools) body.response_format = { type: 'json_object' };
+    if (withTools) {
         body.tools = tools.map((t) => ({ type: 'function', function: t }));
         body.tool_choice = 'required';
     }

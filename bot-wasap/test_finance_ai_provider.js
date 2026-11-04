@@ -35,7 +35,10 @@ const financeStore = require('./services/financeStore');
 const { todayInBogota } = require('./utils/financeDate');
 
 const JID = '573000009799@telegram';
-const EXPENSE_JSON = JSON.stringify({ intent: 'register_expense', amount: 18000, category: 'Comida', description: 'almuerzo', needs_confirmation: true, response: 'Anotado' });
+// Con herramientas (los mensajes de texto, #143 parte B) la IA responde tool_calls; fotos y audios, texto.
+const EXPENSE_ARGS = { monto: 18000, descripcion: 'almuerzo', categoria: 'Comida' };
+const EXPENSE_TOOL_JSON = JSON.stringify({ calls: [{ tool: 'registrar_gasto', args: EXPENSE_ARGS }] });
+const MEDIA_TEXT = 'Compré almuerzo por dieciocho mil';
 const calls = { openRouter: [], gemini: [] };
 let openRouterFails = false;
 
@@ -44,15 +47,14 @@ function fakeTransports() {
         openRouter: async (body) => {
             calls.openRouter.push(body);
             if (openRouterFails) throw new Error('503 de prueba');
-            return {
-                model: body.model,
-                choices: [{ message: { content: EXPENSE_JSON } }],
-                usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150, cost: 0.00012 },
-            };
+            const message = body.tools
+                ? { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'registrar_gasto', arguments: JSON.stringify(EXPENSE_ARGS) } }] }
+                : { content: MEDIA_TEXT };
+            return { model: body.model, choices: [{ message }], usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150, cost: 0.00012 } };
         },
         gemini: async (req) => {
             calls.gemini.push(req);
-            return { text: EXPENSE_JSON, usage: { prompt: 100, completion: 20, total: 120 } };
+            return { text: req.json ? EXPENSE_TOOL_JSON : MEDIA_TEXT, usage: { prompt: 100, completion: 20, total: 120 } };
         },
     };
 }
@@ -77,7 +79,7 @@ const session = { jid: JID, finance: { name: 'Prueba', balance: 100000, transact
         const body = calls.openRouter[0];
         assert.strictEqual(body.model, 'google/modelo-de-prueba');
         assert.deepStrictEqual(body.usage, { include: true }, 'pide el costo de la llamada');
-        assert.deepStrictEqual(body.response_format, { type: 'json_object' });
+        assert.ok(body.tools && body.tools.length > 0, 'con las herramientas de Leo (parte B)');
         assert.strictEqual(body.messages[0].role, 'system');
         assert.deepStrictEqual([r.intent, r.amount, r.fromAi], ['register_expense', 18000, true], JSON.stringify(r));
         // "models/..." es el formato viejo de Gemini: para OpenRouter se usa el de por defecto.
