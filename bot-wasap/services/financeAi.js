@@ -72,13 +72,21 @@ async function interpret(rawMessage, userSession, forceFallback) {
     return fallback;
 }
 
+// El audio se vuelve texto y sigue el mismo camino que un mensaje escrito (#144, bloque 5). Los montos en cifras:
+// el anclaje de montos (financeAiTools.groundAmount) compara contra el texto, y "quince mil" en letras no cuadraba.
+const AUDIO_PROMPT = 'Eres un asistente de transcripción. Transcribe lo que dice el usuario en este mensaje de voz, '
+    + 'sin agregar ni interpretar nada. Escribe los montos en cifras ("15 mil", "2 millones", "1500"), y si cuenta '
+    + 'varios gastos o ingresos, sepáralos con comas. Deja tal cual el día y el medio de pago que diga ("ayer", '
+    + '"con Nequi"). Ejemplos:\n- "Almuerzo 15 mil"\n- "Ayer almuerzo 14 mil, arepas 4 mil, pan 2 mil"\n'
+    + '- "Mercado 30 mil con Nequi"\n- "Hola Leo, ¿cómo estás?"';
+
 async function interpretAudio(audioBase64, userSession, mimeType = 'audio/ogg; codecs=opus') {
     if (!aiProvider.isAvailable()) {
         logger.warn('financeAi: sin proveedor de IA para audio');
         return null;
     }
 
-    const prompt = `Eres un asistente de transcripción. Transcribe EXACTAMENTE lo que dice el usuario en este mensaje de voz. No agregues nada, no interpretes, solo transcribe. Si el usuario menciona un gasto, cantidad o monto, inclúyelo tal cual lo dijo. Ejemplos de salidas correctas:\n- "Compré almuerzo por quince mil pesos"\n- "Ayer gasté treinta mil en el mercado"\n- "Hoy pagué el servicio de luz"\n- "Hola Leo, ¿cómo estás?"`;
+    const prompt = AUDIO_PROMPT;
 
     try {
         // OpenRouter si el modelo acepta audio (input_audio); si falla, Gemini directo (financeAiProvider).
@@ -518,4 +526,5 @@ function fallbackInterpret(message, userSession) {
     };
 }
 
-module.exports = { interpret, interpretAudio, interpretImage, categorizeExpense, fallbackInterpret, modeloFinanzas };
+module.exports = {
+    AUDIO_PROMPT, interpret, interpretAudio, interpretImage, categorizeExpense, fallbackInterpret, modeloFinanzas };

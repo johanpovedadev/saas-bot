@@ -39,7 +39,8 @@ const MEDIUM_WORDS = [
 const MEDIUM_LABELS = Object.freeze({ [MEDIUM.CARD]: 'tarjeta', [MEDIUM.BANK]: 'banco', [MEDIUM.TRANSFER]: 'envío', [MEDIUM.CASH]: 'efectivo' });
 const PAYMENT_AFTER_SAVE = /^(?:fue |lo pague |la pague |pague |era |eso fue )?(?:con|en|por) (?:la |el )?([a-z ]+)$/;
 const QUANTITY = /^(\d{1,3})\s+(.+?)\s+(?:a\s+)?(\$?\s*\d[\d.,]*\s*(?:mil|k)?)\s+(?:cada una|cada uno|c\/u|cada)$/;
-const PART_SEPARATOR = /\s*(?:,|;|\s+y\s+)\s*/;
+// Comas, punto y coma, "y", y el punto seguido de un audio transcrito ("Almuerzo 14 mil. Pan 2 mil"; "30.000" no).
+const PART_SEPARATOR = /\s*(?:,|;|\s+y\s+|\.\s+)\s*/;
 
 function normalize(text) {
     return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();

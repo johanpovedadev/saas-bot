@@ -41,6 +41,59 @@ function countValue(raw) {
     return parseFloat(key.replace(',', '.'));
 }
 
+// Números en letras (#144, bloque 5): la transcripción de un audio puede traer "quince mil" en vez de "15 mil".
+const WORD_VALUES = {
+    cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+    once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+    veinte: 20, veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25,
+    veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, treinta: 30, cuarenta: 40, cincuenta: 50,
+    sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100, doscientos: 200, doscientas: 200,
+    trescientos: 300, trescientas: 300, cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500,
+    seiscientos: 600, seiscientas: 600, setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800,
+    novecientos: 900, novecientas: 900,
+};
+const SCALE_WORDS = { mil: THOUSAND, millon: MILLION, millones: MILLION };
+const ACCENTED = { a: '[aá]', e: '[eé]', i: '[ií]', o: '[oó]', u: '[uú]' };
+const accentInsensitive = (word) => word.replace(/[aeiou]/g, (v) => ACCENTED[v]);
+// Las palabras largas primero: "veintidos" antes que "veinte", "millones" antes que "millon".
+const NUMBER_WORD = [...Object.keys(WORD_VALUES), ...Object.keys(SCALE_WORDS)].sort((a, b) => b.length - a.length).map(accentInsensitive).join('|');
+const NUMBER_RUN = new RegExp(`(?<![\\p{L}\\d])(?:${NUMBER_WORD})(?:(?:\\s+y\\s+|\\s+)(?:${NUMBER_WORD}))*(?![\\p{L}\\d])`, 'giu');
+// "cinco cocas a siete mil cada una": la cantidad también va en cifras.
+const COUNT_BEFORE_EACH = new RegExp(`(?<![\\p{L}\\d])(${NUMBER_WORD})(?=\\s+\\p{L}[^\\n]*\\bcada\\b)`, 'iu');
+
+/** "treinta y cinco mil" → 35000; null si no son números. */
+function wordsValue(run) {
+    const words = stripAccents(run).toLowerCase().split(/\s+/).filter((w) => w && w !== 'y');
+    let total = 0;
+    let current = 0;
+    for (const w of words) {
+        if (WORD_VALUES[w] !== undefined) current += WORD_VALUES[w];
+        else if (SCALE_WORDS[w] === THOUSAND) { current = (current || 1) * THOUSAND; total += current; current = 0; }
+        else if (SCALE_WORDS[w] === MILLION) { total = (total + (current || 1)) * MILLION; current = 0; }
+        else return null;
+    }
+    return total + current;
+}
+
+/**
+ * Pasa a cifras los montos en letras: "quince mil" → "15000", "un millón" → "1000000", "mil quinientos" → "1500".
+ * Solo lo que lleva "mil" o "millón" (un "una coca" o "mil gracias" sueltos no son plata).
+ */
+function wordNumbersToDigits(text) {
+    const out = String(text || '').replace(NUMBER_RUN, (run) => {
+        const plain = stripAccents(run).toLowerCase();
+        const words = plain.split(/\s+/).filter((w) => w !== 'y');
+        const hasScale = words.some((w) => SCALE_WORDS[w]);
+        if (!hasScale || words.length < 2) return run;
+        const value = wordsValue(plain);
+        return value ? String(value) : run;
+    });
+    return out.replace(COUNT_BEFORE_EACH, (word) => {
+        const value = WORD_VALUES[stripAccents(word).toLowerCase()];
+        return value > 1 ? String(value) : word;
+    });
+}
+
 function stripAccents(text) {
     return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
@@ -51,7 +104,7 @@ function stripAccents(text) {
  * compró ("una barra de chocolate 5000"): solo cuentan como plata si el mensaje no trae otra cifra.
  */
 function normalizeSpokenAmounts(text) {
-    let out = String(text || '');
+    let out = wordNumbersToDigits(text);
     const plain = stripAccents(out).toLowerCase();
     const hasDigits = /\d/.test(plain.replace(/\d+\s*(?:lucas?|luquitas?|barras?|palos?|palitos?)\b/g, ''));
     for (const { word, value } of SLANG_UNITS) {
@@ -76,4 +129,4 @@ function normalizeSpokenAmounts(text) {
     return out;
 }
 
-module.exports = { parseAmountText, normalizeSpokenAmounts };
+module.exports = { parseAmountText, normalizeSpokenAmounts, wordNumbersToDigits };

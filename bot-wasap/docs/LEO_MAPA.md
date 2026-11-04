@@ -36,7 +36,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeReceipts.js` | Productos del recibo y "¿dónde está más barato?". |
 | `utils/financeMoney.js` | `formatMoney(n, fin)` → "$1.234.567". **Úsalo siempre para mostrar plata.** |
 | `utils/financePrivacy.js` | Modo privado (#139): `money(n, fin, { kind })` con `kind` = `saldo` / `ahorro` / `meta` / `gasto`. **Para saldo, ahorro o meta usá este, no `formatMoney`**: con el modo prendido sale `$•••••`. |
-| `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. `normalizeSpokenAmounts()` (#144): "15 lucas", "luca y media", "un palo", "medio palo", "2 barras", "15k", "30000.000" → cifras; lo llaman `financeAi.interpret` (con nombre puesto) e `interpretEntries`. Prueba: `test_finance_lenguaje_natural.js`. |
+| `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. `normalizeSpokenAmounts()` (#144): "15 lucas", "luca y media", "un palo", "medio palo", "2 barras", "15k", "30000.000" → cifras; lo llaman `financeAi.interpret` (con nombre puesto) e `interpretEntries`. También montos en letras ("quince mil", `wordNumbersToDigits`), para los audios. Pruebas: `test_finance_lenguaje_natural.js`, `test_finance_audios_fotos.js`. |
 | `utils/financeDate.js` | `todayInBogota()` → "YYYY-MM-DD". **Usa esta fecha, no la del servidor.** `parseRelativeDay()`: "ayer", "antier", "el lunes" (el último lunes). |
 | `utils/financeDisclaimer.js` | Aviso "Leo no es asesor financiero" (solo en informes y consejos). |
 
