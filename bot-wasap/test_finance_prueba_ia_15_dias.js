@@ -38,7 +38,9 @@ const ACTIVE = '573000009803@telegram';
 const PAID = '573000009804@telegram';
 const AUDIO = '573000009809@telegram';
 const AFTER = '573000009810@telegram';
-const JIDS = [NEW, OLD, ACTIVE, PAID, AUDIO, AFTER];
+const ADMIN = '573000009811@telegram';
+process.env.ADMIN_TELEGRAM_ID = '573000009811';
+const JIDS = [NEW, OLD, ACTIVE, PAID, AUDIO, AFTER, ADMIN];
 const DAY = 24 * 60 * 60 * 1000;
 const TODAY = todayInBogota();
 const daysAgo = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10);
@@ -176,6 +178,16 @@ function setTrialEnd(jid, until) {
         assert.ok(r.includes(trial.MESSAGES.promo), `con el texto del audio se le cuenta: ${r}`);
         assert.deepStrictEqual(financeStore.loadFinance(AUDIO).transactions.map((t) => t.amount), [9000, 15000]);
         console.log('OK: un antiguo que manda un audio de primeras recibe los 15 días y el audio pasa');
+
+        // --- 6b. El administrador también: prueba la IA con los 15 días, no la tiene para siempre (Johan, 4 nov) ---
+        financeStore.saveFinance(ADMIN, { name: 'Johan', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(1), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
+        assert.strictEqual(financeFlow.isPremiumBlocked(ADMIN), false, 'el audio del administrador pasa con los 15 días');
+        let adminFin = financeStore.loadFinance(ADMIN);
+        assert.ok(adminFin.aiTrialUntil > Date.now() && adminFin.aiTrialUntil <= Date.now() + 15 * DAY && adminFin.aiTrial.source === 'lanzamiento', 'los mismos 15 días, no para siempre');
+        adminFin.aiTrialUntil = Date.now() - DAY;
+        financeStore.saveFinance(ADMIN, adminFin);
+        assert.strictEqual(financeFlow.isPremiumBlocked(ADMIN), true, 'terminados los 15 días, el administrador queda sin IA como cualquiera');
+        console.log('OK: el administrador recibe los 15 días como cualquier antiguo, y se le terminan');
 
         // --- 7. Pasada la promo, un antiguo activo ya no ---
         process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-01';

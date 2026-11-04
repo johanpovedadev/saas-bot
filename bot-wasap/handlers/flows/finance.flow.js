@@ -207,8 +207,8 @@ function getUserTier(jid) {
  */
 function canUseAi(jid) {
     try {
-        // El administrador (Johan) siempre tiene IA. Después: un plan con IA, o los 15 días de IA gratis (#143, parte C).
-        if (isAdminJid(jid)) return true;
+        // Un plan con IA, o los 15 días de IA gratis (#143, parte C). El administrador también: Johan (4 nov) quiere
+        // la IA solo para probar, con los 15 días, no para siempre.
         return financeAdmin.canConsumeAi(jid) || financeAiTrial.isActive(financeStore.loadFinance(jid), Date.now());
     } catch (e) {
         logger.error(`[canUseAi] ${jid}: ${e.message}`);
@@ -626,10 +626,11 @@ function syncPremiumFromAdmin(jid, fin) {
 /**
  * 15 días de IA para un antiguo (#143, parte C): al volver después de 7 días, o en la promo de lanzamiento si nunca
  * la tuvo. Se mira con cada mensaje, audio o foto (antes solo al anotar un gasto escrito, y un audio de primeras
- * se bloqueaba). Quien ya tiene IA por plan, o el administrador, no la necesita. Devuelve la fuente o null.
+ * se bloqueaba). Quien ya tiene IA por plan no la necesita. El administrador la recibe como cualquier antiguo:
+ * Johan (4 nov) prueba la IA con los 15 días, no la tiene para siempre. Devuelve la fuente o null.
  */
 function grantTrialIfDue(jid, fin) {
-    if (isAdminJid(jid) || financeAdmin.canConsumeAi(jid)) return null;
+    if (financeAdmin.canConsumeAi(jid)) return null;
     const source = financeAiTrial.trialDueFor(fin, todayInBogota(), Date.now());
     if (!source) return null;
     financeAiTrial.startTrial(fin, Date.now(), source);
@@ -1661,12 +1662,10 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     // gate (usa handleFreeUser). Si el cupo se agotó (p.ej. media de una llamada
     // previa), bloquea.
     // Primero el plan; si no tiene, los 15 días de IA gratis (tope de 300 interacciones, #143 parte C).
-    // El administrador no gasta cupo ni prueba (siempre tiene IA).
-    const isAdmin = isAdminJid(jid);
-    const fromTrial = !isAdmin && !financeAdmin.canConsumeAi(jid);
+    const fromTrial = !financeAdmin.canConsumeAi(jid);
     // En la prueba, sin ningún proveedor de IA configurado: lo mismo que el plan Gratis, sin gastar interacciones.
     if (fromTrial && !financeAiProvider.isAvailable()) return await handleFreeUser(sock, jid, text, userSession, ctx, fin);
-    const consumption = isAdmin ? { allowed: true } : (fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid));
+    const consumption = fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid);
     if (!consumption.allowed) {
         await showPremiumRequired(sock, jid, ctx);
         return;
