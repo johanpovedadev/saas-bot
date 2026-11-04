@@ -33,6 +33,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.9.1] - 2026-11-04
+
+### Corregido
+
+- El **administrador** siempre tiene IA (fotos, audios y texto) y no gasta cupo ni prueba (#155).
+- Durante la promo de lanzamiento (hasta el 15 nov) los **usuarios antiguos** sin plan también reciben los 15 días de IA,
+  y la prueba se activa aunque lo primero que manden sea un audio o una foto (#156).
+
 ## [1.9.0] - 2026-11-04
 
 Leo con IA de verdad (OpenRouter), 15 días de IA gratis, gráficas, modo privado y el lenguaje de Mundo Helados.
