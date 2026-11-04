@@ -6,8 +6,11 @@
  *  - Usuarios nuevos: al crear la cuenta reciben 15 días de IA (fotos de recibos, audios, preguntas). La promo de
  *    lanzamiento es para quien entra hasta LEO_TRIAL_PROMO_UNTIL (2026-11-15); después los nuevos también la reciben
  *    (es la regla de ahora en adelante): la fecha solo sirve para medir la promo (fin.aiTrial.promo).
- *  - Antiguos que retoman: quien llevaba 7 días o más sin registrar y vuelve a registrar algo recibe 15 días UNA sola
- *    vez (fin.aiTrialReturnUsed). Los activos que ya existían no cambian (y quien ya tiene IA por plan, tampoco).
+ *  - Antiguos en la promo de lanzamiento (Johan, 4 nov): "para quien entre hasta el 15 de noviembre" incluye a los
+ *    que ya usaban Leo. Hasta LEO_TRIAL_PROMO_UNTIL, un antiguo que nunca tuvo la prueba la recibe al escribir, mandar
+ *    un audio o una foto (fuente 'lanzamiento'). Después de esa fecha, ya no.
+ *  - Antiguos que retoman: quien llevaba 7 días o más sin registrar y vuelve recibe 15 días UNA sola vez
+ *    (fin.aiTrialReturnUsed), también después de la promo. Quien ya tiene IA por plan no cambia.
  *  - Tope de 300 interacciones en los 15 días. Aviso el día 12 y mensaje al terminar. SIN precios (#94).
  *
  * Funciones puras sobre `fin` y la hora (`now` en ms): finance.flow.js las llama y guarda.
@@ -19,10 +22,11 @@ const TRIAL_CAP = 300;
 const RETURN_GAP_DAYS = 7;
 const WARN_DAYS_LEFT = 3;              // el día 12 de 15
 const DEFAULT_PROMO_UNTIL = '2026-11-15';
-const SOURCE = Object.freeze({ NEW: 'nuevo', RETURN: 'regreso' });
+const SOURCE = Object.freeze({ NEW: 'nuevo', RETURN: 'regreso', PROMO: 'lanzamiento' });
 
 const MESSAGES = Object.freeze({
     welcomeBack: '¡Volviste! 🦁 Te regalo 15 días de Leo con IA: mandame fotos de recibos o audios',
+    promo: '🎁 Por el lanzamiento te regalo 15 días de Leo con IA: mandame fotos de recibos o audios 🦁',
     warning: '🦁 Te quedan 3 días de Leo con IA: fotos de recibos, audios y preguntas. ¡Aprovechalos!',
     ended: 'Tu prueba con IA terminó. Seguís usando Leo gratis: anotás escribiendo, tu racha y tus metas siguen igual 🦁',
 });
@@ -35,16 +39,18 @@ function isoDay(now) {
     return new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
 }
 
-/** Empieza la prueba de 15 días. `source`: 'nuevo' | 'regreso'. */
+/** Empieza la prueba de 15 días. `source`: 'nuevo' | 'regreso' | 'lanzamiento'. */
 function startTrial(fin, now, source) {
     fin.aiTrialUntil = now + TRIAL_DAYS * MS_PER_DAY;
     fin.aiTrial = {
         startedAt: now,
         used: 0,
         source,
-        promo: source === SOURCE.NEW && isoDay(now) <= promoUntil(),
+        promo: source === SOURCE.PROMO || (source === SOURCE.NEW && isoDay(now) <= promoUntil()),
         warned: false,
         endNotified: false,
+        // El nuevo ya lo lee en la bienvenida; al antiguo se le cuenta con su próximo mensaje (announcementFor).
+        announced: source === SOURCE.NEW,
     };
     if (source === SOURCE.RETURN) fin.aiTrialReturnUsed = true;
     return fin;
@@ -82,6 +88,24 @@ function returnTrialDue(fin, today, now) {
 }
 
 /**
+ * ¿Le toca la prueba a un antiguo ahora? 'regreso' (volvió después de 7 días), 'lanzamiento' (promo y nunca la
+ * tuvo) o null. El que ya tiene IA por plan se descarta antes, en finance.flow.js.
+ */
+function trialDueFor(fin, today, now) {
+    if (!fin || !fin.name || isActive(fin, now)) return null;
+    if (returnTrialDue(fin, today, now)) return SOURCE.RETURN;
+    if (!fin.aiTrialUntil && today <= promoUntil()) return SOURCE.PROMO;
+    return null;
+}
+
+/** El mensaje de "te regalo 15 días" que falta contarle ('' si nada); lo deja marcado como contado. */
+function announcementFor(fin) {
+    if (!fin || !fin.aiTrial || fin.aiTrial.announced !== false) return '';
+    fin.aiTrial = { ...fin.aiTrial, announced: true };
+    return fin.aiTrial.source === SOURCE.RETURN ? MESSAGES.welcomeBack : MESSAGES.promo;
+}
+
+/**
  * Qué aviso toca ahora: 'aviso' (quedan 3 días o menos, una vez), 'fin' (terminó, una vez) o null. Al devolverlo
  * lo deja marcado para no repetirlo.
  */
@@ -105,5 +129,5 @@ function noticeText(notice) {
 
 module.exports = {
     TRIAL_DAYS, TRIAL_CAP, SOURCE, MESSAGES,
-    startTrial, isActive, consume, returnTrialDue, dueNotice, noticeText, promoUntil,
+    startTrial, isActive, consume, returnTrialDue, trialDueFor, announcementFor, dueNotice, noticeText, promoUntil,
 };
