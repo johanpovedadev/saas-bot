@@ -3,6 +3,8 @@
 const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
 const aiProvider = require('./financeAiProvider');
+const aiTools = require('./financeAiTools');
+const { todayInBogota } = require('../utils/financeDate');
 const privacy = require('../utils/financePrivacy');
 const receipts = require('./financeReceipts');
 
@@ -13,108 +15,15 @@ function modeloFinanzas() {
     return aiProvider.geminiModel();
 }
 
-/** Sin texto: el JSON de la IA puede venir envuelto en ```json ... ```. */
-function stripJsonFence(text) {
-    let t = String(text || '').trim();
-    if (t.startsWith('```json')) t = t.slice(7, -3).trim();
-    else if (t.startsWith('```')) t = t.slice(3, -3).trim();
-    return t;
-}
-
 function jidOf(userSession) {
     return (userSession && userSession.jid) || (userSession && userSession.finance && userSession.finance.jid) || '';
 }
 
 const MEDIA_TIMEOUT_MS = 30000;
-
-function buildFinanceContext(userSession) {
-    const fin = userSession.finance || {};
-    const tier = fin.tier || 'free';
-    return {
-        name: fin.name || '',
-        balance: fin.balance || 0,
-        todaySpending: fin.todaySpending || 0,
-        totalTransactions: (fin.transactions || []).length,
-        isPremium: !!fin.isPremium,
-        tier,
-        privateMode: Boolean(fin.privateMode || fin.privateModeAll),
-        tierLabel: tier === 'master' ? 'Master (IA sin límites)'
-            : tier === 'basic' ? 'Basic (60 interacciones de IA al mes)'
-                : 'Gratis (sin IA)',
-        recentTransactions: (fin.transactions || []).slice(-5).map(t => ({
-            type: t.type,
-            amount: t.amount,
-            category: t.category,
-            description: t.description,
-            date: t.date
-        }))
-    };
-}
-
-function buildSystemPrompt(ctx) {
-    const c = buildFinanceContext(ctx);
-    return `Eres Leo 🦁, un asistente financiero personal empático, cercano y motivador.
-
-Contexto del usuario:
-- Nombre: ${c.name || 'aún no registrado'}
-- Saldo actual: $${c.balance.toLocaleString('es-CO')}
-- Compras hoy: $${c.todaySpending.toLocaleString('es-CO')}
-- Total transacciones: ${c.totalTransactions}
-- Plan: ${c.tierLabel}
-- Premium: ${c.isPremium ? 'SI' : 'NO'}
-${c.privateMode ? '- MODO PRIVADO: el usuario ocultó su plata. NUNCA digas su saldo, lo ahorrado ni montos de la meta; habla de su meta en % y en tiempo.\n' : ''}
-Últimas transacciones: ${JSON.stringify(c.recentTransactions)}
-
-Debes analizar el mensaje del usuario y devolver SIEMPRE un JSON válido con esta estructura:
-
-{
-  "intent": "register_expense" | "register_income" | "register_loan" | "query_loans" | "query" | "health_score" | "onboarding_name" | "chat" | "help" | "upgrade" | "referral_info" | "referral_use" | "apoyar" | "configuracion" | "off_topic",
-  "amount": <número en COP, 0 si no aplica>,
-  "category": "<categoría en español: Alimentacion, Transporte, Vivienda, Servicios, Salud, Educacion, Entretenimiento, Ropa, Ahorro, Salario, Freelance, Otros>",
-  "subcategory": "<subcategoría>",
-  "description": "<descripción corta>",
-  "date": "<hoy, ayer, fecha específica>",
-  "additional_transactions": [{"type": "expense" | "income", "amount": <número>, "category": "<igual que arriba>", "description": "<corta>"}],
-  "needs_confirmation": true/false,
-  "loan_counterparty": "<nombre de la persona, solo si intent es register_loan>",
-  "loan_direction": "me_deben" | "debo",
-  "response": "<tu respuesta empática y motivadora en español>"
-}
-
-Conceptos clave:
-- register_expense: cuando el usuario reporta una compra ("compré 18k en almuerzo", "pagué 50mil de mercado")
-- register_income: cuando reporta ingreso ("recibí sueldo", "me pagaron 2 millones")
-- Si el mensaje reporta VARIAS transacciones distintas a la vez (ej: "gasté 20mil en comida y 15mil en transporte", "compré 30mil de mercado y recibí 100mil de un amigo"): pon la PRIMERA en los campos de arriba (intent/amount/category/description) y TODAS las demás en "additional_transactions", cada una con su propio "type" (expense o income), amount, category y description. Si solo hay una transacción, deja "additional_transactions" vacío [].
-- register_loan: cuando presta o le prestan plata ("le presté a Juan 50 mil", "María me debe 100 mil", "le debo a Pedro 30 mil"). loan_direction="me_deben" si a el/ella le deben (prestó plata o alguien le debe), "debo" si el/ella debe.
-- query_loans: cuando pregunta por sus préstamos ("préstamos", "quién me debe", "qué debo", "mis préstamos")
-- query: cuando pregunta sobre su dinero ("cuánto tengo?", "cuánto compré hoy?")
-- health_score: cuando pregunta por su salud financiera o score ("salud", "score", "como van mis finanzas", "que tal va mi plata", "/salud")
-- onboarding_name: PRIMERA INTERACCIÓN - responde al nombre
-- chat: conversación casual, saludos, agradecimientos
-- help: cuando pide ayuda o no sabes qué quiere
-- upgrade: cuando pregunta por premium o suscripción
-- referral_info: cuando pregunta por su código de invitación, cómo invitar amigos ("referido", "invitar", "código de invitación", "compartir", "amigue")
-- referral_use: cuando escribe un código de invitación como "LEO77115"
-- apoyar: cuando quiere apoyar/donar/invitar algo a Leo ("apoyar", "donar", "invitarte un café", "quiero ayudar al proyecto")
-- configuracion: cuando quiere cambiar ajustes, cambiar de moneda, o dar feedback/sugerencias ("configuración", "ajustes", "cambiar moneda", "quiero dar feedback", "tengo una sugerencia")
-- off_topic: mensajes que NO tienen NADA que ver con finanzas personales ni con Leo (ej. "cuéntame un chiste", "quién ganó el partido", "qué hora es", preguntas de tarea, política, clima). NO es off_topic un saludo, un agradecimiento, una pregunta sobre Leo/la app, ni charla corta relacionada con plata - eso es "chat".
-
-Reglas de personalidad:
-1. NUNCA uses miedo o culpa. Usa esperanza, control, pequeñas victorias.
-2. Sé cálido y cercano, como un amigo que entiende de finanzas.
-3. Usa un tono motivador pero realista. No prometas riqueza.
-4. Cuando registres una compra, sé neutral y constructivo.
-5. Cuando registres un ingreso, celebra con el usuario.
-6. Para queries, da información clara y útil.
-7. Si no entiendes, pide aclaración amablemente.
-8. NO eres asesor financiero. Cuando hables de ahorro, inversión, deudas, tarjetas o créditos, presenta OPCIONES con los datos del usuario (no órdenes) y deja que decida él.
-
-Reglas de negocio:
-- Los montos vienen en COP. El usuario puede decir "18k", "18 mil" = 18000
-- El usuario tiene el plan ${c.tierLabel}. No lo promociones agresivamente.
-- Planes de referencia: Basic $15.000 COP/mes (60 interacciones IA), Master $30.000 COP/mes (IA ilimitada).
-- needs_confirmation debe ser TRUE para registros de compras/ingresos.`;
-}
+// Como el agente de Mundo Helados (#143, parte B): temperatura 0, 15 s y 1 reintento; si no, el parser sin IA.
+const TOOLS_TEMPERATURE = 0;
+const TOOLS_TIMEOUT_MS = 15000;
+const TOOLS_ATTEMPTS = 2;
 
 async function interpret(message, userSession, forceFallback) {
     // forceFallback: usá SOLO el parser determinista (sin IA). Lo usa el plan
@@ -127,29 +36,35 @@ async function interpret(message, userSession, forceFallback) {
         return fallbackInterpret(message, userSession);
     }
 
-    // Todo pasa por el proveedor (#143): OpenRouter con respaldo en Gemini.
+    // Todo pasa por el proveedor (#143): OpenRouter con respaldo en Gemini. La IA solo elige una herramienta;
+    // los montos se anclan al texto y los datos sensibles nunca le llegan (financeAiTools).
+    const fin = (userSession && userSession.finance) || {};
+    const { text: safeText } = aiTools.maskSensitive(message);
+    const fallback = fallbackInterpret(safeText, userSession);
     const messages = [
-        { role: 'system', content: buildSystemPrompt(userSession) },
-        { role: 'user', content: `Mensaje del usuario: "${message}"` },
+        { role: 'system', content: aiTools.buildToolsPrompt(fin, todayInBogota()) },
+        { role: 'user', content: safeText },
     ];
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= TOOLS_ATTEMPTS; attempt++) {
         try {
-            const result = await aiProvider.chat({ messages, jid: jidOf(userSession), json: true });
-            const parsed = JSON.parse(stripJsonFence(result.text));
-            if (!parsed.intent) parsed.intent = 'chat';
-            if (!Array.isArray(parsed.additional_transactions)) parsed.additional_transactions = [];
-            parsed.fromAi = true; // texto libre de la IA: el flujo le tapa los montos en modo privado (#139)
-            return parsed;
+            const result = await aiProvider.chat({
+                messages, jid: jidOf(userSession), json: true, tools: aiTools.TOOL_DECLARATIONS,
+                temperature: TOOLS_TEMPERATURE, timeoutMs: TOOLS_TIMEOUT_MS,
+            });
+            const intent = aiTools.toIntent(aiTools.callsFromResult(result), safeText, fin, fallback);
+            // "¿Cuánto tengo?" se responde con los datos, nunca con lo que redacte la IA.
+            if (intent && intent.intent === 'query' && fallback.intent !== 'query') {
+                intent.response = fallbackInterpret('cuanto tengo', userSession).response;
+            }
+            if (intent) return intent;
+            logger.warn(`financeAi intento ${attempt}: la IA no eligió una herramienta`);
         } catch (e) {
             logger.warn(`financeAi intento ${attempt}: ${e.message}`);
-            if (attempt < 2) {
-                await new Promise(r => setTimeout(r, 500));
-                continue;
-            }
         }
     }
-    return fallbackInterpret(message, userSession);
+    // El usuario nunca queda sin respuesta: el parser sin IA de siempre.
+    return fallback;
 }
 
 async function interpretAudio(audioBase64, userSession, mimeType = 'audio/ogg; codecs=opus') {

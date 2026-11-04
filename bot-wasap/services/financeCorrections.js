@@ -248,6 +248,19 @@ function applyPaymentAfterSave(fin, text, today, now) {
     return { text: confirmationAfterChange(fin, entries[0], label), buttons: entryButtons(fin.lastEntryGroup) };
 }
 
+/**
+ * corregir_ultimo de la IA (#143): cambia un campo del último registro (de un solo movimiento). { text, buttons }
+ * o null si no hay un último registro que se pueda corregir así.
+ */
+function correctLast(fin, field, value, today, now) {
+    if (!fin.lastEntryGroup || now - (fin.lastEntryAt || 0) > CORRECTION_WINDOW_MS) return null;
+    const entries = groupEntries(fin, fin.lastEntryGroup);
+    if (entries.length !== 1 || !FIELDS[field]) return null;
+    const label = applyFieldChange(fin, entries[0], field, value, today);
+    if (!label) return null;
+    return { text: confirmationAfterChange(fin, entries[0], label), buttons: entryButtons(fin.lastEntryGroup) };
+}
+
 /** Recuerda el último grupo guardado (para "fue con tarjeta"). */
 function rememberEntryGroup(fin, group, now) {
     fin.lastEntryGroup = group;
@@ -257,5 +270,5 @@ function rememberEntryGroup(fin, group, now) {
 module.exports = {
     parseQuantity, splitEntryParts, interpretEntries,
     entryButtons, parseEntryAction, deleteGroup, startCorrection, applyPendingCorrection, applyPaymentAfterSave,
-    rememberEntryGroup, parseMedium, balanceEffect,
+    rememberEntryGroup, parseMedium, balanceEffect, correctLast,
 };

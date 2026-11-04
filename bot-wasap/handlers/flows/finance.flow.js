@@ -1351,7 +1351,9 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
 const RECOGNIZED_INTENTS = new Set([
     'register_expense', 'register_income', 'register_loan', 'query_loans', 'query',
     'chat', 'help', 'goal_query', 'upgrade', 'health_score', 'goals',
-    'referral_info', 'referral_use', 'apoyar', 'configuracion'
+    'referral_info', 'referral_use', 'apoyar', 'configuracion',
+    // Herramientas de la IA (#143, parte B)
+    'ask_amount', 'correct_last', 'spending_report', 'set_goal'
 ]);
 
 async function applyIntent(sock, jid, result, userSession, ctx, fin) {
@@ -1382,7 +1384,8 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     type: t.type,
                     amount: Number(t.amount),
                     category: t.category || (t.type === 'expense' ? 'Otros' : 'Ingreso'),
-                    description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso')
+                    description: t.description || (t.type === 'expense' ? 'Compra' : 'Ingreso'),
+                    medium: t.medium
                 }));
             // Claro (monto y descripción) → se guarda de una, con [✏️ Corregir] [🗑️ Borrar] [📋 Menú] (#122, escalón B).
             // Dudoso → "¿Es correcto?" como antes.
@@ -1393,6 +1396,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
                     amount: result.amount,
                     category: cat,
                     description: desc,
+                    medium: result.medium,
                     date: result.date || 'hoy',
                     extra
                 };
@@ -1404,7 +1408,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             } else if (result.amount > 0) {
                 // Si es el total de la foto de un recibo, se guardan sus productos (igual que al confirmar con "sí").
                 const receiptExtra = financeReceipts.receiptExtraFor(userSession, { type, amount: result.amount });
-                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc }, ...extra], fin, ctx, receiptExtra);
+                await saveEntryGroup(sock, jid, [{ type, amount: result.amount, category: cat, description: desc, medium: result.medium }, ...extra], fin, ctx, receiptExtra);
             } else {
                 await say(sock, jid, result.response ||
                     (type === 'expense'
@@ -1452,6 +1456,34 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             await say(sock, jid, withDisclaimer(text), ctx);
             break;
         }
+
+        // Herramientas de la IA (#143, parte B)
+        case 'ask_amount':
+            await say(sock, jid, result.response, ctx);
+            break;
+
+        case 'correct_last': {
+            const corrected = financeCorrections.correctLast(fin, result.field, result.value, todayInBogota(), Date.now());
+            if (corrected) {
+                financeStore.saveFinance(jid, fin);
+                await say(sock, jid, corrected.text, ctx, { buttons: corrected.buttons });
+            } else {
+                await say(sock, jid, '✏️ No encontré un registro reciente para corregir. Tocá *✏️ Corregir* debajo del gasto 🦁', ctx);
+            }
+            break;
+        }
+
+        case 'spending_report':
+            await sendSpendingReport(sock, jid, ctx, fin);
+            break;
+
+        case 'set_goal':
+            fin.goalName = result.goalName || fin.goalName || 'Mi meta';
+            fin.goalType = getGoalType(fin.goalName).key;
+            fin.goalTarget = result.amount;
+            financeStore.saveFinance(jid, fin);
+            await showGoalsScreen(sock, jid, userSession, ctx, fin);
+            break;
 
         case 'upgrade':
             await handleUpgradeRequest(sock, jid, 'premium', userSession, ctx, fin);
@@ -1641,7 +1673,7 @@ async function handleConfirmation(sock, jid, text, userSession, ctx, fin) {
         } else {
             // Si el gasto viene de la foto de un recibo, se guardan sus productos para comparar precios entre tiendas.
             const receiptExtra = financeReceipts.receiptExtraFor(userSession, confirm);
-            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description },
+            const entries = [{ type: confirm.type, amount: confirm.amount, category: confirm.category, description: confirm.description, medium: confirm.medium },
                 ...(Array.isArray(confirm.extra) ? confirm.extra : [])];
             await saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra);
         }
@@ -1673,7 +1705,7 @@ async function saveEntryGroup(sock, jid, entries, fin, ctx, receiptExtra = {}) {
         const e = entries[i];
         const isLast = i === entries.length - 1;
         await saveAndConfirm(sock, jid, e.type, e.amount, e.category, e.description, fin, ctx,
-            { ...(i === 0 ? receiptExtra : {}), entryGroup: group },
+            { ...(i === 0 ? receiptExtra : {}), ...(e.medium ? { medium: e.medium } : {}), entryGroup: group },
             isLast ? { buttons: financeCorrections.entryButtons(group) } : {});
     }
     financeCorrections.rememberEntryGroup(fin, group, Date.now());
@@ -1705,12 +1737,9 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ...extra
     };
     fin.transactions.push(tx);
-    if (type === 'expense') {
-        fin.balance -= amount;
-        fin.todaySpending += amount;
-    } else {
-        fin.balance += amount;
-    }
+    // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
+    fin.balance += financeCorrections.balanceEffect(tx);
+    if (type === 'expense') fin.todaySpending += amount;
 
     const confirmMsg = CONFIRM_VARIANTS[Math.floor(Math.random() * CONFIRM_VARIANTS.length)];
 
