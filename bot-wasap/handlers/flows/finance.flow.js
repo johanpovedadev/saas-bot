@@ -27,6 +27,7 @@ const financeNews = require('../../services/financeNews');
 const privacy = require('../../utils/financePrivacy');
 const financeCharts = require('../../services/financeCharts');
 const financeAiProvider = require('../../services/financeAiProvider');
+const financeAiTrial = require('../../services/financeAiTrial');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -187,7 +188,8 @@ function getUserTier(jid) {
  */
 function canUseAi(jid) {
     try {
-        return financeAdmin.canConsumeAi(jid);
+        // Un plan con IA, o los 15 días de IA gratis (#143, parte C).
+        return financeAdmin.canConsumeAi(jid) || financeAiTrial.isActive(financeStore.loadFinance(jid), Date.now());
     } catch (e) {
         logger.error(`[canUseAi] ${jid}: ${e.message}`);
         return false;
@@ -908,6 +910,8 @@ async function startExpressAccount(sock, jid, text, userSession, ctx, fin) {
     fin.name = financeWelcome.displayName(userSession.telegramFirstName);
     fin.expressWelcome = true;
     fin.trialStart = fin.trialStart || Date.now();
+    // 15 días de Leo con IA para los nuevos (#143, parte C).
+    if (!fin.aiTrialUntil) financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.NEW);
     if (!fin.referralCode) fin.referralCode = financeReferral.getOrCreateCode(jid);
     userSession.phase = PHASE.FIN_MAIN;
     userSession.errorCount = 0;
@@ -1589,11 +1593,16 @@ async function handleConversation(sock, jid, text, userSession, ctx, fin) {
     // Consume cupo de IA (Basic). Master ilimitado; free nunca llega aquí por el
     // gate (usa handleFreeUser). Si el cupo se agotó (p.ej. media de una llamada
     // previa), bloquea.
-    const consumption = financeAdmin.consumeAiUsage(jid);
+    // Primero el plan; si no tiene, los 15 días de IA gratis (tope de 300 interacciones, #143 parte C).
+    const fromTrial = !financeAdmin.canConsumeAi(jid);
+    // En la prueba, sin ningún proveedor de IA configurado: lo mismo que el plan Gratis, sin gastar interacciones.
+    if (fromTrial && !financeAiProvider.isAvailable()) return await handleFreeUser(sock, jid, text, userSession, ctx, fin);
+    const consumption = fromTrial ? financeAiTrial.consume(fin, Date.now()) : financeAdmin.consumeAiUsage(jid);
     if (!consumption.allowed) {
         await showPremiumRequired(sock, jid, ctx);
         return;
     }
+    if (fromTrial) financeStore.saveFinance(jid, fin);
 
     const result = await financeAi.interpret(text, userSession);
 
@@ -1725,6 +1734,9 @@ async function handleEntryAction(sock, jid, action, ctx, fin) {
 }
 
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
+    // Volvió después de 7 días o más sin registrar: 15 días de IA, una sola vez (#143, parte C). Se mira antes
+    // de guardar este movimiento, y no aplica a quien ya tiene IA por su plan.
+    const backFromBreak = !financeAdmin.canConsumeAi(jid) && financeAiTrial.returnTrialDue(fin, todayInBogota(), Date.now());
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1792,6 +1804,11 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ctx, opts.buttons ? { buttons: opts.buttons } : undefined);
 
     fin.trialLastShown = Date.now();
+
+    if (backFromBreak) {
+        financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.RETURN);
+        await say(sock, jid, financeAiTrial.MESSAGES.welcomeBack, ctx);
+    }
 
     // Referral reward: first real transaction triggers +15 movimientos con IA
     // para ambos (sin límite de tiempo para usarlos, ver financeAdmin.addAiCredits).
@@ -2319,6 +2336,9 @@ async function runNightReportSweep(sock, ctx) {
                 await say(sock, jid, financeNightPolicy.nightMessage(action), ctx);
             }
             financeNightPolicy.recordNightAction(fin, action, bogotaToday);
+            // 15 días de IA (#143, parte C): aviso cuando quedan 3 días y mensaje al terminar, sin precios.
+            const trialNotice = financeAiTrial.dueNotice(fin, Date.now());
+            if (trialNotice) await say(sock, jid, financeAiTrial.noticeText(trialNotice), ctx);
             fin.lastReportDate = today;
             financeStore.saveFinance(jid, fin);
         } catch (e) {

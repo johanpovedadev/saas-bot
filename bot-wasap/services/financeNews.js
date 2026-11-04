@@ -17,6 +17,7 @@ const NEWS = [
         id: '1.9.0',
         date: '2026-11-03',
         items: [
+            { text: 'Leo ahora entiende mejor lo que le escribís, fotos y audios', probar: 'mandame un audio con tus gastos de hoy' },
             { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
             { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
         ],
