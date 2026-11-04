@@ -26,6 +26,7 @@ const financeMenu = require('../../services/financeMenu');
 const financeNews = require('../../services/financeNews');
 const privacy = require('../../utils/financePrivacy');
 const financeCharts = require('../../services/financeCharts');
+const financeAiProvider = require('../../services/financeAiProvider');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -412,6 +413,13 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
     if (!isAdminJid(jid)) return false;
     const t = (text || '').trim();
 
+    // /costo_ia (#143): cuánto va costando la IA de Leo (hoy, el mes y por usuario), sin textos de nadie.
+    if (/^\/?costo_ia$/i.test(t)) {
+        const summary = financeAiProvider.costSummary(financeAiProvider.readUsage(), todayInBogota());
+        await say(sock, jid, financeAiProvider.formatCostSummary(summary), ctx);
+        return true;
+    }
+
     // Prender/apagar otros bots (WhatsApp) desde el chat de Telegram. Solo el
     // admin de finanzas (isAdminJid ya validado arriba) — el dueño dinamico
     // por negocio (botRegistry) no aplica aca porque Telegram no tiene JID de
@@ -632,6 +640,8 @@ async function handle(sock, jid, text, userSession, ctx) {
         }
     }
     const fin = initFinance(userSession);
+    // El proveedor de IA registra el costo por usuario (hasheado), así que la sesión lleva su jid (#143).
+    if (!userSession.jid) userSession.jid = jid;
     // Un número escrito justo después de unos botones equivale a tocar ese botón (#122, escalón 0).
     const t = messageButtons.resolveButtonReply(ctx, jid, (text || '').trim()).trim();
     if (!t) return;
