@@ -1824,7 +1824,8 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const milestoneMsg = fin.streak === 5 && !isNewRecord ? `🎯 ¡5 días! Ya eres constante.\n` : fin.streak === 10 && !isNewRecord ? `🏆 10 días! Imparable.\n` : '';
 
     // #5 — oferta solo 1 vez al día para usuarios sin plan con IA
-    const planLine = isFinPremium(fin) ? ''
+    // En los 15 días de IA (#143, parte C) ya tiene IA: no se le dice "Plan Gratis, desbloqueá la IA".
+    const planLine = (isFinPremium(fin) || financeAiTrial.isActive(fin, Date.now())) ? ''
         : (daysSince(fin.trialLastShown || 0) >= 1)
             ? `💎 Plan *Gratis* — escribí "Actualizar a Pro" para desbloquear la IA 🦁\n`
             : '';

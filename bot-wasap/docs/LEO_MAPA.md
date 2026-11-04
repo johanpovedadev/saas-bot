@@ -60,7 +60,13 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 cd bot-wasap
 node test_finance_<tema>.js                      # la tuya
 node scripts/run-tests.js --only=test_finance    # todas las de Leo, ~2 min
+node tests_sim/run-leo.js --verbose              # simulador: casos reales donde la gente se trabó
 ```
+
+**Simulador de Leo** (`tests_sim/run-leo.js`, `leoWorld.js`, `scenarios_leo/`): conversaciones completas con el flujo
+real, con IA simulada (ingenua a propósito: toma el primer número como plata) y sin IA. Cada conversación mala que
+reporte un usuario se agrega a `scenarios_leo/` como escenario. `test_finance_simulador_leo.js` lo corre dentro de
+`--only=test_finance` y falla si Leo se traba. No toca el simulador de Mundo Helados (solo usa `runner.js`).
 
 No corras la suite completa (`node scripts/run-tests.js` tarda ~25 min): Hermes corre `--changed`, que detecta si
 solo cambiaste Leo.
