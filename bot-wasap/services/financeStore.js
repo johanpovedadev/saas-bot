@@ -105,6 +105,10 @@ function rowToFinance(row) {
         goalType: extra.goalType || '',
         // Novedades de Leo ya vistas (#129): la versión más nueva que le llegó.
         lastNewsSeen: extra.lastNewsSeen || '',
+        // 15 días de IA gratis (#143, parte C).
+        aiTrialUntil: extra.aiTrialUntil || 0,
+        aiTrialReturnUsed: extra.aiTrialReturnUsed || false,
+        aiTrial: extra.aiTrial || null,
         privateMode: Boolean(privacySettings.privateMode),
         privateModeAll: Boolean(privacySettings.privateModeAll),
         lastReportDate: extra.lastReportDate || '',
@@ -185,6 +189,9 @@ function financeToRow(jid, fin) {
             goalTempName: fin.goalTempName || '',
             goalType: fin.goalType || '',
             lastNewsSeen: fin.lastNewsSeen || '',
+            aiTrialUntil: fin.aiTrialUntil || 0,
+            aiTrialReturnUsed: fin.aiTrialReturnUsed || false,
+            aiTrial: fin.aiTrial || null,
             privacy: privacyEnc,
             lastReportDate: fin.lastReportDate || '',
             milestonesSent: fin.milestonesSent || [],
