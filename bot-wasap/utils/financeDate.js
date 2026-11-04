@@ -23,11 +23,24 @@ function shiftDay(iso, days) {
     return new Date(Date.parse(`${iso}T00:00:00Z`) + days * MS_PER_DAY).toISOString().slice(0, 10);
 }
 
-/** "almuerzo 15 mil ayer" → la fecha de ayer ("YYYY-MM-DD"); null si el mensaje no dice el día. */
+// "el lunes", "el sábado pasado": el último de ese día antes de hoy (dicho un lunes, "el lunes" es hace 7 días).
+const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+const WEEKDAY_RE = new RegExp(`\\b(?:el|este|del)\\s+(${WEEKDAYS.join('|')})(?:\\s+pasado)?\\b`);
+const DAYS_IN_WEEK = 7;
+
+function weekdayOf(iso) {
+    return new Date(`${iso}T12:00:00Z`).getUTCDay();
+}
+
+/** "almuerzo 15 mil ayer" / "el lunes" → esa fecha ("YYYY-MM-DD"); null si el mensaje no dice el día. */
 function parseRelativeDay(text, today) {
     const t = String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     const found = RELATIVE_DAYS.find((d) => d.re.test(t));
-    return found ? shiftDay(today, -found.days) : null;
+    if (found) return shiftDay(today, -found.days);
+    const weekday = t.match(WEEKDAY_RE);
+    if (!weekday) return null;
+    const back = (weekdayOf(today) - WEEKDAYS.indexOf(weekday[1]) + DAYS_IN_WEEK) % DAYS_IN_WEEK || DAYS_IN_WEEK;
+    return shiftDay(today, -back);
 }
 
 module.exports = { todayInBogota, parseRelativeDay, shiftDay, FINANCE_TIME_ZONE };
