@@ -21,6 +21,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeAiTrial.js` | 15 días de IA gratis (#143): nuevos (promo hasta `LEO_TRIAL_PROMO_UNTIL`) y antiguos que vuelven tras 7 días, una vez. `fin.aiTrialUntil`, `fin.aiTrialReturnUsed`, `fin.aiTrial` (uso, tope 300, avisos). `canUseAi()` la cuenta como un plan. Aviso a 3 días del final y mensaje al terminar, sin precios. |
 | `services/financePresenter.js` | Presentador (#144): toda respuesta pasa por `present()` dentro del `say` de `finance.flow.js` (máx. 3 líneas + "➕ Ver más", una pregunta, sin "escribí el número", saludo una vez por día). Pantallas largas a propósito (informes, resumen, salud...) usan `sayFull`. |
 | `services/financeEntry.js` | `isClearEntry()` (guardar de una) y `extractDetails()`: medio de pago (Rappi→tarjeta, Nequi/PSE→banco) y día ("ayer") del mensaje, para no preguntarlos. |
+| `services/financeFrequent.js` | "Lo de siempre" (#144): los 3 gastos más repetidos en 30 días (3+ veces, monto parecido) como botones bajo "¿Qué compraste?" y después del menú (`leo:siempre:<monto>:<slug>`). Prueba: `test_finance_lo_de_siempre.js`. |
 | `services/financeInsights.js` | Resumen agrupado: `buildSpendingReport(fin, today, days)` y `formatSpendingReport(report, fin)`. |
 | `services/financeWeekly.js` | Informe semanal: `buildWeeklyMessage(fin, today)`; horas en Bogotá (`isNightReportTime`). |
 | `services/financeGoals.js` | Metas con fecha: `projectGoal(fin, today)`, `formatProjection()`, `weeklyGoalLine()`, `dailyGoalLine()`, `parseMonthlySaving()`. |

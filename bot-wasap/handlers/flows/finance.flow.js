@@ -29,6 +29,7 @@ const financeCharts = require('../../services/financeCharts');
 const financeAiProvider = require('../../services/financeAiProvider');
 const financeAiTrial = require('../../services/financeAiTrial');
 const financePresenter = require('../../services/financePresenter');
+const financeFrequent = require('../../services/financeFrequent');
 const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
@@ -753,6 +754,14 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await backToMenu(sock, jid, userSession, ctx, fin);
     }
 
+    // Un botón de "lo de siempre" (#144, bloque 3): se registra con su categoría y medio de siempre.
+    const frequentTap = financeFrequent.parseFrequentTap(t, fin, todayInBogota());
+    if (frequentTap) {
+        fin.pendingConfirm = null;
+        userSession.phase = PHASE.FIN_MAIN;
+        return await saveEntryGroup(sock, jid, [frequentTap], fin, ctx);
+    }
+
     // [✏️ Corregir] [🗑️ Borrar] de un registro, la respuesta a "¿Qué cambio?" y "fue con tarjeta" (#122, escalón B).
     const entryAction = financeCorrections.parseEntryAction(t);
     if (entryAction) return await handleEntryAction(sock, jid, entryAction, ctx, fin);
@@ -1320,7 +1329,9 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
     userSession.phase = PHASE.FIN_MAIN;
     switch (choice) {
         case 'gasto':
-            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
+            // Lo de siempre (#144, bloque 3): los gastos que más repite, en un toque.
+            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx,
+                { buttons: [...financeFrequent.frequentButtons(fin, todayInBogota()), financeMenu.BACK_ROW] });
         case 'ingreso':
             return await say(sock, jid, financeMenu.INCOME_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
         case 'resumen':
@@ -1366,7 +1377,8 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
         `🦁 ${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]}, *${fin.name}*!`;
     await say(sock, jid,
         `${greeting}\n\n${financeMenu.MENU_PROMPT}`,
-        ctx, { buttons: financeMenu.MAIN_MENU_BUTTONS });
+        // Lo de siempre va después del menú: así los números de siempre (1 gasto ... 6 configuración) no cambian.
+        ctx, { buttons: [...financeMenu.MAIN_MENU_BUTTONS, ...financeFrequent.frequentButtons(fin, todayInBogota())] });
 }
 
 /**
