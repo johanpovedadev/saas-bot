@@ -14,7 +14,7 @@
  */
 
 const privacy = require('../utils/financePrivacy');
-const { parseAmountText } = require('../utils/financeAmount');
+const { parseAmountText, normalizeSpokenAmounts } = require('../utils/financeAmount');
 const { MEDIUM, mediumOf } = require('../utils/financeMedium');
 
 const DATA_PREFIX = 'leo:';
@@ -80,7 +80,8 @@ function splitEntryParts(text) {
  * (sin IA para el plan Gratis). Devuelve un resultado con `additional_transactions`, o null si no aplica (el mensaje
  * se interpreta como siempre).
  */
-async function interpretEntries(text, interpret) {
+async function interpretEntries(rawText, interpret) {
+    const text = normalizeSpokenAmounts(rawText);
     const parts = splitEntryParts(text);
     const quantity = parts.length === 1 ? parseQuantity(parts[0]) : null;
     if (parts.length === 1 && !quantity) return null;

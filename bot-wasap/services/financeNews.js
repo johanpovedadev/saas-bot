@@ -21,6 +21,7 @@ const NEWS = [
             { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
             { text: 'Si me decís con qué pagaste y cuándo, ya no te lo pregunto', probar: 'escribí _almuerzo 15 mil con la Rappi ayer_' },
             { text: 'Tus gastos de siempre ahora están *a un toque*', probar: 'escribí *menú* y tocá tu gasto de siempre' },
+            { text: 'Te entiendo como hablás: lucas, barras, un palo, "el lunes"', probar: 'escribí _almuerzo 15 lucas el lunes_' },
             { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
         ],
     },

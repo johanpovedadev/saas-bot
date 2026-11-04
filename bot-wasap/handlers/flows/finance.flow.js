@@ -1416,7 +1416,7 @@ async function applyIntent(sock, jid, result, userSession, ctx, fin) {
             // quedan pegados a la descripción ("almuerzo 15 mil con la Rappi ayer").
             const details = financeEntry.extractDetails(result.sourceText || '', todayInBogota());
             const medium = result.medium || details.medium;
-            const desc = financeEntry.cleanDetailWords(result.description || (type === 'expense' ? 'Compra' : 'Ingreso'));
+            const desc = financeEntry.cleanDetailWords(result.description || (type === 'expense' ? 'Compra' : 'Ingreso'), { dated: Boolean(details.date) });
             // Si el mensaje reportó VARIAS transacciones a la vez (ej: "gasté
             // 20mil en comida y 15mil en transporte"), las demás vienen en
             // additional_transactions - se validan y se guardan en cola junto

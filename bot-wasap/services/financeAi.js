@@ -5,6 +5,7 @@ const { formatMoney } = require('../utils/financeMoney');
 const aiProvider = require('./financeAiProvider');
 const aiTools = require('./financeAiTools');
 const { todayInBogota } = require('../utils/financeDate');
+const { normalizeSpokenAmounts } = require('../utils/financeAmount');
 const privacy = require('../utils/financePrivacy');
 const receipts = require('./financeReceipts');
 
@@ -25,7 +26,11 @@ const TOOLS_TEMPERATURE = 0;
 const TOOLS_TIMEOUT_MS = 15000;
 const TOOLS_ATTEMPTS = 2;
 
-async function interpret(message, userSession, forceFallback) {
+async function interpret(rawMessage, userSession, forceFallback) {
+    // Como habla la gente (#144, bloque 4): "15 lucas", "un palo", "luca y media" pasan a cifras. Solo con el
+    // nombre ya puesto: antes, el mensaje puede ser el nombre ("Luca").
+    const named = Boolean(userSession && userSession.finance && userSession.finance.name);
+    const message = named ? normalizeSpokenAmounts(rawMessage) : rawMessage;
     // forceFallback: usá SOLO el parser determinista (sin IA). Lo usa el plan
     // Gratis para que registre gastos/ingresos y consulte sin consumir cupo.
     if (forceFallback) {
