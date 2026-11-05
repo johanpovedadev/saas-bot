@@ -42,6 +42,8 @@ const INCOME_PROMPT = '💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n_"R
 
 // Lo que hace la IA (fotos, audios) no está en el plan Gratis: se dice qué sí se puede, sin precios ni callejón.
 // Corto (#144, bloque 5): lo que sí puede hacer, en dos líneas.
+// Con la IA de Leo apagada para todos (FINANCE_AI_ENABLED=0): no es cosa del plan de la persona.
+const AI_OFF_TEXT = '🦁 Por ahora no estoy leyendo fotos ni audios.\nEscribime el gasto y lo anoto igual: _"almuerzo 15 mil"_';
 const NO_AI_TEXT = '🦁 Las fotos y los audios los leo con la IA, que no está en tu plan.\n' +
     'Escribime el gasto y lo anoto igual: _"almuerzo 15 mil"_';
 
@@ -151,7 +153,7 @@ function goalChoiceButtons(goalOfferButtons) {
 }
 
 module.exports = {
-    MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, MENU_PROMPT_AI, EXPENSE_PROMPT_AI, menuPrompt, expensePrompt, INCOME_PROMPT, NO_AI_TEXT,
+    MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, MENU_PROMPT_AI, EXPENSE_PROMPT_AI, menuPrompt, expensePrompt, INCOME_PROMPT, NO_AI_TEXT, AI_OFF_TEXT,
     SETTINGS_BUTTONS, REPORT_PREF_TITLE, REPORT_PREF_BUTTONS, NIGHT_REPORT_BUTTONS, BACK_ROW,
     withBack, parseMenuChoice, currencyButtons, goalChoiceButtons, settingsButtons, nightReportButtons, isRevealRequest,
     GOAL_SCREEN_BUTTONS, INVALID_GOAL_NAME_TEXT, NEW_GOAL_PROMPT, formatGoalScreen, parseGoalScreenAction, isValidGoalName,
