@@ -6,6 +6,8 @@
  *   2. "2 jugos en leche" sumaba 2 más (quedaban 3) en otra línea, en vez de dejar 2.
  *   3. "Son 2 jugos naturales no 3" quitaba la línea de 2 y dejaba la de 1 (no había cómo cambiar una cantidad).
  *   4. El mismo jugo quedaba en dos líneas ("1x" y "2x") en el carrito.
+ *   5. Los mensajes salían en desorden ("¿De qué sabores?" antes de "Anoté el jugo") y con dos preguntas a la vez.
+ *   6. "¿A qué horas paso?" a las 8:49 a. m. no decía que hoy abren a las 2:00 pm.
  * Pruebas SIN IA real: la decisión de la IA se simula con lo que hizo en esa conversación (y, con la herramienta
  * nueva, con cambiar_cantidad_en_pedido).
  *
@@ -136,6 +138,44 @@ async function pedidoInicial(t) {
             await say(t, 'una limonada', [{ name: 'agregar_producto', args: { producto: 'Limonada', cantidad: 2 } }]);
             const limonadas = (t.s().carrito || []).filter((it) => it.nombre === 'Limonada').reduce((n, it) => n + (it.cantidad || 1), 0);
             check(limonadas === 1, `el "2" de los jugos no se le pega a otro producto: "una limonada" = 1 (hay ${limonadas})`);
+        }
+
+        // ---- 6) Una sola pregunta por turno y la pregunta al final ----
+        {
+            const t = setup();
+            await say(t, 'Hoy quiero 2 pero volcán con los mismos sabores y demás 2 jugos naturales', [
+                { name: 'agregar_producto', args: { producto: 'Volcán de Gomitas', cantidad: 2, modo_unidades: 'iguales' } },
+                { name: 'preguntar_aclaracion', args: { pregunta: 'Para los 2 jugos naturales, ¿los prefieres en agua o en leche?', opciones: ['Jugos Naturales Agua', 'Jugos Naturales Leche'] } }
+            ]);
+            const preguntas = t.sent.filter((m) => /\?/.test(m));
+            check(preguntas.length === 1 && /agua o en leche/.test(preguntas[0]), `con una aclaración, es la única pregunta del turno (hubo ${preguntas.length})`);
+            await say(t, 'Leche', [{ name: 'agregar_producto', args: { producto: JUGO, cantidad: 2 } }]);
+            const iAnote = t.sent.findIndex((m) => /Anot/.test(m));
+            const iSabores = t.sent.findIndex((m) => /sabores/i.test(m) && /\?/.test(m));
+            check(iAnote >= 0 && iSabores > iAnote, `"Anoté el jugo" va antes que "¿De qué sabores?" (anoté=${iAnote}, sabores=${iSabores})`);
+            check(/\?/.test(t.sent[t.sent.length - 1]), 'el último mensaje es la pregunta que hay que contestar');
+        }
+
+        // ---- 7) "¿A qué horas paso?" antes de abrir: dice la hora de hoy ----
+        {
+            const businessHours = require('./utils/businessHours');
+            // El horario real de Mundo Helados (2 pm) está en su .env, que no está en el repo: se compara contra el
+            // horario configurado del día, sea cual sea.
+            const apertura = (businessHours.getEffectiveHoursForDate('2026-11-05') || {}).open;
+            const [h, m] = String(apertura).split(':').map(Number);
+            const antes = new Date(Date.UTC(2026, 10, 5, h + 5 - 1, m));   // 1 hora antes de abrir, en Bogotá (UTC-5)
+            const noche = new Date('2026-11-06T04:30:00Z');                 // 11:30 p. m. en Bogotá (ya cerró)
+            const abre = businessHours.opensLaterToday(antes);
+            check(abre === apertura, `una hora antes de abrir dice que hoy abre a las ${apertura} (dijo ${abre})`);
+            check(businessHours.opensLaterToday(noche) === null, 'de noche, ya cerrado, no dice "hoy abrimos"');
+            const original = businessHours.opensLaterToday;
+            businessHours.opensLaterToday = () => '14:00';
+            try {
+                const t = setup();
+                await pedidoInicial(t);
+                await say(t, 'Si s qué horas paso por el', [{ name: 'info_local', args: {} }]);
+                check(/Hoy abrimos a las \*2:00 pm\*/.test(t.sent.join('\n')), 'con pedido armado, "¿a qué horas paso?" responde "Hoy abrimos a las 2:00 pm"');
+            } finally { businessHours.opensLaterToday = original; }
         }
     } catch (e) {
         failures++;

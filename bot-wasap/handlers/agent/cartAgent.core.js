@@ -400,6 +400,13 @@ function qtyGroundedFor(n, productName, T) {
     return offered && !!T.pendingOptionsText && G.qtyIsGrounded(n, T.pendingOptionsText);
 }
 
+/** "14:00" -> "2:00 pm". */
+function hour12(hhmm) {
+    const [h, m] = String(hhmm).split(':').map(Number);
+    const suffix = h >= 12 ? 'pm' : 'am';
+    return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${suffix}`;
+}
+
 /** Dos líneas son "la misma" si son el mismo producto con las mismas opciones (sabores, toppings, notas) y precio. */
 function sameLine(a, b) {
     return a.codigo === b.codigo && a.nombre === b.nombre && (Number(a.precio) || 0) === (Number(b.precio) || 0) &&
@@ -732,6 +739,9 @@ const CORE_EXECUTORS = {
         const faseAntes = T.userSession.phase;
         await menuHandler.handleDireccionOption(T.sock, T.jid, T.userSession, T.ctx);
         if (faseAntes !== PHASE.SELECCION_OPCION && faseAntes !== PHASE.BROWSE_IMAGES) T.userSession.phase = faseAntes;
+        // "¿A qué horas paso?" con un pedido armado antes de abrir: la hora de hoy, no solo el horario general.
+        const opens = hasCartItems(T.userSession) ? require('../../utils/businessHours').opensLaterToday() : null;
+        if (opens) await say(T.sock, T.jid, `🕑 Hoy abrimos a las *${hour12(opens)}*: desde esa hora puedes pasar por tu pedido 😊`, T.ctx);
     },
 
     async responder_pregunta(args, T) {
@@ -1006,6 +1016,25 @@ async function closeTurn(T) {
     }
 }
 
+const isQuestion = (m) => typeof m.content === 'string' && /\?/.test(m.content);
+
+/**
+ * Orden de lo que ve el cliente (5 nov 2026, replay de Mundo Helados: "¿De qué sabores?" salía ANTES de "Anoté el
+ * jugo", y "¿agua o leche?" y "¿de qué sabores?" iban en el mismo turno):
+ *  - lo que informa va primero y la PREGUNTA al final (es lo que el cliente tiene que contestar);
+ *  - si el turno trae una aclaración, esa es la única pregunta: el paso del producto en armado se vuelve a mostrar en
+ *    el turno siguiente (el cierre del turno lo re-muestra).
+ */
+function orderForCustomer(messages, T) {
+    const questions = messages.filter(isQuestion);
+    if (questions.length === 0) return messages;
+    const drop = (T && T.clarified && questions.length > 1) ? new Set(questions.slice(0, -1)) : new Set();
+    const kept = messages.filter((m) => !drop.has(m));
+    // Con imágenes o archivos (el menú con fotos) se respeta el orden del flujo: solo se quita la pregunta de más.
+    if (kept.some((m) => typeof m.content !== 'string')) return kept;
+    return kept.filter((m) => !isQuestion(m)).concat(kept.filter(isQuestion));
+}
+
 /**
  * Envía los mensajes retenidos del turno, presentados por el plugin. Siempre
  * envía algo si hubo mensajes (si el plugin falla, van tal cual): el cliente
@@ -1018,7 +1047,7 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
     let final = outbox;
     try {
         const presented = plugin.hooks.present(outbox.map(m => ({ ...m })), T);
-        if (Array.isArray(presented) && presented.length) final = presented;
+        if (Array.isArray(presented) && presented.length) final = orderForCustomer(presented, T);
     } catch (e) {
         logger.error(`[${plugin.logTag}] ${jid} error presentando la respuesta, se envía tal cual: ${e.message}`);
     }
@@ -1396,6 +1425,7 @@ module.exports = {
     ensureCarrito,
     qtyGroundedFor,
     mergeIdenticalLines,
+    orderForCustomer,
     hasCartItems,
     cancelOrderAndClearDelivery,
     describeDelivery,
