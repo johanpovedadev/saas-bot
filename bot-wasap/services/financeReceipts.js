@@ -99,8 +99,32 @@ function formatCheaper(product, results, money) {
 }
 
 const RECEIPT_PROMPT = 'Lee esta foto de un recibo, factura o tiquete de compra. Responde SOLO un JSON con esta forma: '
-    + '{"tienda": "nombre del negocio", "total": número total pagado en pesos sin puntos, '
+    + '{"tienda": "nombre del negocio", "tipo": "parqueadero", "recibo" u "otro", '
+    + '"total": número total pagado en pesos sin puntos, '
     + '"items": [{"producto": "nombre corto", "cantidad": número, "precio": precio total de esa línea en pesos sin puntos}]}. '
-    + 'Si no ves productos, deja "items": []. No inventes nada que no esté en la imagen.';
+    + 'Si no ves productos, deja "items": []. Si el valor pagado no aparece (por ejemplo, un tiquete de entrada a un '
+    + 'parqueadero), pon "total": null. No inventes nada que no esté en la imagen.';
 
-module.exports = { parseReceiptJson, purchaseLine, receiptExtraFor, cheaperQuestion, cheapestFor, formatCheaper, RECEIPT_PROMPT, RECEIPT_TTL_MS };
+// Tiquetes que llegan sin el valor (#144, 5 nov: el de entrada al parqueadero). Leo dice qué es y pregunta cuánto.
+const TICKET_KINDS = { parqueadero: { description: 'Parqueadero', category: 'Transporte' } };
+const PARKING_WORDS = /parking|parqueadero|parqueo|estacionamiento/i;
+
+/**
+ * Una foto que la IA leyó pero sin total: { tienda, description, category } o null (si trae total, o no se lee la
+ * tienda). Nunca adivina el monto: eso se le pregunta a la persona.
+ */
+function parseTicketWithoutTotal(text) {
+    let data;
+    try {
+        data = JSON.parse(String(text || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
+    } catch (e) {
+        return null;
+    }
+    const tienda = String((data && data.tienda) || '').trim().slice(0, 60);
+    if (!tienda || toAmount(data.total)) return null;
+    const kind = String(data.tipo || '').toLowerCase();
+    const known = TICKET_KINDS[kind] || (PARKING_WORDS.test(tienda) ? TICKET_KINDS.parqueadero : null);
+    return { tienda, description: known ? known.description : tienda, category: known ? known.category : '' };
+}
+
+module.exports = { parseReceiptJson, parseTicketWithoutTotal, purchaseLine, receiptExtraFor, cheaperQuestion, cheapestFor, formatCheaper, RECEIPT_PROMPT, RECEIPT_TTL_MS };

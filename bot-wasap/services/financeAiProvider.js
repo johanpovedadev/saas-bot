@@ -248,9 +248,36 @@ function useOpenRouterNow() {
     return (hasOpenRouter() || Boolean(transports)) && Date.now() >= geminiOnlyUntil;
 }
 
-function noteOpenRouterFailure(e) {
+// Último error de cada proveedor, para /costo_ia (5 nov: las fotos fallaban y el log solo decía "status code 400").
+// Solo el motivo que devuelve el proveedor, nunca el texto del usuario ni la clave.
+const MAX_ERROR_LENGTH = 160;
+const lastFailures = { [PROVIDER.OPENROUTER]: null, [PROVIDER.GEMINI]: null };
+
+function errorDetail(e) {
+    const data = e && e.response && e.response.data;
+    const reason = (data && data.error && (data.error.message || data.error.code)) || (e && e.message) || String(e);
+    const status = e && e.response && e.response.status ? `${e.response.status}: ` : '';
+    return `${status}${reason}`.replace(/Bearer\s+\S+|sk-[\w-]+|AIza[\w-]+/g, '[clave]').slice(0, MAX_ERROR_LENGTH);
+}
+
+function noteFailure(provider, model, e) {
+    lastFailures[provider] = { at: Date.now(), model, detail: errorDetail(e) };
+}
+
+/** Estado de la IA para el administrador: modelos y último error de cada proveedor. */
+function formatAiStatus(now = Date.now()) {
+    const ago = (at) => { const min = Math.round((now - at) / 60000); return min < 1 ? 'hace menos de 1 min' : `hace ${min} min`; };
+    const line = (name, f) => (f ? `${name}: ${f.detail} (${f.model}, ${ago(f.at)})` : `${name}: sin errores`);
+    return `🔧 *Estado*\n` +
+        `OpenRouter: ${hasOpenRouter() ? openRouterModel() : 'sin clave'} · Gemini: ${hasGemini() ? geminiModel() : 'sin clave'}\n` +
+        `Último error — ${line('OpenRouter', lastFailures[PROVIDER.OPENROUTER])}\n` +
+        `Último error — ${line('Gemini', lastFailures[PROVIDER.GEMINI])}`;
+}
+
+function noteOpenRouterFailure(e, model) {
     consecutiveOpenRouterFailures += 1;
-    logger.warn(`financeAiProvider: OpenRouter falló (${consecutiveOpenRouterFailures} seguidas): ${e.message}`);
+    noteFailure(PROVIDER.OPENROUTER, model, e);
+    logger.warn(`financeAiProvider: OpenRouter falló (${consecutiveOpenRouterFailures} seguidas): ${errorDetail(e)}`);
     if (consecutiveOpenRouterFailures >= FAILURES_BEFORE_FALLBACK) {
         geminiOnlyUntil = Date.now() + FALLBACK_MS;
         consecutiveOpenRouterFailures = 0;
@@ -293,13 +320,20 @@ async function chat({ messages, jid, json = false, temperature, tools, timeoutMs
             recordUsage({ jid, ...result });
             return result;
         } catch (e) {
-            noteOpenRouterFailure(e);
+            noteOpenRouterFailure(e, body.model);
         }
     }
     if (!hasGemini() && !transports) throw new Error('sin proveedor de IA disponible');
     const model = geminiModel();
-    const out = await t.gemini({ model, parts: toGeminiParts(messages), json, temperature, timeoutMs });
-    if (!out || !out.text) throw new Error('Gemini: respuesta vacía');
+    let out;
+    try {
+        out = await t.gemini({ model, parts: toGeminiParts(messages), json, temperature, timeoutMs });
+        if (!out || !out.text) throw new Error('Gemini: respuesta vacía');
+    } catch (e) {
+        noteFailure(PROVIDER.GEMINI, model, e);
+        logger.warn(`financeAiProvider: Gemini falló: ${errorDetail(e)}`);
+        throw e;
+    }
     const result = { text: out.text, toolCalls: [], provider: PROVIDER.GEMINI, model, usage: out.usage || {}, costUsd: 0 };
     recordUsage({ jid, ...result });
     return result;
@@ -314,5 +348,5 @@ function _setTransports(fake) {
 
 module.exports = {
     chat, isAvailable, hasOpenRouter, openRouterModel, geminiModel, costSummary, formatCostSummary, readUsage,
-    hashJid, PROVIDER, OPENROUTER_URL, _setTransports,
+    hashJid, PROVIDER, OPENROUTER_URL, _setTransports, formatAiStatus,
 };

@@ -41,11 +41,13 @@ const EXPENSE_TOOL_JSON = JSON.stringify({ calls: [{ tool: 'registrar_gasto', ar
 const MEDIA_TEXT = 'Compré almuerzo por dieciocho mil';
 const calls = { openRouter: [], gemini: [] };
 let openRouterFails = false;
+let failWith = null;   // un error con la forma de axios (response.status / response.data.error.message)
 
 function fakeTransports() {
     return {
         openRouter: async (body) => {
             calls.openRouter.push(body);
+            if (failWith) throw failWith.openRouter;
             if (openRouterFails) throw new Error('503 de prueba');
             const message = body.tools
                 ? { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'registrar_gasto', arguments: JSON.stringify(EXPENSE_ARGS) } }] }
@@ -54,6 +56,7 @@ function fakeTransports() {
         },
         gemini: async (req) => {
             calls.gemini.push(req);
+            if (failWith) throw failWith.gemini;
             return { text: req.json ? EXPENSE_TOOL_JSON : MEDIA_TEXT, usage: { prompt: 100, completion: 20, total: 120 } };
         },
     };
@@ -165,6 +168,23 @@ const session = { jid: JID, finance: { name: 'Prueba', balance: 100000, transact
         await financeFlow.handle(sock, JID, '/costo_ia', ctx.sessions[JID], ctx);
         assert.ok(/Costo de la IA de Leo/.test(sent.join('\n')) && /Hoy: US\$0\.0001 en 1 llamadas/.test(sent.join('\n')), sent.join('\n'));
         console.log('OK: /costo_ia dice el costo de hoy, del mes y el promedio por usuario');
+
+        // --- 7. /costo_ia muestra por qué falla la IA (5 nov: fotos sin leer y el log solo decía "status code 400") ---
+        const axiosError = (status, message) => Object.assign(new Error(`Request failed with status code ${status}`), { response: { status, data: { error: { message } } } });
+        failWith = {
+            openRouter: axiosError(400, 'google/modelo-de-prueba is not a valid model ID (Bearer sk-or-secreta-123)'),
+            gemini: new Error('[404 Not Found] models/gemini-x is not found for API version v1beta'),
+        };
+        await assert.rejects(provider.chat({ messages: [{ role: 'user', content: 'hola' }], jid: JID }));
+        failWith = null;
+        const status = provider.formatAiStatus();
+        assert.ok(/400: google\/modelo-de-prueba is not a valid model ID/.test(status), `motivo real de OpenRouter, no solo "status code 400": ${status}`);
+        assert.ok(/models\/gemini-x is not found/.test(status), `motivo de Gemini: ${status}`);
+        assert.ok(!/sk-or-secreta|sk-or-test/.test(status) && /\[clave\]/.test(status), 'nunca muestra una clave');
+        sent.length = 0;
+        await financeFlow.handle(sock, JID, '/costo_ia', ctx.sessions[JID], ctx);
+        assert.ok(/Costo de la IA/.test(sent.join('\n')) && /not a valid model ID/.test(sent.join('\n')) && !/Ver más/.test(sent.join('\n')), `/costo_ia entero, con el estado: ${sent.join('\n')}`);
+        console.log('OK: /costo_ia muestra los modelos y el último error de cada proveedor, sin claves');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

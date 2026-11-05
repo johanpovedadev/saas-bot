@@ -5,6 +5,8 @@
  *  - Si la transcripción trae los montos en letras ("quince mil"), igual cuadran con el anclaje de montos.
  *  - La transcripción pide montos en cifras y los gastos separados por comas.
  *  - Foto de recibo → un gasto con el total y la tienda.
+ *  - Tiquete sin valor (entrada al parqueadero, 5 nov): Leo dice qué es y pregunta cuánto; "6 mil" lo registra.
+ *  - Si la IA no lee la foto o el audio: mensaje corto de qué hacer, no "No pude entender el contenido".
  *  - Sin IA: mensaje corto (máx. 3 líneas) de qué sí puede hacer, sin precios.
  * Base temporal. Uso: node test_finance_audios_fotos.js
  */
@@ -43,10 +45,12 @@ const ctx = { sessions: {}, mutedChats: new Set(), carts: {}, lastSent: {}, botE
 let transcription = '';
 let receiptJson = '';
 let toolCall = null;
+let mediaFails = false;
 const requests = [];
 function fakeOpenRouter(body) {
     requests.push(body);
     const raw = JSON.stringify(body.messages);
+    if (mediaFails && /input_audio|image_url/.test(raw)) throw new Error('la IA no respondió');
     const reply = (content, toolCalls) => ({ model: body.model, choices: [{ message: { content, tool_calls: toolCalls } }], usage: {} });
     if (raw.includes('input_audio')) return reply(transcription);
     if (raw.includes('image_url')) return reply(receiptJson);
@@ -62,13 +66,19 @@ function resetUser(extra = {}) {
     ctx.lastButtons = {};
 }
 
-/** Lo que hace handlers/handler.js con un audio o una foto: transcribir y mandar el texto al flujo. */
+/** Lo que hace handlers/handler.js con un audio o una foto: transcribir con el flujo y mandarle el texto. */
 async function sendMedia(kind) {
     sent.length = 0;
     const session = ctx.sessions[JID];
-    const text = kind === 'audio' ? await financeAi.interpretAudio('QUFBQQ==', session) : await financeAi.interpretImage('QUFBQQ==', session, 'image/jpeg');
-    assert.ok(text, `la IA falsa ${kind === 'audio' ? 'transcribe' : 'lee'} algo`);
+    const text = kind === 'audio' ? await financeFlow.transcribeAudio('QUFBQQ==', session, 'audio/ogg') : await financeFlow.transcribeImage('QUFBQQ==', session, 'image/jpeg');
+    assert.ok(text, 'el flujo nunca devuelve vacío (handler.js mandaría "No pude entender el contenido")');
     await financeFlow.handle(sock, JID, text, session, ctx);
+    return sent.join('\n');
+}
+
+async function send(text) {
+    sent.length = 0;
+    await financeFlow.handle(sock, JID, text, ctx.sessions[JID], ctx);
     return sent.join('\n');
 }
 
@@ -125,6 +135,44 @@ const expenses = () => financeStore.loadFinance(JID).transactions.map((t) => [t.
         const tx = financeStore.loadFinance(JID).transactions[0];
         assert.ok(tx && tx.amount === 18500 && /D1/.test(tx.description), `foto → gasto con el total: ${JSON.stringify(tx)} ${r}`);
         console.log('OK: la foto de un recibo queda como un gasto con el total');
+
+        // --- 5b. Tiquete de entrada al parqueadero, sin valor (Johan, 5 nov) ---
+        resetUser();
+        receiptJson = JSON.stringify({ tienda: 'Parking SW', tipo: 'parqueadero', total: null, items: [] });
+        r = await sendMedia('foto');
+        assert.ok(/Parking SW/.test(r) && /¿Cuánto pagaste\?/.test(r) && !/No pude entender/.test(r), `pregunta el monto: ${r}`);
+        assert.deepStrictEqual(expenses(), [], 'sin valor no guarda nada');
+        r = await send('6 mil');
+        assert.deepStrictEqual(financeStore.loadFinance(JID).transactions.map((t) => [t.description, t.amount, t.category]), [['Parqueadero', 6000, 'Transporte']], `"6 mil" lo registra: ${r}`);
+        assert.ok(/Registrado/.test(r));
+        // Si en vez del monto escribe otra cosa, sigue como siempre (no se queda esperando).
+        resetUser();
+        await sendMedia('foto');
+        toolCall = { name: 'registrar_gasto', args: { monto: 15000, descripcion: 'almuerzo', categoria: 'Comida' } };
+        r = await send('almuerzo 15 mil');
+        assert.deepStrictEqual(expenses(), [['Almuerzo', 15000]], `otra cosa sigue normal: ${r}`);
+        console.log('OK: un tiquete sin valor pregunta cuánto pagaste y "6 mil" lo registra como parqueadero');
+
+        // --- 5c. La IA no lee la foto ni el audio: corto y con qué hacer ---
+        resetUser();
+        mediaFails = true;
+        r = await sendMedia('foto');
+        assert.ok(/No alcancé a leer esa foto/.test(r) && r.split('\n').filter((l) => l.trim() && !/^\d️⃣ /.test(l)).length <= 3, `foto no leída: ${r}`);
+        r = await sendMedia('audio');
+        assert.ok(/No alcancé a entender el audio/.test(r), `audio no entendido: ${r}`);
+        assert.deepStrictEqual(expenses(), []);
+        mediaFails = false;
+        console.log('OK: si la IA no lee la foto o el audio, Leo dice qué hacer en 2 líneas');
+        // --- 5d. Con IA, Leo ofrece el audio y la foto (Johan, 5 nov: "no me da opciones de enviar audio") ---
+        resetUser();
+        r = await send('menu');
+        assert.ok(/🎙️ audio/.test(r) && /📷 foto/.test(r), `el menú ofrece audio y foto: ${r}`);
+        r = await send('1');
+        assert.ok(/Decime qué compraste/.test(r) && /🎙️ O mandame un audio/.test(r), `"Anotar gasto" ofrece el audio: ${r}`);
+        resetUser({ aiTrialUntil: Date.now() - DAY });
+        r = await send('menu');
+        assert.ok(!/🎙️/.test(r), `sin IA no se ofrece (le diría que no está en su plan): ${r}`);
+        console.log('OK: con IA el menú y "Anotar gasto" ofrecen mandar un audio o la foto; sin IA, no');
 
         // --- 6. Sin IA: corto, sin precios ---
         resetUser({ aiTrialUntil: Date.now() - DAY });
