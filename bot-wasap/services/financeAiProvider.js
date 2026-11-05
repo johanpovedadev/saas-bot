@@ -93,6 +93,12 @@ function toOpenRouterPart(part) {
     return { type: 'text', text: part.text };
 }
 
+/** Tope de tokens de respuesta: un gasto, un recibo o una charla corta caben de sobra en 2.048. */
+function maxTokens() {
+    const n = parseInt(process.env.FINANCE_AI_MAX_TOKENS || '', 10);
+    return Number.isFinite(n) && n > 0 ? n : 2048;
+}
+
 function toOpenRouterBody(messages, { json, temperature, tools }) {
     const body = {
         model: openRouterModel(),
@@ -101,6 +107,9 @@ function toOpenRouterBody(messages, { json, temperature, tools }) {
             content: typeof m.content === 'string' ? m.content : partsOf(m.content).map(toOpenRouterPart),
         })),
         usage: { include: true },
+        // Sin tope, OpenRouter reserva el máximo del modelo (65.536 tokens) y con poco saldo responde 402
+        // "This request requires more credits, or fewer max_tokens" aunque la cuenta sí tenga créditos (Johan, 5 nov).
+        max_tokens: maxTokens(),
     };
     if (typeof temperature === 'number') body.temperature = temperature;
     const withTools = Boolean(tools && tools.length > 0);

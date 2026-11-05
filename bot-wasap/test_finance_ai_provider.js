@@ -82,6 +82,7 @@ const session = { jid: JID, finance: { name: 'Prueba', balance: 100000, transact
         const body = calls.openRouter[0];
         assert.strictEqual(body.model, 'google/modelo-de-prueba');
         assert.deepStrictEqual(body.usage, { include: true }, 'pide el costo de la llamada');
+        assert.strictEqual(body.max_tokens, 2048, 'con tope de tokens: sin él OpenRouter reserva 65.536 y responde 402 con poco saldo');
         assert.ok(body.tools && body.tools.length > 0, 'con las herramientas de Leo (parte B)');
         assert.strictEqual(body.messages[0].role, 'system');
         assert.deepStrictEqual([r.intent, r.amount, r.fromAi], ['register_expense', 18000, true], JSON.stringify(r));
