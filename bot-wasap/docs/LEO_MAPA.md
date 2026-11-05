@@ -2,6 +2,7 @@
 
 Léelo antes de tocar Leo. Está hecho para que no tengas que recorrer el repo: aquí dice qué archivo hace qué.
 Cómo subir, desplegar y usar Hermes: [`AGENTE_ARRANQUE.md`](AGENTE_ARRANQUE.md).
+**La IA de Leo** (proveedor, claves, quién tiene IA, costos y qué hacer cuando falla): [`LEO_IA.md`](LEO_IA.md).
 
 ## Qué es
 
