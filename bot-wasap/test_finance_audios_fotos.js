@@ -163,6 +163,16 @@ const expenses = () => financeStore.loadFinance(JID).transactions.map((t) => [t.
         assert.deepStrictEqual(expenses(), []);
         mediaFails = false;
         console.log('OK: si la IA no lee la foto o el audio, Leo dice qué hacer en 2 líneas');
+        // --- 5d. Con IA, Leo ofrece el audio y la foto (Johan, 5 nov: "no me da opciones de enviar audio") ---
+        resetUser();
+        r = await send('menu');
+        assert.ok(/🎙️ audio/.test(r) && /📷 foto/.test(r), `el menú ofrece audio y foto: ${r}`);
+        r = await send('1');
+        assert.ok(/Decime qué compraste/.test(r) && /🎙️ O mandame un audio/.test(r), `"Anotar gasto" ofrece el audio: ${r}`);
+        resetUser({ aiTrialUntil: Date.now() - DAY });
+        r = await send('menu');
+        assert.ok(!/🎙️/.test(r), `sin IA no se ofrece (le diría que no está en su plan): ${r}`);
+        console.log('OK: con IA el menú y "Anotar gasto" ofrecen mandar un audio o la foto; sin IA, no');
 
         // --- 6. Sin IA: corto, sin precios ---
         resetUser({ aiTrialUntil: Date.now() - DAY });

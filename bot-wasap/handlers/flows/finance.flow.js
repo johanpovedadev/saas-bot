@@ -488,7 +488,8 @@ async function handleAdminCommand(sock, jid, text, userSession, ctx, fin) {
     // /costo_ia (#143): cuánto va costando la IA de Leo (hoy, el mes y por usuario), sin textos de nadie.
     if (/^\/?costo_ia$/i.test(t)) {
         const summary = financeAiProvider.costSummary(financeAiProvider.readUsage(), todayInBogota());
-        await say(sock, jid, financeAiProvider.formatCostSummary(summary), ctx);
+        // Entero (no 3 líneas): es una pantalla para leer, con el estado de la IA para ver por qué falla algo.
+        await sayFull(sock, jid, `${financeAiProvider.formatCostSummary(summary)}\n\n${financeAiProvider.formatAiStatus()}`, ctx);
         return true;
     }
 
@@ -1409,7 +1410,7 @@ async function handleMenuChoice(sock, jid, choice, userSession, ctx, fin) {
     switch (choice) {
         case 'gasto':
             // Lo de siempre (#144, bloque 3): los gastos que más repite, en un toque.
-            return await say(sock, jid, financeMenu.EXPENSE_PROMPT, ctx,
+            return await say(sock, jid, financeMenu.expensePrompt(canUseAi(jid)), ctx,
                 { buttons: [...financeFrequent.frequentButtons(fin, todayInBogota()), financeMenu.BACK_ROW] });
         case 'ingreso':
             return await say(sock, jid, financeMenu.INCOME_PROMPT, ctx, { buttons: [financeMenu.BACK_ROW] });
@@ -1455,7 +1456,7 @@ async function showQuickMenu(sock, jid, fin, ctx, header) {
     const greeting = header ||
         `🦁 ${['Qué hubo', 'Hola', 'Hey', 'Qué más'][Math.floor(Math.random() * 4)]}, *${fin.name}*!`;
     await say(sock, jid,
-        `${greeting}\n\n${financeMenu.MENU_PROMPT}`,
+        `${greeting}\n\n${financeMenu.menuPrompt(canUseAi(jid))}`,
         // Lo de siempre va después del menú: así los números de siempre (1 gasto ... 6 configuración) no cambian.
         ctx, { buttons: [...financeMenu.MAIN_MENU_BUTTONS, ...financeFrequent.frequentButtons(fin, todayInBogota())] });
 }

@@ -25,6 +25,19 @@ const MENU_CHOICES = new Set(['gasto', 'ingreso', 'resumen', 'meta', 'medallas',
 const MENU_PROMPT = 'Tocá una opción o escribime natural (ej: _"compré 18 mil en almuerzo"_) 😉';
 
 const EXPENSE_PROMPT = '💸 Perfecto. Decime qué compraste y cuánto:\n\n_"18 mil en almuerzo"_\n_"Compré 50 mil en mercado"_';
+
+// Con IA (plan o 15 días), Leo ofrece el audio y la foto (Johan, 5 nov: "no me da opciones de enviar audio"). Telegram
+// no deja que un bot ponga un botón que abra el micrófono: se dice en el texto. Sin IA no se ofrece (es NO_AI_TEXT).
+const MENU_PROMPT_AI = 'Tocá una opción, escribime natural o mandame un 🎙️ audio o la 📷 foto del recibo 😉';
+const EXPENSE_PROMPT_AI = '💸 Perfecto. Decime qué compraste y cuánto:\n\n_"18 mil en almuerzo"_\n🎙️ O mandame un audio o la 📷 foto del recibo';
+
+function menuPrompt(withAi) {
+    return withAi ? MENU_PROMPT_AI : MENU_PROMPT;
+}
+
+function expensePrompt(withAi) {
+    return withAi ? EXPENSE_PROMPT_AI : EXPENSE_PROMPT;
+}
 const INCOME_PROMPT = '💰 ¡Bien! Decime cuánto te entró y de dónde:\n\n_"Recibí 2 millones de sueldo"_\n_"Gané 300 mil por un trabajo"_';
 
 // Lo que hace la IA (fotos, audios) no está en el plan Gratis: se dice qué sí se puede, sin precios ni callejón.
@@ -138,7 +151,7 @@ function goalChoiceButtons(goalOfferButtons) {
 }
 
 module.exports = {
-    MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, INCOME_PROMPT, NO_AI_TEXT,
+    MAIN_MENU_BUTTONS, MENU_PROMPT, EXPENSE_PROMPT, MENU_PROMPT_AI, EXPENSE_PROMPT_AI, menuPrompt, expensePrompt, INCOME_PROMPT, NO_AI_TEXT,
     SETTINGS_BUTTONS, REPORT_PREF_TITLE, REPORT_PREF_BUTTONS, NIGHT_REPORT_BUTTONS, BACK_ROW,
     withBack, parseMenuChoice, currencyButtons, goalChoiceButtons, settingsButtons, nightReportButtons, isRevealRequest,
     GOAL_SCREEN_BUTTONS, INVALID_GOAL_NAME_TEXT, NEW_GOAL_PROMPT, formatGoalScreen, parseGoalScreenAction, isValidGoalName,
