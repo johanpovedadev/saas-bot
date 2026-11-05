@@ -117,8 +117,8 @@ async function createLeoWorld({ ai = 'sim' } = {}) {
                 await flow.onPremiumBlocked(sock, jid, ctx);
                 message = null;
             } else if (voice) {
-                message = await financeAi.interpretAudio(Buffer.from(String(text)).toString('base64'), ctx.sessions[jid]);
-                if (!message) { (outbox[jid] = outbox[jid] || []).push('No pude entender el contenido. Intenta escribirlo como texto.'); }
+                // handler.js usa transcribeAudio del flujo (nunca vacío: si la IA falla, Leo dice qué hacer).
+                message = await flow.transcribeAudio(Buffer.from(String(text)).toString('base64'), ctx.sessions[jid], 'audio/ogg');
             }
             if (message) await flow.handle(sock, jid, message, ctx.sessions[jid], ctx);
             const replies = outbox[jid] || [];

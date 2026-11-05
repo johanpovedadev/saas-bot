@@ -34,7 +34,7 @@ const financeNightPolicy = require('../../services/financeNightPolicy');
 const financeStreak = require('../../services/financeStreak');
 const financeMedals = require('../../services/financeMedals');
 const cardStatement = require('../../services/financeCardStatement');
-const { parseAmountText } = require('../../utils/financeAmount');
+const { parseAmountText, normalizeSpokenAmounts } = require('../../utils/financeAmount');
 const { withDisclaimer } = require('../../utils/financeDisclaimer');
 
 /**
@@ -336,7 +336,57 @@ async function sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption)
  * cuando falla la lectura), vía el mismo canal (Jarvis) que el resto de
  * notificaciones a admin.
  */
-async function notifyAdminReceipt(sock, jid, userSession, ctx, base64Data, mimetype, summaryText) {
+// Respuestas cortas para la foto o el audio sin texto que registrar (#144, 5 nov). Máx. 2 líneas, voseo, sin culpa.
+const MEDIA_TEXT = {
+    photoNoAmount: (store) => `📷 Es el tiquete de *${store}*, pero no trae el valor.\n¿Cuánto pagaste?`,
+    photoNotRead: '📷 No alcancé a leer esa foto.\nEscribime el gasto y lo anoto: _"parqueadero 6 mil"_',
+    audioNotRead: '🎙️ No alcancé a entender el audio.\nEscribímelo y lo anoto: _"almuerzo 15 mil"_',
+};
+const MEDIA_SUMMARY = {
+    [financeAi.MEDIA.PHOTO_NO_AMOUNT]: '(tiquete sin valor: se le preguntó el monto)',
+    [financeAi.MEDIA.PHOTO_NOT_READ]: '(la IA no pudo leer la foto)',
+};
+
+/**
+ * La foto o el audio como texto, para handlers/handler.js (que prefiere estas funciones del flujo). Si la IA no
+ * devuelve nada, una marca en vez de null: así responde Leo con qué hacer, no el mensaje genérico del handler.
+ */
+async function transcribeImage(base64Data, userSession, mimetype) {
+    return (await financeAi.interpretImage(base64Data, userSession, mimetype || 'image/jpeg')) || financeAi.MEDIA.PHOTO_NOT_READ;
+}
+
+async function transcribeAudio(base64Data, userSession) {
+    return (await financeAi.interpretAudio(base64Data, userSession)) || financeAi.MEDIA.AUDIO_NOT_READ;
+}
+
+/** true si el mensaje era una de esas marcas, o el monto que faltaba de un tiquete (y ya se respondió). */
+async function handleMediaOutcome(sock, jid, t, userSession, ctx, fin) {
+    const pending = userSession.pendingPhotoEntry;
+    if (t === financeAi.MEDIA.PHOTO_NO_AMOUNT && pending) {
+        await say(sock, jid, MEDIA_TEXT.photoNoAmount(pending.tienda), ctx, { buttons: [financeMenu.BACK_ROW] });
+        return true;
+    }
+    if (t === financeAi.MEDIA.PHOTO_NOT_READ || t === financeAi.MEDIA.PHOTO_NO_AMOUNT) {
+        await say(sock, jid, MEDIA_TEXT.photoNotRead, ctx, { buttons: [financeMenu.BACK_ROW] });
+        return true;
+    }
+    if (t === financeAi.MEDIA.AUDIO_NOT_READ) {
+        await say(sock, jid, MEDIA_TEXT.audioNotRead, ctx, { buttons: [financeMenu.BACK_ROW] });
+        return true;
+    }
+    if (!pending) return false;
+    // La respuesta a "¿Cuánto pagaste?": solo un monto ("6 mil", "6 lucas"). Otra cosa sigue como siempre.
+    userSession.pendingPhotoEntry = null;
+    const value = normalizeSpokenAmounts(t).trim();
+    const amount = AMOUNT_ONLY.test(value) ? parseAmountText(value) : null;
+    if (!amount || Date.now() - pending.at > financeAi.PENDING_PHOTO_TTL_MS) return false;
+    userSession.phase = PHASE.FIN_MAIN;
+    await saveEntryGroup(sock, jid, [{ type: 'expense', amount, description: pending.description, category: pending.category }], fin, ctx);
+    return true;
+}
+
+async function notifyAdminReceipt(sock, jid, userSession, ctx, base64Data, mimetype, rawSummary) {
+    const summaryText = MEDIA_SUMMARY[rawSummary] || rawSummary;
     const label = getTelegramLabel(userSession, jid);
     const caption = `🧾 *Recibo de Leo Financiero* 🦁\n\n👤 Usuario: ${label}\n🆔 ID: ${String(jid).split('@')[0]}\n\n${summaryText || '(sin lectura de la IA)'}`;
     for (const adminJid of getAdminJids()) {
@@ -786,6 +836,10 @@ async function handle(sock, jid, text, userSession, ctx) {
         userSession.phase = PHASE.FIN_MAIN;
         return await saveEntryGroup(sock, jid, [frequentTap], fin, ctx);
     }
+
+    // Foto o audio que no dejó un texto para registrar (#144, 5 nov), y el monto de un tiquete que no lo traía.
+    const mediaReply = await handleMediaOutcome(sock, jid, t, userSession, ctx, fin);
+    if (mediaReply) return;
 
     // [✏️ Corregir] [🗑️ Borrar] de un registro, la respuesta a "¿Qué cambio?" y "fue con tarjeta" (#122, escalón B).
     const entryAction = financeCorrections.parseEntryAction(t);
@@ -2556,6 +2610,8 @@ module.exports = {
     generateNightReport,
     startNightReporter,
     isPremiumBlocked,
+    transcribeImage,
+    transcribeAudio,
     onPremiumBlocked,
     getInitialPhase: () => PHASE.FIN_ONBOARDING,
     // Incluye WAITING_HUMAN aunque no empiece con "fin_": sin esto, el chequeo

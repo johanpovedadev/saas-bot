@@ -105,6 +105,15 @@ async function interpretAudio(audioBase64, userSession, mimeType = 'audio/ogg; c
     }
 }
 
+// Lo que la foto o el audio dejan para el flujo cuando no hay un texto que registrar (#144, 5 nov). finance.flow.js
+// responde corto y dice qué hacer, en vez del "No pude entender el contenido" genérico de handler.js.
+const MEDIA = Object.freeze({
+    PHOTO_NO_AMOUNT: 'leo:foto:sin-monto',
+    PHOTO_NOT_READ: 'leo:foto:no-leida',
+    AUDIO_NOT_READ: 'leo:audio:no-leido',
+});
+const PENDING_PHOTO_TTL_MS = 15 * 60 * 1000;
+
 async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg') {
     if (!aiProvider.isAvailable()) {
         logger.warn('financeAi: sin proveedor de IA para imagen');
@@ -123,6 +132,17 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
         if (!text) return null;
         // Una sola llamada: total para registrar el gasto + productos para comparar precios entre tiendas.
         const receipt = receipts.parseReceiptJson(text);
+        const ticket = receipt ? null : receipts.parseTicketWithoutTotal(text);
+        if (ticket) {
+            logger.info(`financeAi interpretImage: ${ticket.tienda} sin total, se pregunta el monto`);
+            if (userSession) {
+                userSession.pendingPhotoEntry = {
+                    tienda: ticket.tienda, description: ticket.description,
+                    category: ticket.category || categorizeExpense(ticket.description), at: Date.now(),
+                };
+            }
+            return MEDIA.PHOTO_NO_AMOUNT;
+        }
         if (!receipt) {
             logger.info(`financeAi interpretImage: no es un recibo legible ("${text.substring(0, 80)}")`);
             return text;
@@ -527,4 +547,4 @@ function fallbackInterpret(message, userSession) {
 }
 
 module.exports = {
-    AUDIO_PROMPT, interpret, interpretAudio, interpretImage, categorizeExpense, fallbackInterpret, modeloFinanzas };
+    AUDIO_PROMPT, MEDIA, PENDING_PHOTO_TTL_MS, interpret, interpretAudio, interpretImage, categorizeExpense, fallbackInterpret, modeloFinanzas };
