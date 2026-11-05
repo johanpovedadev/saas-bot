@@ -169,4 +169,26 @@ add('AGP-18', 'Complemento', 'Un plato que pide complemento: se lo pregunta, lo 
     } finally { delete pargo.NumeroEntrada; }
 });
 
+// ───────────────────────── INTENCIÓN DE COMPRA (como Mundo Helados, 15 oct) ─────────────────────────
+add('AGP-19', 'Intención', 'Solo pregunta el precio: lo da y pregunta si lo quiere; con "sí" lo agrega', async ({ c, t }) => {
+    await entrar(c, t);
+    await t.say(c, '¿cuánto vale la mojarra frita?', { has: ['Mojarra Frita', /¿Te preparo \*Mojarra Frita\*\?/] });
+    t.ok(carrito(c).length === 0, 'una pregunta de precio no agrega nada', JSON.stringify(carrito(c)));
+    await t.say(c, 'sí', { hasNot: ['No entendí'] });
+    t.ok(cantidadDe(c, /Mojarra Frita/) === 1, 'con el "sí" queda una mojarra frita', JSON.stringify(carrito(c)));
+});
+
+add('AGP-20', 'Intención', 'Pregunta el precio y dice que no: no agrega nada y ofrece seguir', async ({ c, t }) => {
+    await entrar(c, t);
+    await t.say(c, '¿cuánto vale la mojarra frita?', { has: [/¿Te preparo/] });
+    await t.say(c, 'no', { has: ['Cuando quieras'], hasNot: ['No entendí'] });
+    t.ok(carrito(c).length === 0, 'con el "no" el pedido sigue vacío', JSON.stringify(carrito(c)));
+});
+
+add('AGP-21', 'Intención', 'Pide y pregunta el precio a la vez ("quiero una mojarra frita, ¿cuánto vale?"): la agrega de una', async ({ c, t }) => {
+    await entrar(c, t);
+    await t.say(c, 'quiero una mojarra frita, ¿cuánto vale?', { has: ['Mojarra Frita'], hasNot: [/¿Te preparo/] });
+    t.ok(cantidadDe(c, /Mojarra Frita/) === 1, 'pedido explícito: se agrega sin volver a preguntar', JSON.stringify(carrito(c)));
+});
+
 module.exports = S;
