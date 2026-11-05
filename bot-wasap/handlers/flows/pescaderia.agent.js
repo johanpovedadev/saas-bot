@@ -155,9 +155,9 @@ REGLAS:
    - FASE FINALIZE_ORDER y dice "sí"/"correcto"/"confirmo" -> confirmar_pedido. Si dice "no" -> pregunta qué quiere cambiar (preguntar_aclaracion) o editar_pedido.
 5. PAGAR: cualquier forma de "quiero pagar" ("ir a pagar", "cuánto es todo, vamos a pagar", con typos) -> ir_a_pagar. Una negación ("aún no", "todavía no") NO es pagar.
 6. RECOGER EN EL LOCAL: "paso a recogerlo", "lo recojo", "voy por él", "sin domicilio" -> fijar_recogida_en_local. Es un dato de entrega, no un plato.
-7. CANTIDAD: solo si el cliente dice un número explícito ("2 mojarras", "dos", "quiero 3"). "un"/"una" como artículo cuenta como 1.
+7. CANTIDAD: solo si el cliente dice un número explícito ("2 mojarras", "dos", "quiero 3"). "un"/"una" como artículo cuenta como 1. Si el producto YA está en el pedido y el cliente corrige o repite cuántos quiere ("son 2, no 3", "2 mojarras no 1", "mejor solo uno") -> cambiar_cantidad_en_pedido con la cantidad TOTAL (nunca quitar + agregar). Si el cliente elige una opción de una aclaración ("la de mariscos" después de "¿cuál cazuela?"), pasa la cantidad que había dicho antes en agregar_producto.
 8. COMPLEMENTO: algunos platos piden elegir un ${complementWord()} (lo dice el menú: "pide 1 ${complementWord()}"). Si el cliente ya lo dijo ("pargo rojo con patacón"), pásalo en "complementos". Si no, NO lo inventes: agrega el plato igual y el sistema se lo pregunta. Cuando el estado traiga PLATO EN ARMADO y el cliente dice el ${complementWord()}, usa elegir_complementos; si dice la cantidad, fijar_cantidad.
-9. PREGUNTAS (qué trae un plato, ingredientes, formas de pago, tiempos, si hay sopa, qué recomiendas) -> responder_pregunta con la pregunta tal cual. El valor del domicilio nunca lo sabes: lo gestiona el sistema.
+9. PREGUNTAS (qué trae un plato, ingredientes, formas de pago, tiempos, si hay sopa, qué recomiendas) -> responder_pregunta con la pregunta tal cual. El valor del domicilio nunca lo sabes: lo gestiona el sistema. PRECIO de un plato -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo agrega solo.
 10. HUMANO: si el cliente pide una persona/asesor, reclama por un pedido ya entregado o en camino, un pago/reembolso, o pide algo que ninguna herramienta puede hacer -> escalar_a_humano.
 11. Datos de entrega: dirección, nombre, teléfono y método de pago pueden llegar en cualquier fase y en cualquier orden, incluso todos en un solo mensaje -> llama cada fijar_* que corresponda. Nequi/Daviplata/Bancolombia = transferencia.
 12. confirmar_pedido en FINALIZE_ORDER ENVÍA el pedido real al restaurante: úsalo solo si el cliente confirma claramente ese resumen final.
@@ -299,6 +299,8 @@ function productIsGrounded(product, T) {
     const text = norm(T.text);
     const name = nameOf(product);
     if ((T.pendingBefore || []).some(o => norm(o) === norm(name))) return true;
+    // "¿Quieres pedir X?" -> "sí, con patacón": el sí fundamenta X (solo un mensaje que EMPIEZA aceptando).
+    if (T.pendingOffer && norm(T.pendingOffer) === norm(name) && G.startsWithYes(T.text)) return true;
     if (norm(codeOf(product)) && text.includes(norm(codeOf(product)))) return true;
     if (G.nameWordsInText(name, text, { ignore: GENERIC_WORDS })) return true;
     if (G.affirmsLastBotOffer(name, text, T.history())) return true;
@@ -363,7 +365,7 @@ const DECL = {
 };
 
 const TOOL_ORDER = [
-    'agregar_producto', 'elegir_complementos', 'fijar_cantidad', 'quitar_producto_del_carrito', 'seguir_comprando',
+    'agregar_producto', 'elegir_complementos', 'fijar_cantidad', 'quitar_producto_del_carrito', 'cambiar_cantidad_en_pedido', 'seguir_comprando',
     'ir_a_pagar', 'confirmar_pedido', 'editar_pedido', 'ver_carrito', 'fijar_direccion', 'fijar_recogida_en_local',
     'fijar_nombre', 'fijar_telefono', 'fijar_metodo_pago', 'informar_precios', 'mostrar_menu', 'info_local',
     'pedido_por_encargo', 'responder_pregunta', 'preguntar_aclaracion', 'escalar_a_humano', 'cancelar_pedido',
@@ -403,7 +405,7 @@ const EXECUTORS = {
         if (userSession.currentProduct && codeOf(userSession.currentProduct) !== codeOf(product)) clearInProgress(userSession);
 
         const cantidadRaw = Number.isInteger(args.cantidad) && args.cantidad >= 1 && args.cantidad <= 100 ? args.cantidad : null;
-        const cantidad = cantidadRaw && G.qtyIsGrounded(cantidadRaw, T.text) ? cantidadRaw : null;
+        const cantidad = cantidadRaw && core.qtyGroundedFor(cantidadRaw, nameOf(product), T) ? cantidadRaw : null;
         const needed = complementsNeeded(product);
         const notas = args.notas ? G.sanitizeFreeText(String(args.notas), 80) : '';
         const complementos = needed > 0 ? groundComplements(args.complementos, T, needed) : [];
@@ -474,7 +476,7 @@ const TOOL_GROUNDS = {
     agregar_producto(args, T) {
         // Una cantidad que el cliente no dijo se descarta (el flujo pregunta); el resto del pedido sigue.
         const clean = { ...args };
-        if (clean.cantidad !== undefined && clean.cantidad !== null && !G.qtyIsGrounded(parseInt(clean.cantidad, 10), T.text)) clean.cantidad = null;
+        if (clean.cantidad !== undefined && clean.cantidad !== null && !core.qtyGroundedFor(parseInt(clean.cantidad, 10), clean.producto, T)) clean.cantidad = null;
         return { ok: true, args: clean };
     },
     fijar_cantidad(args, T) {
@@ -610,7 +612,17 @@ const agent = core.createCartAgent({
     toolOrder: TOOL_ORDER,
     toolDescriptions: TOOL_DESCRIPTIONS,
     hooks,
-    texts
+    texts,
+    // Intención de compra (como Mundo Helados, 15 oct; ver G.classifyBuyIntent): "quiero / para pedir / dame una X"
+    // agrega X de una; "¿cuánto vale X?" da el precio y confirma Sí/No antes de agregarlo.
+    intent: {
+        addTool: 'agregar_producto',
+        texts: {
+            confirmAfterPrice: (name) => `🐟 ¿Te preparo *${name}*? Responde *Sí* o *No* 😊`,
+            chooseAfterPrice: '💰 Estos son los precios. ¿Cuál te preparo? 😊',
+            offerDeclined: 'Listo 👍 Cuando quieras me dices qué te provoca, o te muestro el *menú* 🐟'
+        }
+    }
 });
 
 /**

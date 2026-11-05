@@ -26,12 +26,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Corregido
 
+- **Agentes de carrito (Mundo Helados y Ricuras): corregir cantidades.** "Son 2, no 3" cambia el total (antes quitaba
+  una línea o sumaba más); al elegir una opción ("leche" tras "¿agua o leche?") se conserva la cantidad que el cliente
+  ya había dicho; y el mismo producto va en una sola línea. Replay real del 5 nov 2026.
 - Precios del catálogo con decimales (`"30000.000"`): el menú y el agente mostraban $30.000.000 por $30.000.
 - "Nequi", "Daviplata", "Bancolombia", "PSE" y "QR" se entienden como transferencia (antes: "No entendí").
 - Al dar su nombre, el cliente de un restaurante recibía "No entendí" en vez del menú.
 - Dos unidades iguales salen como una línea "2x" en el resumen y en el aviso a la dueña.
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
+
+## [1.10.0] - 2026-11-05
+
+### Agregado
+
+- **Leo:** interruptor para apagar la IA sin tocar código (`FINANCE_AI_ENABLED=0`) (#165).
+- **Ricuras del Pacífico:** agente al día con los demás bots (intención de compra). El bot sigue apagado (#166).
+- **Guía de la IA de Leo:** configuración, quién tiene IA y qué hacer cuando falla (#163).
+
+### Corregido
+
+- **Leo:** pagar la tarjeta no cuenta como gasto, con más formas de decirlo (#164).
+- **Mundo Helados** (replay de una conversación real): corregir cantidades con `cambiar_cantidad_en_pedido`, una sola
+  pregunta por turno, "los mismos sabores" y toppings claros; el mismo producto va en una sola línea (#167).
 
 ## [1.9.3] - 2026-11-05
 

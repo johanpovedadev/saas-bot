@@ -93,4 +93,18 @@ function getEffectiveHoursForDate(dateISO) {
     return (isWeekend && hours.weekend && hours.weekend.open) ? hours.weekend : hours.weekday;
 }
 
-module.exports = { isWithinBusinessHours, outOfHoursNotice, getEffectiveHoursForDate };
+/**
+ * Si el negocio todavía no abrió HOY pero abre más tarde, la hora de apertura ("14:00"); si no, null. Para responder
+ * "¿a qué horas paso?" con un pedido armado antes de abrir (5 nov 2026, Mundo Helados a las 8:49 a. m.).
+ */
+function opensLaterToday(now = new Date()) {
+    if (isWithinBusinessHours(now)) return null;
+    const hours = getEffectiveHoursForDate(todayInBusinessTz(now, resolveTimezone()));
+    if (!hours || !hours.open) return null;
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: resolveTimezone(), hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+    const get = (type) => parseInt((parts.find(p => p.type === type) || {}).value, 10) || 0;
+    const [h, m] = String(hours.open).split(':').map(Number);
+    return get('hour') * 60 + get('minute') < (h || 0) * 60 + (m || 0) ? hours.open : null;
+}
+
+module.exports = { isWithinBusinessHours, outOfHoursNotice, getEffectiveHoursForDate, opensLaterToday };

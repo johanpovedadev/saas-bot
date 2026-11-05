@@ -1,7 +1,30 @@
 # Ricuras del Pacífico (pescadería) — agente de IA y puesta al día con Mundo Helados
 
-Estado al 10 oct 2026. **Preparado, sin encender**: el bot de Ricuras sigue detenido en PM2 y el agente viene apagado
+Estado al 5 nov 2026. **Preparado, sin encender**: el bot de Ricuras sigue detenido en PM2 y el agente viene apagado
 (`PESCADERIA_AI_AGENT`). Nada de esto toca producción hasta que Johan arranque el bot.
+
+## Puesta al día del 5 nov 2026 (todo lo que mejoró en los otros bots desde el 10 oct)
+
+Johan: "actualizá Ricuras con todas las mejoras de los demás bots; la idea es volverlos agentes".
+
+| Mejora | De dónde | Ricuras |
+|---|---|---|
+| **Intención de compra**: "quiero / dame una X" la agrega de una; "¿cuánto vale X?" da el precio y pregunta "¿Te preparo X? Sí/No" | Mundo Helados, 15 oct (`a8f294d`) | **Nuevo en este cambio**: `intent` en `pescaderia.agent.js`, regla 9 del prompt y el "sí" que fundamenta el plato. Escenarios AGP-19 a AGP-21. |
+| **Red de seguridad**: si el bot repite la misma pregunta, si el pedido no avanza o si el cliente se queda callado con el pedido a medias, avisa a la dueña con lo que lleva | Todos los bots, 17 oct (`f167f8f`) | Ya la hereda (es del núcleo y de `handler.js`). Se enciende con `SAFETY_NET=1` en `.env.pescaderia`. Los avisos van a `business_admin_jids` (hoy Johan). |
+| **Historial de conversaciones en SQLite** y **perfiles del cliente recurrente en SQLite** | Todos, oct (`596830a`, `b75d5fe`) | Ya lo hereda. |
+| **Avisos a la dueña con quién, qué dijo y en qué contexto** | Todos, oct (`eecc2d7`) | Ya lo hereda. |
+| Puertos libres antes de arrancar y PM2 sin bucles | Todos, 17 oct (`0c7afac`) | Ya lo hereda: arrancar con `npm run start:safe -- django-pescaderia bot-pescaderia`. |
+| "¿Qué sabores tienes?" muestra la lista del paso, no el menú entero | Mundo Helados, 15 oct (`1c2fc99`) | **No aplica todavía**: Ricuras no tiene lista de complementos en sus datos (ver `NumeroEntrada` abajo). Cuando el dueño la cargue, se hace igual. |
+| "El otro" = unidades diferentes y toppings sin bucle | Mundo Helados (`a53a40b`) | No aplica: es de helados, con sabores por unidad. |
+| Lecciones de Leo (#144): mensajes cortos, no volver a preguntar lo dicho, audios como texto | Leo, nov | El presentador de Ricuras ya hace lo de helados (sin "escribe el número", una pregunta, resumen corto) y los audios ya se transcriben como texto (`handleMedia`). |
+
+**Qué falta para que sea un agente de verdad en producción** (no es código, es operación):
+1. Encenderlo primero solo para Johan (`PESCADERIA_AI_AGENT=1` + `PESCADERIA_AI_AGENT_JIDS=<número>`) y hablarle
+   como cliente unos días.
+2. Guardar las conversaciones malas como escenarios del simulador (`tests_sim/scenarios_agente_pescaderia/`), igual
+   que el corpus de Mundo Helados.
+3. Que el dueño cargue lo de "Pendiente de decisión" (pagos, horario, dirección, preguntas frecuentes): sin eso el
+   agente escala a una persona en vez de responder.
 
 ## Qué se hizo
 
@@ -36,10 +59,10 @@ cargador REAL del bot. Encontró cosas que ya estaban rotas para Ricuras:
 ## Cómo encenderlo (cuando Johan lo decida)
 
 1. Integrar este PR (y el #34 de clientes recurrentes) a `develop`.
-2. En `.env.pescaderia`: `PESCADERIA_AI_AGENT=1` (y `OWNER_REPORT=1` si se quiere el informe de las 22:00).
-3. Arrancar primero su backend (el bot lee el menú de ahí: hoy `django-pescaderia` está detenido) y después el bot, con el
-   ecosystem para que el servidor de estado quede en su puerto y con su token:
-   `npx pm2 startOrReload ecosystem.config.js --only django-pescaderia,bot-pescaderia --update-env`.
+2. En `.env.pescaderia`: `PESCADERIA_AI_AGENT=1`, `SAFETY_NET=1` (red de seguridad; `SAFETY_NET_JIDS=<número>` para
+   probarla solo con uno) y `OWNER_REPORT=1` si se quiere el informe de las 22:00.
+3. Arrancar primero su backend (el bot lee el menú de ahí: hoy `django-pescaderia` está detenido) y después el bot,
+   validando puertos (regla del 17 oct): `npm run start:safe -- django-pescaderia bot-pescaderia`.
 4. Primero con el número de Johan solamente: `PESCADERIA_AI_AGENT_JIDS=<número>`.
 
 Apagarlo: `PESCADERIA_AI_AGENT=0` (o quitar la línea) y reiniciar; vuelve al flujo de reglas de siempre.
@@ -63,7 +86,7 @@ Apagarlo: `PESCADERIA_AI_AGENT=0` (o quitar la línea) y reiniciar; vuelve al fl
 cd bot-wasap
 node tests_sim/run.js --tenant=pescaderia --ai=sim     # reglas con IA simulada
 node tests_sim/run.js --tenant=pescaderia --ai=off     # el "piso" del bot, sin IA
-node tests_sim/run-agent.js --tenant=pescaderia        # agente (decisor simulado)
+node tests_sim/run-agent.js --tenant=pescaderia        # agente (decisor simulado), 21 escenarios
 node test_simuladores_de_conversacion.js               # los seis, como en la CI
 node test_precio_y_pago_de_restaurante.js              # precio, Nequi e ítems iguales
 ```

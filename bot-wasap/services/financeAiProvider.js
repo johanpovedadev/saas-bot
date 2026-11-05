@@ -55,9 +55,17 @@ function hasGemini() {
     return validKey(process.env.GEMINI_API_KEY);
 }
 
-/** ¿Hay algún proveedor configurado? Sin ninguno, Leo usa su parser sin IA. */
+/**
+ * Interruptor general (Johan, 5 nov: "por ahora dejémoslo sin IA"). FINANCE_AI_ENABLED=0 apaga la IA de Leo aunque
+ * haya claves (incluida la de Gemini del .env compartido). Sin definir = prendida.
+ */
+function isEnabled() {
+    return !/^(0|false|no|off)$/i.test(String(process.env.FINANCE_AI_ENABLED || '').trim());
+}
+
+/** ¿Hay IA? Prendida y con algún proveedor configurado. Sin eso, Leo usa su parser sin IA. */
 function isAvailable() {
-    return Boolean(transports) || hasOpenRouter() || hasGemini();
+    return isEnabled() && (Boolean(transports) || hasOpenRouter() || hasGemini());
 }
 
 function openRouterModel() {
@@ -320,6 +328,7 @@ function openRouterResult(data, model) {
  * Gemini directo responde texto/JSON).
  */
 async function chat({ messages, jid, json = false, temperature, tools, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+    if (!isEnabled()) throw new Error('IA de Leo apagada (FINANCE_AI_ENABLED=0)');
     const t = getTransports();
     if (useOpenRouterNow()) {
         const body = toOpenRouterBody(messages, { json, temperature, tools });
@@ -356,6 +365,6 @@ function _setTransports(fake) {
 }
 
 module.exports = {
-    chat, isAvailable, hasOpenRouter, openRouterModel, geminiModel, costSummary, formatCostSummary, readUsage,
+    chat, isAvailable, isEnabled, hasOpenRouter, openRouterModel, geminiModel, costSummary, formatCostSummary, readUsage,
     hashJid, PROVIDER, OPENROUTER_URL, _setTransports, formatAiStatus,
 };

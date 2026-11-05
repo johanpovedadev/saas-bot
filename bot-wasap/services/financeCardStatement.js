@@ -11,10 +11,18 @@
  */
 
 const privacy = require('../utils/financePrivacy');
-const { parseAmountText } = require('../utils/financeAmount');
+const { parseAmountText, normalizeSpokenAmounts } = require('../utils/financeAmount');
 
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const PAYMENT_PATTERN = /^(?:ya\s+)?pague\s+(?:la\s+|el\s+total\s+de\s+la\s+)?(?:tarjeta|rappicard|rappi\s*card|tdc)\b(.*)$/;
+// Cómo dice la gente que pagó la tarjeta (Johan, 5 nov: pagó el extracto y Leo lo anotó como un gasto más en
+// "Otros", así que las compras de la tarjeta quedaron contadas dos veces). "pagué CON tarjeta" es una compra, no esto.
+// "Rappi" solo no cuenta: "pagué la rappi" suele ser un pedido a domicilio.
+const CARD_WORDS = '(?:tarjeta(?:\\s+de\\s+credito)?|rappicard|rappi\\s*card|tdc|extracto(?:\\s+de\\s+la\\s+tarjeta)?)';
+const PAY_VERBS = '(?:ya\\s+)?(?:pague|pago|abone|abono|hice\\s+el\\s+pago\\s+de)';
+// "pagué la tarjeta 1.129.757", "pago de la tarjeta un palo", "aboné a la tarjeta 500 mil", "pagué el extracto"
+const PAYMENT_PATTERN = new RegExp(`^${PAY_VERBS}\\s+(?:a\\s+)?(?:(?:la|el|mi)\\s+)?(?:total\\s+de\\s+(?:la\\s+)?)?(?:de\\s+(?:la\\s+|mi\\s+)?)?${CARD_WORDS}\\b(.*)$`);
+// "pagué 500 mil a la tarjeta", "aboné 300 mil de la rappicard" ("pagué 20 mil EN tarjeta" es una compra: no entra)
+const AMOUNT_FIRST_PATTERN = new RegExp(`^${PAY_VERBS}\\s+(.+?)\\s+(?:a|de)\\s+(?:la\\s+|el\\s+|mi\\s+)?${CARD_WORDS}\\b`);
 
 function normalize(text) {
     return String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -77,9 +85,10 @@ function formatOwed(info, fin) {
 
 /** "pagué la tarjeta", "ya pagué la rappicard 1.129.757": monto (o el pendiente si no lo dice), o null. */
 function parsePayment(text, fin, today) {
-    const m = normalize(text).replace(/[¿?¡!.]/g, '').match(PAYMENT_PATTERN);
+    const clean = normalize(text).replace(/[¿?¡!.]/g, '');
+    const m = clean.match(PAYMENT_PATTERN) || clean.match(AMOUNT_FIRST_PATTERN);
     if (!m) return null;
-    const amount = parseAmountText(m[1]);
+    const amount = parseAmountText(normalizeSpokenAmounts(m[1]));
     if (amount) return amount;
     const info = owed(fin, today);
     return info ? info.pendiente : null;

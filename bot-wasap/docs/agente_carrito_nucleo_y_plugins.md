@@ -9,7 +9,7 @@ Estado al 30 sep 2026. Piloto: heladería (Mundo Helados), **apagado por defecto
 |---|---|---|
 | Cliente de IA | `services/cartAgentAi.js` | Una llamada a Gemini por turno con function calling obligatorio, temperatura 0, timeout y 1 reintento. No sabe nada del negocio. (`services/heladeriaAgentAi.js` es un alias del mismo objeto.) |
 | Grounding | `handlers/agent/grounding.js` | Funciones puras: resolver nombres contra el catálogo, cantidad dicha por el cliente, confirmación explícita, datos del cliente escritos por él, cifras de respuestas libres contra la fuente de verdad. |
-| Núcleo | `handlers/agent/cartAgent.core.js` | Bucle del turno, activación por flag/canario, 20 herramientas genéricas, candados por efecto, escalamiento a humano, cierre del turno. |
+| Núcleo | `handlers/agent/cartAgent.core.js` | Bucle del turno, activación por flag/canario, 21 herramientas genéricas (incluida `cambiar_cantidad_en_pedido`), candados por efecto, escalamiento a humano, cierre del turno. |
 | Plugin heladería | `handlers/flows/heladeria.agent.js` | 9 herramientas propias (sabores, toppings, unidades, encargo), motor de casillas, grounding de su dominio, prompt y estado. |
 | Plugin pescadería | `handlers/flows/pescaderia.agent.js` | Restaurante (Ricuras del Pacífico): 4 herramientas propias (plato, complemento, cantidad, encargo), presentador conversacional. Ver `docs/agente_ricuras_pescaderia.md`. |
 | Registro | `handlers/agent/agentRegistry.js` | Qué negocio tiene qué agente y con qué variable de entorno se enciende (`HELADERIA_AI_AGENT`, `PESCADERIA_AI_AGENT`). Un negocio nuevo = una línea. |
@@ -24,6 +24,10 @@ Estado al 30 sep 2026. Piloto: heladería (Mundo Helados), **apagado por defecto
 - **Datos del cliente:** nombre, teléfono, dirección y método de pago solo se guardan si salen de
   lo que el cliente escribió.
 - **Plata:** el precio de lo que entra al carrito se recalcula desde el catálogo por código.
+- **Cantidades (5 nov 2026, replay de Mundo Helados):** "son 2, no 3" cambia el total con `cambiar_cantidad_en_pedido`
+  (la cantidad tiene que estar en el mensaje del cliente); si el cliente elige una opción de una aclaración ("leche"
+  después de "¿agua o leche?"), vale la cantidad que dijo antes (`core.qtyGroundedFor`); y el mismo producto con las
+  mismas opciones va en una sola línea (`core.mergeIdenticalLines`). Prueba: `test_heladeria_replay_jugos_cantidad.js`.
 - **Enviar el pedido:** solo con el resumen final ya en pantalla y confirmación explícita.
 - **Respuestas libres sin cifras inventadas:** cada número (litros, porciones, tiempos, precios)
   tiene que existir en el catálogo/FAQs del tenant.
