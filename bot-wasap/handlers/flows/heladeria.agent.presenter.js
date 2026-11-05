@@ -120,7 +120,9 @@ function rewriteToppingsPrompt(text, answeredLater) {
 function rewriteToppingsList(text) {
     // El cliente PIDIÓ la lista: se muestra, sin códigos.
     const unidad = (text.match(/📍 \*Toppings disponibles \(unidad (\d+)\):\*/) || [])[1];
-    const title = `🍓 *Toppings${unidad ? ` de la unidad ${unidad}` : ''}* — son *opcionales* y tienen un *costo adicional* (el precio está al lado):`;
+    // Johan (5 nov 2026): la lista es larga y el "o *no*" quedaba al final, donde muchos no llegan. Lo que tiene que
+    // hacer el cliente va ARRIBA, antes de la lista (y se repite al final).
+    const title = `🍓 *¿Le agregamos toppings${unidad ? ` a la unidad ${unidad}` : ''}?* Son *opcionales* y tienen un *costo adicional*.\n👉 Si no quieres, responde *no*. Si quieres, dime cuáles (el precio está al lado):`;
     const lines = text.split('\n')
         .filter(l => /^\*?T\d+\.?\*?\s/.test(l) || /^\*[^*]+\*$/.test(l))
         .map(l => l.replace(/^\*?T\d+\.?\*?\s+/, '• '))
