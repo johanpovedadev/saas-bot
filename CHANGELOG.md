@@ -26,6 +26,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Corregido
 
+- **Agentes de carrito (Mundo Helados y Ricuras): corregir cantidades.** "Son 2, no 3" cambia el total (antes quitaba
+  una línea o sumaba más); al elegir una opción ("leche" tras "¿agua o leche?") se conserva la cantidad que el cliente
+  ya había dicho; y el mismo producto va en una sola línea. Replay real del 5 nov 2026.
 - Precios del catálogo con decimales (`"30000.000"`): el menú y el agente mostraban $30.000.000 por $30.000.
 - "Nequi", "Daviplata", "Bancolombia", "PSE" y "QR" se entienden como transferencia (antes: "No entendí").
 - Al dar su nombre, el cliente de un restaurante recibía "No entendí" en vez del menú.

@@ -204,7 +204,7 @@ REGLAS:
 6. RECOGER EN EL LOCAL: "paso a recogerlo", "lo mando a recoger", "me lo recojan", "voy por él", "sin domicilio" -> fijar_recogida_en_local. Es un dato de entrega, no un producto.
 7. SABORES: "todos de fresa" para un producto de N sabores = repetir "Fresa" N veces. "2 de vainilla y 1 de lulo" = ["Vainilla","Vainilla","Lulo"] (usando nombres exactos). Los sabores se pueden repetir.
 8. TOPPINGS / ADICIONES: "con adición de queso" -> elegir_toppings(["<topping exacto de queso>"]). "sin adición"/"sin topping"/"quítale X": si el producto en armado ya tiene toppings elegidos -> quitar_topping (si tiene UNO solo y el cliente no dice cuál, es ese; si tiene varios y no dice cuál -> preguntar_aclaracion). Si aún no tiene ninguno y el bot está preguntando toppings -> sin_toppings. "sin X" donde X NO es un topping (ej: "sin fruta") -> notas en agregar_producto o elegir_toppings no aplica: usa responder_breve para confirmar que lo anotas SOLO si hay producto en armado; si no, ignóralo.
-9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte).
+9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte). Si el producto YA está en el pedido y el cliente corrige o repite cuántos quiere ("son 2, no 3", "2 jugos no 1", "mejor solo uno") -> cambiar_cantidad_en_pedido con la cantidad TOTAL (nunca quitar + agregar). Si el cliente elige una opción de una aclaración ("leche" después de "¿agua o leche?"), pasa la cantidad que había dicho antes en agregar_producto.
 10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
 11. HUMANO: si el cliente pide explícitamente una persona/asesor, reclama por un pedido ya entregado o en camino, un pago/reembolso, o pide algo que ninguna herramienta puede hacer -> escalar_a_humano. No escales por dudas normales del menú.
 12. Datos de entrega: dirección, nombre, teléfono y método de pago pueden llegar en cualquier fase y en cualquier orden, incluso todos en un solo mensaje separados por comas -> llama cada fijar_* que corresponda. Nequi/Daviplata/Bancolombia/QR = "transferencia".
@@ -349,7 +349,7 @@ const DECL = {
 // núcleo). El orden es parte del prompt: se conserva el del piloto validado.
 const TOOL_ORDER = [
     'agregar_producto', 'elegir_sabores', 'elegir_toppings', 'sin_toppings', 'quitar_topping', 'fijar_cantidad',
-    'elegir_modo_unidades', 'quitar_producto_del_carrito', 'seguir_comprando', 'ir_a_pagar', 'confirmar_pedido',
+    'elegir_modo_unidades', 'quitar_producto_del_carrito', 'cambiar_cantidad_en_pedido', 'seguir_comprando', 'ir_a_pagar', 'confirmar_pedido',
     'editar_pedido', 'ver_carrito', 'fijar_direccion', 'fijar_recogida_en_local', 'fijar_nombre', 'fijar_telefono',
     'fijar_metodo_pago', 'informar_precios', 'mostrar_opciones_del_paso', 'mostrar_menu', 'info_local',
     'pedido_por_encargo', 'responder_pregunta', 'preguntar_aclaracion', 'escalar_a_humano', 'cancelar_pedido',
@@ -699,7 +699,7 @@ const EXECUTORS = {
         if (userSession._agentDupConfirm === codeOf(product)) userSession._agentDupConfirm = null;
         const counts = I.getCounts(product);
         const cantidadRaw = Number.isInteger(args.cantidad) && args.cantidad >= 1 && args.cantidad <= 100 ? args.cantidad : null;
-        const cantidad = cantidadRaw && G.qtyIsGrounded(cantidadRaw, T.text) ? cantidadRaw : null;
+        const cantidad = cantidadRaw && core.qtyGroundedFor(cantidadRaw, nameOf(product), T) ? cantidadRaw : null;
         if (counts.sabores === 0 && counts.toppings === 0) {
             // Producto sin personalización: si la IA mandó "sabores" (ej. jugo
             // de lulo), van como nota del ítem - no hay casilla de sabor.
@@ -1063,7 +1063,7 @@ const TOOL_GROUNDS = {
         // Cantidad o modo de unidades que el cliente no dijo: se descartan
         // (el flujo pregunta), el resto del pedido sigue.
         const clean = { ...args };
-        if (clean.cantidad !== undefined && clean.cantidad !== null && !G.qtyIsGrounded(parseInt(clean.cantidad, 10), T.text)) clean.cantidad = null;
+        if (clean.cantidad !== undefined && clean.cantidad !== null && !core.qtyGroundedFor(parseInt(clean.cantidad, 10), clean.producto, T)) clean.cantidad = null;
         if (clean.modo_unidades && !modoIsGrounded(T)) clean.modo_unidades = null;
         return { ok: true, args: clean };
     },

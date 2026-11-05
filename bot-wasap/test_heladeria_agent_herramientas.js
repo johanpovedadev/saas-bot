@@ -261,7 +261,8 @@ function setup(seed) {
             await say(t, 'la limonada que me dijiste', [{ name: 'agregar_producto', args: { producto: 'Limonada Natural' } }]);
             check(t.s().carrito.length === 1 && /Ya tienes/.test(t.sent.join('\n')), 'si el producto ya está en el carrito y no pidió "otra", se pregunta en vez de duplicarlo');
             await say(t, 'sí', [{ name: 'agregar_producto', args: { producto: 'Limonada Natural' } }]);
-            check(t.s().carrito.length === 2, 'si confirma que quiere otra, se agrega');
+            // Desde el 5 nov 2026 el mismo producto con las mismas opciones va en UNA línea (2x), no en dos.
+            check(t.s().carrito.reduce((n, it) => n + (it.cantidad || 1), 0) === 2 && t.s().carrito.length === 1, 'si confirma que quiere otra, se agrega (2 limonadas, en una sola línea)');
         }
 
         // ---- 16) Datos de entrega en post-compra: avanza al resumen ----

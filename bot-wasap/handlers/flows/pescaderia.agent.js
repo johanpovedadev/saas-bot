@@ -155,7 +155,7 @@ REGLAS:
    - FASE FINALIZE_ORDER y dice "sí"/"correcto"/"confirmo" -> confirmar_pedido. Si dice "no" -> pregunta qué quiere cambiar (preguntar_aclaracion) o editar_pedido.
 5. PAGAR: cualquier forma de "quiero pagar" ("ir a pagar", "cuánto es todo, vamos a pagar", con typos) -> ir_a_pagar. Una negación ("aún no", "todavía no") NO es pagar.
 6. RECOGER EN EL LOCAL: "paso a recogerlo", "lo recojo", "voy por él", "sin domicilio" -> fijar_recogida_en_local. Es un dato de entrega, no un plato.
-7. CANTIDAD: solo si el cliente dice un número explícito ("2 mojarras", "dos", "quiero 3"). "un"/"una" como artículo cuenta como 1.
+7. CANTIDAD: solo si el cliente dice un número explícito ("2 mojarras", "dos", "quiero 3"). "un"/"una" como artículo cuenta como 1. Si el producto YA está en el pedido y el cliente corrige o repite cuántos quiere ("son 2, no 3", "2 mojarras no 1", "mejor solo uno") -> cambiar_cantidad_en_pedido con la cantidad TOTAL (nunca quitar + agregar). Si el cliente elige una opción de una aclaración ("la de mariscos" después de "¿cuál cazuela?"), pasa la cantidad que había dicho antes en agregar_producto.
 8. COMPLEMENTO: algunos platos piden elegir un ${complementWord()} (lo dice el menú: "pide 1 ${complementWord()}"). Si el cliente ya lo dijo ("pargo rojo con patacón"), pásalo en "complementos". Si no, NO lo inventes: agrega el plato igual y el sistema se lo pregunta. Cuando el estado traiga PLATO EN ARMADO y el cliente dice el ${complementWord()}, usa elegir_complementos; si dice la cantidad, fijar_cantidad.
 9. PREGUNTAS (qué trae un plato, ingredientes, formas de pago, tiempos, si hay sopa, qué recomiendas) -> responder_pregunta con la pregunta tal cual. El valor del domicilio nunca lo sabes: lo gestiona el sistema.
 10. HUMANO: si el cliente pide una persona/asesor, reclama por un pedido ya entregado o en camino, un pago/reembolso, o pide algo que ninguna herramienta puede hacer -> escalar_a_humano.
@@ -363,7 +363,7 @@ const DECL = {
 };
 
 const TOOL_ORDER = [
-    'agregar_producto', 'elegir_complementos', 'fijar_cantidad', 'quitar_producto_del_carrito', 'seguir_comprando',
+    'agregar_producto', 'elegir_complementos', 'fijar_cantidad', 'quitar_producto_del_carrito', 'cambiar_cantidad_en_pedido', 'seguir_comprando',
     'ir_a_pagar', 'confirmar_pedido', 'editar_pedido', 'ver_carrito', 'fijar_direccion', 'fijar_recogida_en_local',
     'fijar_nombre', 'fijar_telefono', 'fijar_metodo_pago', 'informar_precios', 'mostrar_menu', 'info_local',
     'pedido_por_encargo', 'responder_pregunta', 'preguntar_aclaracion', 'escalar_a_humano', 'cancelar_pedido',
@@ -403,7 +403,7 @@ const EXECUTORS = {
         if (userSession.currentProduct && codeOf(userSession.currentProduct) !== codeOf(product)) clearInProgress(userSession);
 
         const cantidadRaw = Number.isInteger(args.cantidad) && args.cantidad >= 1 && args.cantidad <= 100 ? args.cantidad : null;
-        const cantidad = cantidadRaw && G.qtyIsGrounded(cantidadRaw, T.text) ? cantidadRaw : null;
+        const cantidad = cantidadRaw && core.qtyGroundedFor(cantidadRaw, nameOf(product), T) ? cantidadRaw : null;
         const needed = complementsNeeded(product);
         const notas = args.notas ? G.sanitizeFreeText(String(args.notas), 80) : '';
         const complementos = needed > 0 ? groundComplements(args.complementos, T, needed) : [];
@@ -474,7 +474,7 @@ const TOOL_GROUNDS = {
     agregar_producto(args, T) {
         // Una cantidad que el cliente no dijo se descarta (el flujo pregunta); el resto del pedido sigue.
         const clean = { ...args };
-        if (clean.cantidad !== undefined && clean.cantidad !== null && !G.qtyIsGrounded(parseInt(clean.cantidad, 10), T.text)) clean.cantidad = null;
+        if (clean.cantidad !== undefined && clean.cantidad !== null && !core.qtyGroundedFor(parseInt(clean.cantidad, 10), clean.producto, T)) clean.cantidad = null;
         return { ok: true, args: clean };
     },
     fijar_cantidad(args, T) {

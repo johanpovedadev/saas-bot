@@ -129,6 +129,9 @@ async function sendClarification(T, pregunta, candidates) {
         body += `\n\n${lines.join('\n')}`;
         T.userSession.lastMentionedProducts = candidates.map(nameOf);
         T.userSession._agentPendingOptions = candidates.map(nameOf);
+        // Lo que dijo el cliente antes de la aclaración ("quiero 2 jugos naturales"): si después elige una opción
+        // ("leche"), la cantidad que ya dijo sigue valiendo (qtyGroundedFor).
+        T.userSession._agentPendingOptionsText = T.text;
     }
     await say(T.sock, T.jid, body, T.ctx);
     T.clarified = true;
@@ -271,6 +274,11 @@ const obj = (properties, required) => ({ type: 'OBJECT', properties, ...(require
 const CORE_TOOL_DECLARATIONS = {
     quitar_producto_del_carrito: { name: 'quitar_producto_del_carrito', description: 'Quita un producto ya agregado al carrito (o cancela el que se está armando).',
         parameters: obj({ producto: { ...S, description: 'Nombre exacto del producto a quitar.' } }, ['producto']) },
+    cambiar_cantidad_en_pedido: { name: 'cambiar_cantidad_en_pedido', description: 'El producto YA está en el pedido y el cliente corrige o repite cuántos quiere en TOTAL ("son 2, no 3", "2 jugos no 1", "mejor 3", "solo uno"). No uses quitar ni agregar para eso.',
+        parameters: obj({
+            producto: { ...S, description: 'Nombre exacto del producto que ya está en el pedido.' },
+            cantidad: { ...INT, description: 'Cuántos quiere en TOTAL de ese producto (0 = ninguno).' }
+        }, ['producto', 'cantidad']) },
     seguir_comprando: { name: 'seguir_comprando', description: 'El cliente quiere agregar más productos (sin nombrar cuál todavía).' },
     ir_a_pagar: { name: 'ir_a_pagar', description: 'El cliente quiere pagar / terminar el pedido / ver el total para pagar.' },
     confirmar_pedido: { name: 'confirmar_pedido', description: 'El cliente confirma lo que el bot le preguntó: en CONFIRM_ORDER confirma el carrito (pasa a datos de entrega); en FINALIZE_ORDER confirma y ENVÍA el pedido final.' },
@@ -309,7 +317,7 @@ const CORE_TOOL_DECLARATIONS = {
 const CORE_EXEC_ORDER = {
     escalar_a_humano: 0, saludar: 1, cancelar_pedido: 2, responder_pregunta: 3, responder_breve: 3, informar_precios: 3,
     fijar_recogida_en_local: 4, fijar_direccion: 4, fijar_nombre: 4, fijar_telefono: 4, fijar_metodo_pago: 4,
-    quitar_producto_del_carrito: 5,
+    quitar_producto_del_carrito: 5, cambiar_cantidad_en_pedido: 5,
     mostrar_menu: 8, info_local: 8,
     ver_carrito: 9, seguir_comprando: 9, editar_pedido: 9, ir_a_pagar: 9,
     confirmar_pedido: 10, preguntar_aclaracion: 11
@@ -332,6 +340,7 @@ const CORE_TOOL_EFFECTS = {
     fijar_direccion: ['customer_data'], fijar_nombre: ['customer_data'], fijar_telefono: ['customer_data'],
     fijar_metodo_pago: ['customer_data', 'money'], fijar_recogida_en_local: ['order_state'],
     confirmar_pedido: ['order_final'], cancelar_pedido: ['order_final'], quitar_producto_del_carrito: ['order_state'],
+    cambiar_cantidad_en_pedido: ['order_state'],
     editar_pedido: ['order_state'], ir_a_pagar: ['order_state'], seguir_comprando: [], ver_carrito: [],
     informar_precios: [], mostrar_menu: [], info_local: [], responder_pregunta: [], preguntar_aclaracion: [],
     escalar_a_humano: [], saludar: [], responder_breve: []
@@ -369,10 +378,100 @@ const CORE_GROUNDS = {
     // (resumen final ya en pantalla + confirmación explícita / intención
     // explícita de cancelar) porque su candado depende de la fase del turno.
     confirmar_pedido: () => ({ ok: true }),
-    cancelar_pedido: () => ({ ok: true })
+    cancelar_pedido: () => ({ ok: true }),
+    cambiar_cantidad_en_pedido(args, T) {
+        const n = parseInt(args.cantidad, 10);
+        if (Number.isInteger(n) && n >= 0 && n <= 100 && (n === 0 || G.qtyIsGrounded(n, T.text))) return { ok: true };
+        return {
+            ok: false, reason: `cantidad ${args.cantidad} no dicha por el cliente ("${T.text}")`,
+            reply: `🤔 ¿Cuántas *${String(args.producto || 'unidades').slice(0, 60)}* quieres en total?`
+        };
+    }
 };
 
+/**
+ * ¿La cantidad `n` la dijo el cliente? En su mensaje, o (si está eligiendo una de las opciones que el bot acaba de
+ * ofrecer) en el mensaje que llevó a esa aclaración: "quiero 2 jugos naturales" -> "¿agua o leche?" -> "leche" = 2
+ * (5 nov 2026, Mundo Helados: se anotaba 1).
+ */
+function qtyGroundedFor(n, productName, T) {
+    if (G.qtyIsGrounded(n, T.text)) return true;
+    const offered = (T.pendingBefore || []).some(o => norm(o) === norm(productName));
+    return offered && !!T.pendingOptionsText && G.qtyIsGrounded(n, T.pendingOptionsText);
+}
+
+/** Dos líneas son "la misma" si son el mismo producto con las mismas opciones (sabores, toppings, notas) y precio. */
+function sameLine(a, b) {
+    return a.codigo === b.codigo && a.nombre === b.nombre && (Number(a.precio) || 0) === (Number(b.precio) || 0) &&
+        (a.observaciones || '') === (b.observaciones || '') &&
+        JSON.stringify(a.sabores || []) === JSON.stringify(b.sabores || []) &&
+        JSON.stringify(a.toppings || []) === JSON.stringify(b.toppings || []);
+}
+
+/**
+ * El mismo producto con las mismas opciones va en UNA línea (5 nov 2026, Mundo Helados: "1x Jugos Naturales Leche" y
+ * "2x Jugos Naturales Leche" en dos líneas y el cliente corrigiendo "son 2, no 3"). Recalcula el subtotal.
+ */
+function mergeIdenticalLines(userSession) {
+    const carrito = ensureCarrito(userSession);
+    const out = [];
+    for (const it of carrito) {
+        const same = out.find(o => sameLine(o, it));
+        if (same) {
+            same.cantidad = (Number(same.cantidad) || 1) + (Number(it.cantidad) || 1);
+            if (same.subtotal !== undefined) same.subtotal = (Number(same.precio) || 0) * same.cantidad;
+        } else out.push(it);
+    }
+    if (out.length !== carrito.length) carrito.splice(0, carrito.length, ...out);
+    return carrito;
+}
+
+/** order.items refleja el carrito (misma sincronización idempotente que editar_pedido / handleCartSummary). */
+function syncOrderItems(userSession) {
+    if (!Array.isArray(userSession.carrito) || !userSession.order || !Array.isArray(userSession.order.items)) return;
+    if (!userSession.order.items.some(i => i._fromCarrito)) return;
+    const existing = userSession.order.items.filter(i => !i._fromCarrito);
+    userSession.order.items = existing.concat(userSession.carrito.map(item => ({
+        codigo: item.codigo, nombre: item.nombre, precio: item.precio || 0, cantidad: item.cantidad || 1,
+        sabores: [...(item.sabores || [])], toppings: [...(item.toppings || [])], observaciones: item.observaciones || '', _fromCarrito: true
+    })));
+}
+
 const CORE_EXECUTORS = {
+    async cambiar_cantidad_en_pedido(args, T) {
+        const { sock, jid, userSession, ctx } = T;
+        const n = parseInt(args.cantidad, 10);
+        const target = norm(args.producto);
+        const carrito = mergeIdenticalLines(userSession);
+        const matches = carrito.filter(it => norm(it.nombre) === target || (target.length >= 4 && norm(it.nombre).includes(target)));
+        if (!matches.length) { await say(sock, jid, `🤔 No veo *${String(args.producto || '').slice(0, 60)}* en tu pedido.`, ctx); T.cartChanged = true; return; }
+        const distinctNames = [...new Set(matches.map(m => m.nombre))];
+        if (distinctNames.length > 1) {
+            await sendClarification(T, '¿De cuál cambio la cantidad?', distinctNames.map(nm => ({ NombreProducto: nm })));
+            return;
+        }
+        // Varias líneas del mismo producto con distintas opciones (ej. dos copas con sabores distintos): no se adivina
+        // cuál cambia; se abre la edición del pedido.
+        if (matches.length > 1) {
+            await say(sock, jid, `🤔 Tienes *${matches[0].nombre}* con opciones distintas. Dime cuál quitas o cambias:`, ctx);
+            await CORE_EXECUTORS.editar_pedido({}, T);
+            return;
+        }
+        const item = matches[0];
+        if (n === 0) {
+            carrito.splice(carrito.indexOf(item), 1);
+            syncOrderItems(userSession);
+            await say(sock, jid, `🗑️ Se quitó *${item.nombre}* de tu pedido.`, ctx);
+            T.cartChanged = true;
+            return;
+        }
+        item.cantidad = n;
+        if (item.subtotal !== undefined) item.subtotal = (Number(item.precio) || 0) * n;
+        syncOrderItems(userSession);
+        await say(sock, jid, `✏️ Listo: *${n}x ${item.nombre}* - *${money((Number(item.precio) || 0) * n)}*`, ctx);
+        T.cartChanged = true;
+    },
+
     async quitar_producto_del_carrito(args, T) {
         const { sock, jid, userSession, ctx, plugin } = T;
         // Primero: ¿es el producto que se está armando ahora mismo?
@@ -814,6 +913,7 @@ async function flushPlainAdds(T, navigatingNext) {
             carrito[carrito.length - 1].observaciones = r.notas;
         }
     }
+    mergeIdenticalLines(userSession);
     const lineas = adds.map(r => `• ${r.cantidad}x ${nameOf(r.product)}${r.notas ? ` (${r.notas})` : ''} - *${money(r.precio * r.cantidad)}*`).join('\n');
     const building = plugin.hooks.hasItemInProgress(userSession);
     if (building || navigatingNext) {
@@ -1110,6 +1210,7 @@ function createCartAgent(plugin) {
             // La IA no respondió: el mensaje sigue por el flujo de reglas, que
             // todavía no ha tocado nada de este turno.
             userSession._agentPendingOptions = null;
+            userSession._agentPendingOptionsText = null;
             userSession._agentPendingOffer = null;
             emitTrace({ jid, text, path: 'fallback-legacy', phase, latencyMs: Date.now() - t0 });
             return false;
@@ -1117,7 +1218,9 @@ function createCartAgent(plugin) {
         // Las opciones numeradas pendientes ya se le mostraron a la IA en este
         // turno; si hace falta otra aclaración, sendClarification las vuelve a fijar.
         const pendingBefore = Array.isArray(userSession._agentPendingOptions) ? userSession._agentPendingOptions : null;
+        const pendingOptionsText = pendingBefore ? String(userSession._agentPendingOptionsText || '') : '';
         userSession._agentPendingOptions = null;
+        userSession._agentPendingOptionsText = null;
         // La oferta vale para UNA respuesta: este turno la consume (sí, no u otra cosa).
         userSession._agentPendingOffer = null;
 
@@ -1160,7 +1263,7 @@ function createCartAgent(plugin) {
             }
         });
         const T = {
-            sock: countingSock, jid, text, userSession, ctx, startPhase: phase, pendingBefore, callCount: calls.length, callNames: calls.map(c => c.name), pendingOffer: offerBefore ? offerBefore.producto : null,
+            sock: countingSock, jid, text, userSession, ctx, startPhase: phase, pendingBefore, pendingOptionsText, callCount: calls.length, callNames: calls.map(c => c.name), pendingOffer: offerBefore ? offerBefore.producto : null,
             plugin, acc, agentExecutors: EXECUTORS, history: () => recentHistory(jid),
             mentionedBefore: Array.isArray(userSession.lastMentionedProducts) ? [...userSession.lastMentionedProducts] : [],
             plainAdds: [], prompted: false, checkoutNeedsAdvance: false, checkoutAdvanced: false,
@@ -1291,6 +1394,8 @@ module.exports = {
     escalate,
     markPrompted,
     ensureCarrito,
+    qtyGroundedFor,
+    mergeIdenticalLines,
     hasCartItems,
     cancelOrderAndClearDelivery,
     describeDelivery,
