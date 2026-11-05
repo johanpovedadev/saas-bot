@@ -33,6 +33,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.9.2] - 2026-11-04
+
+### Corregido
+
+- **Tiquete sin valor** (parqueadero): Leo pregunta cuánto pagaste y lo anota como Parqueadero (#160).
+- **Foto o audio que la IA no lee**: respuesta corta de qué hacer en vez de "No pude entender el contenido" (#160).
+
+### Agregado
+
+- `/costo_ia` muestra los modelos en uso y el **último error de cada proveedor** con su causa real, sin claves (#160).
+- El menú ofrece mandar **audio o foto del recibo** a quien tiene IA (#160).
+
 ## [1.9.1] - 2026-11-04
 
 ### Corregido
