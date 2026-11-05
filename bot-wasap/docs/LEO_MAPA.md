@@ -50,8 +50,8 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
   una. Queda un movimiento `pago_tarjeta` (`services/financeCardStatement.js`).
 - Si el pago quedó como un gasto normal (en "Otros"), las compras quedan **contadas dos veces** y el extracto sigue
   "por pagar". Se arregla borrando ese gasto y escribiendo "pagué la tarjeta <monto>" (#164 amplió las frases).
-- El extracto (total, mínimo, fecha) entra por la bandeja de ajustes. "Te queda" en el informe ya descuenta lo que
-  falta pagar del extracto.
+- El extracto (total, mínimo, fecha) entra por la bandeja de ajustes. En el informe, "Te queda" es tu saldo; aparte
+  sale "💳 pagá $X antes del …" y "al pagar el extracto te quedaría …" (el saldo menos lo que falta del extracto).
 
 ## Datos de la cuenta (`fin`)
 
