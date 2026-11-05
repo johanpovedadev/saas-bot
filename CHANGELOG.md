@@ -33,6 +33,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.9.3] - 2026-11-05
+
+### Corregido
+
+- **Fotos y audios con OpenRouter**: cada llamada pide hasta 2.048 tokens; sin tope, OpenRouter reservaba 65.536 y
+  respondía 402 aunque la cuenta tuviera saldo (#168).
+
 ## [1.9.2] - 2026-11-04
 
 ### Corregido
