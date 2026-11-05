@@ -8,6 +8,9 @@
  *   4. El mismo jugo quedaba en dos líneas ("1x" y "2x") en el carrito.
  *   5. Los mensajes salían en desorden ("¿De qué sabores?" antes de "Anoté el jugo") y con dos preguntas a la vez.
  *   6. "¿A qué horas paso?" a las 8:49 a. m. no decía que hoy abren a las 2:00 pm.
+ *   7. "2 volcanes con los mismos sabores" (los de su "lo de siempre": dos copas con sabores distintos) volvía a
+ *      preguntar los sabores.
+ *   8. En la lista larga de toppings, el "responde no si no quieres" quedaba al final.
  * Pruebas SIN IA real: la decisión de la IA se simula con lo que hizo en esa conversación (y, con la herramienta
  * nueva, con cambiar_cantidad_en_pedido).
  *
@@ -61,6 +64,7 @@ const productsCache = [
     P('JN-AGUA', 'Jugos Naturales Agua', '5000', 'Bebidas'),
     P('JN-LECHE', 'Jugos Naturales Leche', '7000', 'Bebidas'),
     P('S1', 'Brownie', '0', 'Sabores_Helado'), P('S2', 'Chocolate', '0', 'Sabores_Helado'), P('S3', 'Capuchino', '0', 'Sabores_Helado'),
+    P('S4', 'Ron pasas', '0', 'Sabores_Helado'),
     P('T1', 'queso', '2500', 'Toppings'),
     P('LIM', 'Limonada', '6000', 'Bebidas')
 ];
@@ -79,6 +83,7 @@ async function say(t, text, calls) { nextDecision = calls; t.sent.length = 0; aw
 
 
 const JUGO = 'Jugos Naturales Leche';
+const sab = (it) => (it.sabores || []).map((x) => x.NombreProducto || x).join(',');
 const jugos = (t) => (t.s().carrito || []).filter((it) => it.nombre === JUGO);
 const totalJugos = (t) => jugos(t).reduce((n, it) => n + (it.cantidad || 1), 0);
 
@@ -176,6 +181,53 @@ async function pedidoInicial(t) {
                 await say(t, 'Si s qué horas paso por el', [{ name: 'info_local', args: {} }]);
                 check(/Hoy abrimos a las \*2:00 pm\*/.test(t.sent.join('\n')), 'con pedido armado, "¿a qué horas paso?" responde "Hoy abrimos a las 2:00 pm"');
             } finally { businessHours.opensLaterToday = original; }
+        }
+
+        // ---- 8) "2 volcanes con los mismos sabores" = los de su pedido anterior, unidad por unidad ----
+        const LO_DE_SIEMPRE = [['Capuchino', 'Chocolate', 'Ron pasas'], ['Chocolate', 'Chocolate', 'Chocolate']];
+        {
+            const recurring = require('./handlers/modules/recurringCustomer');
+            const units = recurring.flavorsByUnit([
+                { nombre: 'Copa Gusanito', cantidad: 1, sabores: ['Capuchino', 'Chocolate', 'Ron pasas'] },
+                { nombre: 'Copa Gusanito', cantidad: 1, sabores: ['Chocolate', 'Chocolate', 'Chocolate'] },
+                { nombre: 'Jugos Naturales Leche', cantidad: 1, sabores: [] }
+            ]);
+            check(JSON.stringify(units) === JSON.stringify(LO_DE_SIEMPRE), 'el pedido anterior queda como sabores por unidad');
+
+            const t = setup();
+            t.s().lastOrderFlavors = { units: LO_DE_SIEMPRE, at: Date.now() };
+            await say(t, 'Hoy quiero 2 pero volcán con los mismos sabores y demás 2 jugos naturales', [
+                { name: 'agregar_producto', args: { producto: 'Volcán de Gomitas', cantidad: 2, modo_unidades: 'iguales' } },
+                { name: 'preguntar_aclaracion', args: { pregunta: 'Para los 2 jugos naturales, ¿los prefieres en agua o en leche?', opciones: ['Jugos Naturales Agua', 'Jugos Naturales Leche'] } }
+            ]);
+            const sel = ((t.s().heladoFlow && t.s().heladoFlow.saboresSeleccionados) || []).map((x) => x.NombreProducto || x).join(',');
+            check(sel === 'Capuchino,Chocolate,Ron pasas', `la primera unidad toma los sabores de antes sin preguntarlos (${sel})`);
+            check(!/¿De qué sabores/.test(t.sent.join('\n')), 'no vuelve a preguntar los sabores');
+            await say(t, 'Leche', [{ name: 'agregar_producto', args: { producto: JUGO, cantidad: 2 } }]);
+            await say(t, 'No', [{ name: 'sin_toppings', args: {} }]);
+            check(t.s().phase === 'HELADO_PER_UNIT_TOPPINGS', `la segunda unidad toma sus sabores sola y pasa a sus toppings (fase ${t.s().phase})`);
+            await say(t, 'No', [{ name: 'sin_toppings', args: {} }]);
+            const volcanes = (t.s().carrito || []).filter((it) => /Volc/.test(it.nombre));
+            check(volcanes.length === 2 && sab(volcanes[0]) === 'Capuchino,Chocolate,Ron pasas' && sab(volcanes[1]) === 'Chocolate,Chocolate,Chocolate',
+                `2 Volcanes: uno de Capuchino, Chocolate, Ron pasas y otro de Chocolate x3 (${volcanes.map(sab).join(' | ')})`);
+            check(totalJugos(t) === 2, 'y los 2 jugos en leche');
+        }
+
+        // ---- 9) Sin pedido anterior, "los mismos sabores" no inventa nada ----
+        {
+            const t = setup();
+            await say(t, 'quiero 2 volcanes con los mismos sabores', [{ name: 'agregar_producto', args: { producto: 'Volcán de Gomitas', cantidad: 2, modo_unidades: 'iguales' } }]);
+            check(t.s().phase === 'HELADO_SABORES' && /sabores/i.test(t.sent.join('\n')), 'sin pedido anterior, pregunta los sabores');
+        }
+
+        // ---- 10) Toppings: qué hacer si no quiere, ARRIBA de la lista ----
+        {
+            const t = setup();
+            await say(t, 'un volcán todos de brownie', [{ name: 'agregar_producto', args: { producto: 'Volcán de Gomitas', sabores: ['Brownie', 'Brownie', 'Brownie'] } }]);
+            const msg = t.sent.find((m) => /toppings/i.test(m) && /opcionales/.test(m)) || '';
+            const iNo = msg.indexOf('responde *no*');
+            const iLista = msg.indexOf('• ');
+            check(iNo >= 0 && iLista > iNo, `"Si no quieres, responde *no*" va antes de la lista de toppings (no=${iNo}, lista=${iLista})`);
         }
     } catch (e) {
         failures++;

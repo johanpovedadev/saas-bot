@@ -73,6 +73,21 @@ function buildRepeatCart(profile, products) {
     return { items, total: items.reduce((n, i) => n + i.precio * i.cantidad, 0), missing, changed };
 }
 
+/**
+ * Los sabores del pedido anterior, una lista por unidad: [["Capuchino","Chocolate","Ron pasas"], ["Chocolate","Chocolate","Chocolate"]].
+ * Para "2 volcanes con los mismos sabores" (Johan, 5 nov 2026: el cliente cambió la copa de siempre por otro producto
+ * pero con los mismos sabores, y el bot se los volvió a preguntar).
+ */
+function flavorsByUnit(items) {
+    const units = [];
+    for (const i of items || []) {
+        const sabores = (i.sabores || []).map((x) => (x && (x.NombreProducto || x.nombre)) || x).filter(Boolean);
+        if (!sabores.length) continue;
+        for (let k = 0; k < Math.max(1, Number(i.cantidad) || 1); k++) units.push(sabores.slice());
+    }
+    return units;
+}
+
 function describeItem(i) {
     const sabores = (i.sabores || []).map((s) => (s && (s.NombreProducto || s.nombre)) || s).filter(Boolean);
     const toppings = (i.toppings || []).map((t) => (t && (t.NombreProducto || t.nombre)) || t).filter(Boolean);
@@ -154,6 +169,12 @@ async function tryHandle(sock, jid, text, session, ctx) {
         if (!profile) { session.repeatOffer = null; return false; }
         if (isYes(text)) return acceptRepeat(sock, jid, session, ctx, profile, flow);
         session.repeatOffer = null;
+        // Dijo otra cosa ("hoy quiero 2 volcanes con los mismos sabores"): el pedido anterior queda como referencia
+        // para el agente (sabores por unidad), sin cargarlo al carrito.
+        try {
+            const units = flavorsByUnit(buildRepeatCart(profile, flow.getMenuProducts(ctx)).items);
+            session.lastOrderFlavors = units.length ? { units, at: Date.now() } : null;
+        } catch (e) { session.lastOrderFlavors = null; }
         if (isNo(text)) { await flow.showWelcome(sock, jid, ctx, ''); return true; }
         return false; // dijo otra cosa: se atiende como cualquier mensaje, sin tocar lo de la última vez
     }
@@ -170,4 +191,4 @@ async function tryHandle(sock, jid, text, session, ctx) {
     return false;
 }
 
-module.exports = { tryHandle, buildRepeatCart, isYes, isNo, FORGET };
+module.exports = { tryHandle, buildRepeatCart, flavorsByUnit, isYes, isNo, FORGET };

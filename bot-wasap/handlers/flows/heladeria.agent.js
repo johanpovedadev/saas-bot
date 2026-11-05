@@ -296,6 +296,8 @@ function describeState(userSession) {
     if (userSession.pendingDomicilioQuery) lines.push('PENDIENTE: el bot le pidió la dirección para cotizar el domicilio.');
     const pending = core.describePendingOptions(userSession);
     if (pending) lines.push(pending);
+    const prevFlavors = freshPreviousFlavors(userSession);
+    if (prevFlavors) lines.push(`SABORES DE SU PEDIDO ANTERIOR (si dice "los mismos sabores", el sistema los pone; no los preguntes): ${prevFlavors.map((u, i) => `unidad ${i + 1}: ${u.join(', ')}`).join(' ; ')}`);
     const orphan = userSession._agentOrphanSlots;
     if (orphan) {
         const parts = [];
@@ -380,6 +382,33 @@ function slotsOf(flow) {
  * atrapado en "te falta 1 sabor". Si el mensaje dice "todos/todas" y la IA
  * mandó un solo sabor (repetido o no), se completa con ese mismo sabor.
  */
+// "Los mismos sabores" del pedido anterior (Johan, 5 nov 2026: "hoy quiero 2 pero volcán con los mismos sabores" =
+// las dos copas de siempre, ahora en Volcán, cada una con sus sabores). Solo vale poco después de ofrecerle "lo de
+// siempre" (recurringCustomer deja session.lastOrderFlavors cuando el cliente responde otra cosa).
+const SAME_FLAVORS_RE = /\b(?:(?:con\s+)?(?:l[oa]s\s+)?mism[oa]s\s+sabores|igual(?:es)?\s+(?:que|a)\s+(?:la\s+|el\s+)?(?:vez\s+)?(?:anterior|pasad[oa]|de siempre)|como\s+(?:la\s+|el\s+)?(?:vez\s+)?(?:anterior|pasad[oa]|de siempre))\b/;
+const PREVIOUS_FLAVORS_TTL_MS = 2 * 60 * 60 * 1000;
+
+function freshPreviousFlavors(userSession) {
+    const ref = userSession && userSession.lastOrderFlavors;
+    if (!ref || !Array.isArray(ref.units) || !ref.units.length || Date.now() - (ref.at || 0) > PREVIOUS_FLAVORS_TTL_MS) return null;
+    return ref.units;
+}
+
+/**
+ * Sabores por unidad tomados del pedido anterior, o null. Solo si el cliente lo dijo ("los mismos sabores") y los
+ * sabores de antes encajan: la misma cantidad de sabores que pide este producto, y o todos iguales (sirven para
+ * cualquier cantidad) o una lista por cada unidad que pidió.
+ */
+function previousFlavorsFor(T, saboresPerUnit, qty) {
+    const units = freshPreviousFlavors(T.userSession);
+    if (!units || !SAME_FLAVORS_RE.test(norm(T.text))) return null;
+    const fit = units.filter(u => u.length === saboresPerUnit);
+    if (!fit.length) return null;
+    const distinct = [...new Map(fit.map(u => [JSON.stringify(u), u])).values()];
+    if (distinct.length === 1) return [distinct[0]];
+    return fit.length === (qty || 1) ? fit : null;
+}
+
 function padTodos(sabores, needed, T) {
     if (!Array.isArray(sabores) || !sabores.length || !(needed > sabores.length)) return sabores;
     if (!/\btod[oa]s?\b/.test(norm(T.text))) return sabores;
@@ -623,6 +652,18 @@ async function autoAdvance(T) {
             }
             break;
         }
+        // Unidades distintas con los sabores del pedido anterior: la unidad siguiente toma los suyos sin preguntar.
+        if (phase === HP.HELADO_PER_UNIT_SABORES && Array.isArray(userSession._agentNextUnitSabores) && userSession._agentNextUnitSabores.length) {
+            const next = userSession._agentNextUnitSabores.shift();
+            if (!userSession._agentNextUnitSabores.length) userSession._agentNextUnitSabores = null;
+            const r = toCodes(next, saboresList, 'S');
+            if (r.codes.length === next.length && !r.ambiguous.length) {
+                await I.handlePerUnitSabores(sock, jid, r.codes.join(' '), userSession, ctx);
+                markPrompted(T);
+                continue;
+            }
+            userSession._agentNextUnitSabores = null;
+        }
         if (phase === HP.HELADO_QUANTITY && slots.qty) {
             const q = slots.qty; slots.qty = null;
             await I.handleQuantity(sock, jid, String(q), userSession, ctx);
@@ -723,6 +764,19 @@ const EXECUTORS = {
         if (slots.toppings) {
             slots.toppings = await groundToppings(slots.toppings, T);
             if (!slots.toppings.length) slots.toppings = null;
+        }
+        // "Con los mismos sabores" de su pedido anterior: el código pone esos sabores (una lista por unidad si eran
+        // distintos), sin volver a preguntarlos.
+        if (!slots.sabores && counts.sabores > 0) {
+            const prev = previousFlavorsFor(T, counts.sabores, slots.qty);
+            if (prev) {
+                slots.sabores = prev[0].slice();
+                if (prev.length > 1) {
+                    slots.modo = 'diferentes';
+                    userSession._agentNextUnitSabores = prev.slice(1).map(u => u.slice());
+                } else if ((slots.qty || 1) > 1) slots.modo = 'iguales';
+                userSession.lastOrderFlavors = null;
+            }
         }
         // Lo que el cliente ya había dicho antes de elegir el producto
         // (sabores, adición, "sin toppings", cantidad) se aplica ahora.
