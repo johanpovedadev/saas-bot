@@ -23,6 +23,7 @@ const { say } = require('../../services/bot_core');
 const { logger } = require('../../utils/logger');
 const { money } = require('../../utils/util');
 const profiles = require('../../services/customerProfileStore');
+const openCarts = require('../../services/openCartStore');
 const flowRegistry = require('../flowRegistry');
 
 const BACKSLASH = String.fromCharCode(92);
@@ -95,6 +96,82 @@ function describeItem(i) {
     return `${i.cantidad}x ${i.nombre}${extra ? ` (${extra})` : ''}`;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Pedido sin terminar (5 nov 2026, Mundo Helados): el cliente vuelve horas después y el bot se había reiniciado.
+// ---------------------------------------------------------------------------------------------------------------
+
+const CONTINUE_RE = /\b(continu|segui|seguimos|sigamos|retom|mi pedido|el pedido|confirm|lo de arriba|ya te dije|te lo confirmo)/;
+const PASTED_LINE_RE = /^\s*\*?(\d{1,3})x\*?\s+(.+?)\s+-\s+\*?\$/;
+const PASTED_FLAVORS_RE = /^\s*sabores:\s*_?(.+?)_?\s*$/i;
+const PASTED_TOPPINGS_RE = /^\s*toppings?:/i;
+
+/** ¿Es el resumen que el bot le mandó, pegado por el cliente? ("📝 *Resumen de tu pedido:* ... *2x* Volcán ... - *$ 30.000*") */
+function looksLikePastedSummary(text) {
+    const t = String(text || '');
+    return /resumen de tu pedido|tu pedido hasta ahora/i.test(t) && t.split('\n').some((l) => PASTED_LINE_RE.test(l));
+}
+
+/**
+ * Rearma el pedido a partir del resumen pegado: cantidad, producto y sabores salen del texto, el PRECIO del menú (nunca
+ * del texto). Con toppings no se rearma (cambian el precio): se pregunta como siempre. [] si no se puede.
+ */
+function parsePastedSummary(text, products) {
+    const lines = String(text || '').split('\n');
+    if (lines.some((l) => PASTED_TOPPINGS_RE.test(l))) return [];
+    const items = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(PASTED_LINE_RE);
+        if (!m) continue;
+        const product = (products || []).find((p) => norm(p.NombreProducto) === norm(m[2].replace(/\*/g, '')));
+        if (!product) return [];
+        const next = (lines[i + 1] || '').match(PASTED_FLAVORS_RE);
+        const sabores = next ? next[1].split(',').map((x) => x.replace(/[_*]/g, '').trim()).filter(Boolean) : [];
+        items.push({ codigo: product.CodigoProducto, nombre: product.NombreProducto, precio: 0, cantidad: Number(m[1]), sabores, toppings: [], observaciones: '' });
+    }
+    return items;
+}
+
+/** Pone el pedido en la sesión con los precios ACTUALES del menú (lo que ya no está, se deja fuera). */
+function loadCartIntoSession(session, items, delivery, products) {
+    const cart = buildRepeatCart({ items }, products);
+    if (!cart.items.length) return null;
+    session.carrito = cart.items.map((i) => ({ ...i, subtotal: i.precio * i.cantidad }));
+    session.order = { items: cart.items.map((i) => ({ ...i, _fromCarrito: true })), ...(delivery || {}), pickup: !!(delivery && delivery.pickup) };
+    session.repeatOffer = null;
+    session.repeatOfferedAt = Date.now();
+    return cart;
+}
+
+/**
+ * El cliente vuelve con la sesión vacía: si tenía un pedido abierto guardado (o pega el resumen), se recupera. Si saluda,
+ * dice "continuemos con el pedido" o pega el resumen, se le muestra para confirmar; si dice otra cosa, el pedido queda
+ * cargado y se sigue normal (el agente lo ve en el carrito).
+ * @returns {Promise<boolean|null>} true si respondió, false si cargó el pedido y sigue el flujo, null si no aplica
+ */
+async function tryResumeOpenCart(sock, jid, text, session, ctx, flow) {
+    const biz = process.env.BUSINESS_KEY;
+    const empty = !Array.isArray(session.carrito) || session.carrito.length === 0;
+    if (!empty) return null;
+    const products = flow.getMenuProducts(ctx);
+    const saved = openCarts.get(biz, jid);
+    let cart = null;
+    if (saved && Array.isArray(saved.carrito) && saved.carrito.length) cart = loadCartIntoSession(session, saved.carrito, saved.delivery, products);
+    const pasted = looksLikePastedSummary(text);
+    if (!cart && pasted) {
+        const items = parsePastedSummary(text, products);
+        if (items.length) cart = loadCartIntoSession(session, items, null, products);
+    }
+    if (!cart) return null;
+    const t = norm(text);
+    if (pasted || isGreeting(text) || CONTINUE_RE.test(t) || isYes(text)) {
+        const checkout = require('../checkoutHandler');
+        await say(sock, jid, '👋 ¡Hola de nuevo! Tenías este pedido sin terminar, aquí lo tengo 👇', ctx);
+        await checkout.handleCartSummary(sock, jid, session, ctx);
+        return true;
+    }
+    return false;
+}
+
 async function offerRepeat(sock, jid, session, ctx, profile, cart) {
     const hello = firstName(profile);
     const lines = [`¡Hola${hello ? ` ${hello}` : ''}! 😊 Qué bueno verte de nuevo.`, '', '¿Te preparo *lo de siempre*?'];
@@ -153,6 +230,7 @@ async function tryHandle(sock, jid, text, session, ctx) {
     // Borrar mis datos: en cualquier fase, siempre.
     if (FORGET.test(norm(text))) {
         const had = profiles.forget(biz, jid);
+        openCarts.remove(biz, jid);
         // También su historial de conversación (el que ve la dueña en el panel): "mis datos" incluye lo que escribió.
         let hadChat = 0;
         try { hadChat = require('../../services/conversationStore').forBusiness(biz).forgetJid(jid); } catch (e) { logger.warn(`recurringCustomer: no se pudo borrar el historial: ${e.message}`); }
@@ -162,6 +240,12 @@ async function tryHandle(sock, jid, text, session, ctx) {
             : 'No tenía datos tuyos guardados. 🙏', ctx);
         return true;
     }
+
+    // Pedido sin terminar (guardado en disco, o el resumen que el cliente pegó): antes que "¿lo de siempre?".
+    try {
+        const resumed = await tryResumeOpenCart(sock, jid, text, session, ctx, flow);
+        if (resumed !== null) return resumed;
+    } catch (e) { logger.warn(`[${jid}] recurringCustomer: no se pudo recuperar el pedido abierto: ${e.message}`); }
 
     // Respuesta a "¿lo de siempre?".
     if (session.repeatOffer) {
@@ -191,4 +275,4 @@ async function tryHandle(sock, jid, text, session, ctx) {
     return false;
 }
 
-module.exports = { tryHandle, buildRepeatCart, flavorsByUnit, isYes, isNo, FORGET };
+module.exports = { tryHandle, buildRepeatCart, flavorsByUnit, parsePastedSummary, looksLikePastedSummary, isYes, isNo, FORGET };

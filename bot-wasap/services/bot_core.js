@@ -150,6 +150,8 @@ function startProductsCacheRefresher(ctx) {
 }
 
 function resetChat(jid, ctx) {
+    // Pedido enviado, cancelado o vuelta al menú: el pedido abierto guardado en disco ya no se ofrece al volver.
+    try { require('./openCartStore').remove(process.env.BUSINESS_KEY, jid); } catch (_) { /* best-effort */ }
     const nomenclature = envConfig.nomenclature;
     const isInsurance = envConfig.business?.type === 'seguros_mascotas' ||
                         envConfig.business?.industry === 'insurance' ||

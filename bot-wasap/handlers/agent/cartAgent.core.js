@@ -1069,6 +1069,9 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
             logger.error(`[${plugin.logTag}] ${jid} no se pudo enviar un mensaje del turno: ${e.message}`);
         }
     }
+    // El pedido abierto sobrevive a un reinicio del bot (services/openCartStore.js). Se guarda desde la sesión ACTUAL:
+    // si el pedido se envió en este turno, resetChat ya la reemplazó por una vacía y esto lo borra.
+    try { require('../../services/openCartStore').saveFromSession(process.env.BUSINESS_KEY, jid, ctx.sessions && ctx.sessions[jid]); } catch (_) { /* best-effort */ }
 }
 
 // ---------------------------------------------------------------------------

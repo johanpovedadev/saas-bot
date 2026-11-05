@@ -34,6 +34,11 @@ Estado al 30 sep 2026. Piloto: heladería (Mundo Helados), **apagado por defecto
 - **Escalamiento:** `notifyAdminsAboutCustomerIssue` (link wa.me), `WAITING_HUMAN`, registro para el
   panel; 4 aclaraciones seguidas también escalan.
 - **El cliente nunca queda sin respuesta** (cierre del turno).
+- **El pedido abierto sobrevive a un reinicio** (5 nov 2026): al final de cada turno se guarda en
+  `services/openCartStore.js` (SQLite, por negocio y cliente, vence a las 12 h con `OPEN_CART_TTL_HOURS`). Si el cliente
+  vuelve con la sesión vacía, `recurringCustomer` lo recupera ("Tenías este pedido sin terminar") o lo rearma desde el
+  resumen que pegue (precios del menú). Se borra al enviar o cancelar el pedido (`resetChat`) y con "borra mis datos".
+  Prueba: `test_pedido_abierto_sobrevive.js`.
 - **Input determinista:** el `userContent` es función solo del pedido, el historial y el mensaje
   (sin reloj). Ver `test_cart_agent_determinismo.js`.
 

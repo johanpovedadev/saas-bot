@@ -26,6 +26,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Corregido
 
+- **El pedido a medias ya no se pierde con un reinicio del bot**: queda guardado 12 horas y, si el cliente vuelve
+  ("hola", "continuemos con el pedido" o pegando el resumen), se le muestra para confirmar.
+- **"Los mismos sabores"** después de "¿lo de siempre?" toma los sabores de ese pedido; y la lista de toppings dice
+  arriba "si no quieres, responde *no*".
 - **Agentes de carrito (Mundo Helados y Ricuras): corregir cantidades.** "Son 2, no 3" cambia el total (antes quitaba
   una línea o sumaba más); al elegir una opción ("leche" tras "¿agua o leche?") se conserva la cantidad que el cliente
   ya había dicho; y el mismo producto va en una sola línea. Replay real del 5 nov 2026.
