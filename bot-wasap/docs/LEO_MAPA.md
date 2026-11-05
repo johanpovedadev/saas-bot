@@ -2,6 +2,7 @@
 
 Léelo antes de tocar Leo. Está hecho para que no tengas que recorrer el repo: aquí dice qué archivo hace qué.
 Cómo subir, desplegar y usar Hermes: [`AGENTE_ARRANQUE.md`](AGENTE_ARRANQUE.md).
+**La IA de Leo** (proveedor, claves, quién tiene IA, costos y qué hacer cuando falla): [`LEO_IA.md`](LEO_IA.md).
 
 ## Qué es
 
@@ -39,6 +40,18 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. `normalizeSpokenAmounts()` (#144): "15 lucas", "luca y media", "un palo", "medio palo", "2 barras", "15k", "30000.000" → cifras; lo llaman `financeAi.interpret` (con nombre puesto) e `interpretEntries`. También montos en letras ("quince mil", `wordNumbersToDigits`), para los audios. Pruebas: `test_finance_lenguaje_natural.js`, `test_finance_audios_fotos.js`. |
 | `utils/financeDate.js` | `todayInBogota()` → "YYYY-MM-DD". **Usa esta fecha, no la del servidor.** `parseRelativeDay()`: "ayer", "antier", "el lunes" (el último lunes). |
 | `utils/financeDisclaimer.js` | Aviso "Leo no es asesor financiero" (solo en informes y consejos). |
+
+## Tarjeta de crédito: cómo cuenta Leo (para no perderse)
+
+- **Una compra con tarjeta** ("almuerzo 20 mil con tarjeta", o la que llega por el correo) **es un gasto** el día que
+  se hace, pero **no baja el saldo**: la plata sale cuando pagás la tarjeta.
+- **Pagar la tarjeta** ("pagué la tarjeta 1.129.757", "pago de la tarjeta…", "aboné 500 mil a la tarjeta", "pagué
+  el extracto") **baja el saldo y lo pendiente del extracto, y NO es un gasto**: las compras ya se contaron una por
+  una. Queda un movimiento `pago_tarjeta` (`services/financeCardStatement.js`).
+- Si el pago quedó como un gasto normal (en "Otros"), las compras quedan **contadas dos veces** y el extracto sigue
+  "por pagar". Se arregla borrando ese gasto y escribiendo "pagué la tarjeta <monto>" (#164 amplió las frases).
+- El extracto (total, mínimo, fecha) entra por la bandeja de ajustes. En el informe, "Te queda" es tu saldo; aparte
+  sale "💳 pagá $X antes del …" y "al pagar el extracto te quedaría …" (el saldo menos lo que falta del extracto).
 
 ## Datos de la cuenta (`fin`)
 
