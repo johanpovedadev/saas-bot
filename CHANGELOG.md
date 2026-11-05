@@ -36,6 +36,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.10.0] - 2026-11-05
+
+### Agregado
+
+- **Leo:** interruptor para apagar la IA sin tocar código (`FINANCE_AI_ENABLED=0`) (#165).
+- **Ricuras del Pacífico:** agente al día con los demás bots (intención de compra). El bot sigue apagado (#166).
+- **Guía de la IA de Leo:** configuración, quién tiene IA y qué hacer cuando falla (#163).
+
+### Corregido
+
+- **Leo:** pagar la tarjeta no cuenta como gasto, con más formas de decirlo (#164).
+- **Mundo Helados** (replay de una conversación real): corregir cantidades con `cambiar_cantidad_en_pedido`, una sola
+  pregunta por turno, "los mismos sabores" y toppings claros; el mismo producto va en una sola línea (#167).
+
 ## [1.9.3] - 2026-11-05
 
 ### Corregido
