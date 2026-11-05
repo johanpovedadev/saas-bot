@@ -7,11 +7,15 @@
 
 | Qué | Estado |
 |---|---|
-| Proveedor | **Gemini directo**. OpenRouter apagado (sin `OPENROUTER_API_KEY` en `.env.finance`). |
-| Clave de Gemini | **Temporal: la de Mundo Helados**, copiada a `.env.finance`. Es la única que está al día. |
-| Modelo | `models/gemini-3.1-flash-lite`, el mismo que usaba Leo antes de OpenRouter. |
-| Versión en producción | 1.9.2 |
-| Pendiente | Clave de Gemini propia para Leo (ver "Pendiente" al final). |
+| IA de Leo | **Apagada para todos**: `FINANCE_AI_ENABLED=0` en `.env.finance` (#165). Johan: "por ahora dejémoslo sin IA, que paguen". |
+| Qué sigue funcionando | Todo lo escrito: gastos, ingresos, resumen, metas, informes, tarjeta. Fotos y audios responden "Por ahora no estoy leyendo fotos ni audios". |
+| 15 días gratis | No se regalan mientras la IA esté apagada; quedan para cuando se prenda. |
+| Versión en producción | 1.9.2. El interruptor llega con la versión que incluya #165. |
+| Cuando se prenda | Gemini directo (abajo) y, idealmente, con clave propia de Leo. |
+
+**Para prenderla otra vez:** quitá `FINANCE_AI_ENABLED=0` de `.env.finance`, dejá una `GEMINI_API_KEY` válida y
+reiniciá `bot-finance-telegram` con `--update-env`. Hasta tener clave propia, la opción es la de Mundo Helados, con el
+cuidado que se explica abajo.
 
 **Por qué Gemini directo y no OpenRouter (Johan, 5 nov):** es el mismo modelo y sale más barato. OpenRouter suma una
 comisión al recargar saldo, y Google tiene plan gratis con límite diario. Además, con Gemini las fotos y los audios
@@ -28,6 +32,7 @@ prioridad sobre el `.env` compartido. Ninguna clave se escribe en el código, en
 
 | Variable | Para qué | Valor hoy |
 |---|---|---|
+| `FINANCE_AI_ENABLED` | Interruptor general. `0` apaga la IA de Leo **aunque haya claves** (también la de Gemini del `.env` compartido): nadie tiene IA, ni el administrador, y no se regalan los 15 días. Sin definir = prendida. | **`0`** (apagada). |
 | `GEMINI_API_KEY` | Clave de Gemini (Google AI Studio). | La de Mundo Helados, temporal. |
 | `OPENROUTER_API_KEY` | Si está, Leo usa OpenRouter primero y Gemini de respaldo. | **Comentada** (`# OPENROUTER_API_KEY=...`). |
 | `FINANCE_AI_MODEL` | Modelo. Si empieza por `models/` es de Gemini; si no, de OpenRouter (ej. `google/...`). | Vacía o `models/gemini-3.1-flash-lite`. |
@@ -134,6 +139,7 @@ node test_finance_audios_fotos.js                # audios, fotos, tiquete sin va
 | 5 nov | **Gemini directo** en vez de OpenRouter: mismo modelo, más barato, y las fotos funcionaban. | este documento |
 | 5 nov | **9Router no** para Leo: es para herramientas de programación, y los datos de plata de los usuarios pasarían por un intermediario desconocido. | este documento |
 | 5 nov | Mientras tanto, la **clave de Gemini de Mundo Helados**, con `AI_DAILY_MAX` bajo en Leo. | este documento |
+| 5 nov | Ese mismo día: **Leo queda sin IA por ahora** (`FINANCE_AI_ENABLED=0`). La IA será para quien pague. | #165 |
 
 ## Versiones
 

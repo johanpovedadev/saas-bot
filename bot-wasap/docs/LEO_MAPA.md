@@ -41,6 +41,18 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `utils/financeDate.js` | `todayInBogota()` → "YYYY-MM-DD". **Usa esta fecha, no la del servidor.** `parseRelativeDay()`: "ayer", "antier", "el lunes" (el último lunes). |
 | `utils/financeDisclaimer.js` | Aviso "Leo no es asesor financiero" (solo en informes y consejos). |
 
+## Tarjeta de crédito: cómo cuenta Leo (para no perderse)
+
+- **Una compra con tarjeta** ("almuerzo 20 mil con tarjeta", o la que llega por el correo) **es un gasto** el día que
+  se hace, pero **no baja el saldo**: la plata sale cuando pagás la tarjeta.
+- **Pagar la tarjeta** ("pagué la tarjeta 1.129.757", "pago de la tarjeta…", "aboné 500 mil a la tarjeta", "pagué
+  el extracto") **baja el saldo y lo pendiente del extracto, y NO es un gasto**: las compras ya se contaron una por
+  una. Queda un movimiento `pago_tarjeta` (`services/financeCardStatement.js`).
+- Si el pago quedó como un gasto normal (en "Otros"), las compras quedan **contadas dos veces** y el extracto sigue
+  "por pagar". Se arregla borrando ese gasto y escribiendo "pagué la tarjeta <monto>" (#164 amplió las frases).
+- El extracto (total, mínimo, fecha) entra por la bandeja de ajustes. "Te queda" en el informe ya descuenta lo que
+  falta pagar del extracto.
+
 ## Datos de la cuenta (`fin`)
 
 `name`, `balance` (saldo), `transactions` (cada una: `type` expense/income, `amount`, `date` YYYY-MM-DD, `description`,
