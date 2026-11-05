@@ -207,6 +207,8 @@ function getUserTier(jid) {
  */
 function canUseAi(jid) {
     try {
+        // Con la IA apagada (FINANCE_AI_ENABLED=0) o sin proveedor, nadie tiene IA: ni el administrador ni la prueba.
+        if (!financeAiProvider.isAvailable()) return false;
         // El administrador (Johan) siempre tiene IA. Después: un plan con IA, o los 15 días de IA gratis (#143, parte C).
         if (isAdminJid(jid)) return true;
         return financeAdmin.canConsumeAi(jid) || financeAiTrial.isActive(financeStore.loadFinance(jid), Date.now());
@@ -680,6 +682,8 @@ function syncPremiumFromAdmin(jid, fin) {
  * se bloqueaba). Quien ya tiene IA por plan, o el administrador, no la necesita. Devuelve la fuente o null.
  */
 function grantTrialIfDue(jid, fin) {
+    // Sin IA no se regalan "15 días de IA" que no funcionan; quedan para cuando se prenda.
+    if (!financeAiProvider.isAvailable()) return null;
     if (isAdminJid(jid) || financeAdmin.canConsumeAi(jid)) return null;
     const source = financeAiTrial.trialDueFor(fin, todayInBogota(), Date.now());
     if (!source) return null;
@@ -703,7 +707,8 @@ function isPremiumBlocked(jid) {
 
 async function onPremiumBlocked(sock, jid, ctx) {
     // Foto o audio en el plan Gratis (#122, escalón C): lo que sí se puede sin IA y volver, sin precios (#94).
-    await say(sock, jid, financeMenu.NO_AI_TEXT, ctx, { buttons: [financeMenu.BACK_ROW] });
+    const text = financeAiProvider.isAvailable() ? financeMenu.NO_AI_TEXT : financeMenu.AI_OFF_TEXT;
+    await say(sock, jid, text, ctx, { buttons: [financeMenu.BACK_ROW] });
 }
 
 async function handle(sock, jid, text, userSession, ctx) {
@@ -1024,7 +1029,7 @@ async function startExpressAccount(sock, jid, text, userSession, ctx, fin) {
     fin.expressWelcome = true;
     fin.trialStart = fin.trialStart || Date.now();
     // 15 días de Leo con IA para los nuevos (#143, parte C).
-    if (!fin.aiTrialUntil) financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.NEW);
+    if (!fin.aiTrialUntil && financeAiProvider.isAvailable()) financeAiTrial.startTrial(fin, Date.now(), financeAiTrial.SOURCE.NEW);
     if (!fin.referralCode) fin.referralCode = financeReferral.getOrCreateCode(jid);
     userSession.phase = PHASE.FIN_MAIN;
     userSession.errorCount = 0;
@@ -2320,7 +2325,7 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal =
     const goalExtra = (projectionText ? `${projectionText}\n` : '') + (nextStepText ? `${nextStepText}\n` : '') +
         (goalDayText ? `${goalDayText}\n` : '');
     // Novedades de Leo, una vez por versión (#129).
-    const news = reveal ? [] : financeNews.pendingNews(fin, { registeredOn });
+    const news = reveal ? [] : financeNews.pendingNews(fin, { registeredOn, withAi: financeAiProvider.isAvailable() });
     const newsBlock = news.length > 0 ? `\n${financeNews.formatNews(news)}\n` : '';
     const pendingReview = financeInsights.pendingReviewOf(fin.transactions);
     const reviewBlock = pendingReview.length > 0 ? `\n${financeInsights.formatPendingReview(pendingReview, fin)}` : '';
@@ -2441,7 +2446,7 @@ async function runNightReportSweep(sock, ctx) {
                 await generateNightReport(sock, jid, fin, ctx, { registeredOn: u.fecha_registro });
             } else if (action === financeNightPolicy.ACTION.NUDGE) {
                 // Las novedades son una buena excusa para volver (#129).
-                const news = financeNews.pendingNews(fin, { registeredOn: u.fecha_registro });
+                const news = financeNews.pendingNews(fin, { registeredOn: u.fecha_registro, withAi: financeAiProvider.isAvailable() });
                 const whileAway = financeNews.formatNewsWhileAway(news);
                 await say(sock, jid, financeNightPolicy.nightMessage(action) + (whileAway ? `\n\n${whileAway}` : ''), ctx);
                 if (news.length > 0) financeNews.markNewsSeen(fin);
@@ -2450,7 +2455,8 @@ async function runNightReportSweep(sock, ctx) {
             }
             financeNightPolicy.recordNightAction(fin, action, bogotaToday);
             // 15 días de IA (#143, parte C): aviso cuando quedan 3 días y mensaje al terminar, sin precios.
-            const trialNotice = financeAiTrial.dueNotice(fin, Date.now());
+            // Con la IA apagada no se avisa de una prueba que no está funcionando.
+            const trialNotice = financeAiProvider.isAvailable() ? financeAiTrial.dueNotice(fin, Date.now()) : null;
             if (trialNotice) await say(sock, jid, financeAiTrial.noticeText(trialNotice), ctx);
             fin.lastReportDate = today;
             financeStore.saveFinance(jid, fin);

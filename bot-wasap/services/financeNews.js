@@ -17,7 +17,7 @@ const NEWS = [
         id: '1.9.0',
         date: '2026-11-03',
         items: [
-            { text: 'Leo ahora entiende mejor lo que le escribís, y en *un audio* podés contarme todos tus gastos del día', probar: 'mandame un audio con tus gastos de hoy' },
+            { text: 'Leo ahora entiende mejor lo que le escribís, y en *un audio* podés contarme todos tus gastos del día', probar: 'mandame un audio con tus gastos de hoy', ai: true },
             { text: 'Tus informes ahora vienen con *gráficas*', probar: 'escribí *gráfica*' },
             { text: 'Podés *ocultar tu plata* para que nadie la vea', probar: 'escribí *ocultar saldo*' },
             { text: 'Tus gastos de siempre ahora están *a un toque*', probar: 'escribí *menú* y tocá tu gasto de siempre' },
@@ -54,15 +54,17 @@ function compareVersions(a, b) {
 /**
  * Las novedades que este usuario no ha visto: versiones posteriores a fin.lastNewsSeen y anteriores a su registro
  * (máx. las 2 últimas versiones y 3 ítems en total, las más nuevas). `registeredOn` es "YYYY-MM-DD..." o vacío.
+ * `withAi: false` deja afuera las novedades que necesitan la IA (`ai: true`).
  */
-function pendingNews(fin, { registeredOn = '', news = NEWS } = {}) {
+function pendingNews(fin, { registeredOn = '', news = NEWS, withAi = true } = {}) {
     const registered = String(registeredOn || '').slice(0, 10);
     const versions = news
         .filter((v) => compareVersions(v.id, fin.lastNewsSeen) > 0)
         .filter((v) => !registered || registered < v.date)
         .sort((a, b) => compareVersions(b.id, a.id))
         .slice(0, MAX_VERSIONS);
-    return versions.flatMap((v) => v.items).slice(0, MAX_ITEMS);
+    // `ai: true`: solo si la IA de Leo está prendida (con FINANCE_AI_ENABLED=0 no se promete el audio).
+    return versions.flatMap((v) => v.items).filter((item) => withAi || !item.ai).slice(0, MAX_ITEMS);
 }
 
 function itemLines(items) {

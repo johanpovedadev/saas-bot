@@ -101,6 +101,12 @@ function cleanupJid(jid) {
         const ctx2 = freshCtx();
         ctx2.sessions[jid2] = { phase: 'fin_main', finance: { name: 'Marcos', transactions: [], loans: [] } };
 
+        // Un proveedor de IA "configurado" (falso, sin red): sin ninguno, Leo ya no le da IA ni al plan pago y lo
+        // atiende sin IA (no le descuenta cupo por una IA que no hay). Aquí se prueba lo que pasa CON IA.
+        require('./services/financeAiProvider')._setTransports({
+            openRouter: async () => { throw new Error('sin red en pruebas'); },
+            gemini: async () => { throw new Error('sin red en pruebas'); },
+        });
         const originalInterpret = financeAi.interpret;
         financeAi.interpret = async () => null; // simula que la IA no devolvió nada
         try {
@@ -162,6 +168,7 @@ function cleanupJid(jid) {
         console.error('Test failed:', e.stack || e.message);
         process.exitCode = 1;
     } finally {
+        require('./services/financeAiProvider')._setTransports(null);
         cleanupJid(jid1);
         cleanupJid(jid2);
         cleanupJid(jid3);
