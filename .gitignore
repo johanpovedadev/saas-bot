@@ -91,3 +91,6 @@ bot-wasap/lion_readonly_qr.png
 UsersAdministradorDocumentsempanadas_prods.json
 ersAdministradorDocumentsMundoherladoscobot-wasap
 nul
+
+# Logs de los .bat de Windows
+scripts/windows/*.log
