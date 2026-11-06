@@ -36,6 +36,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.10.1] - 2026-11-06
+
+### Cambiado
+
+- Los scripts de Windows de este proyecto (`reiniciar_heladeria.bat`, `diagnostico_puertos.bat`) viven en
+  `scripts/windows`; estaban en la carpeta de Hermes, que es otro proyecto (#173).
+
 ## [1.10.0] - 2026-11-05
 
 ### Agregado
