@@ -1296,6 +1296,9 @@ function setupSocketHandlers(sock, ctx) {
         logger.error('setupSocketHandlers: sock or sock.on missing');
         return;
     }
+    // Freno de mensajes salientes (6 nov 2026, bucle de Pilates que bloqueó el WhatsApp de la dueña): todo lo que sale
+    // por este socket, de cualquier parte del bot, tiene topes por número. Ver services/outboundGuard.js.
+    require('../services/outboundGuard').install(sock);
 
     if (ctx._handlersInstalled) {
         logger.warn('setupSocketHandlers ya fue llamado, omitiendo duplicado');

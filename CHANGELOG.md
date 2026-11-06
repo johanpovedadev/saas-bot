@@ -24,6 +24,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - **Perfiles del cliente recurrente en SQLite** (antes un JSON que se reescribía entero en cada pedido), sin caducidad por
   defecto (`CUSTOMER_PROFILE_RETENTION_DAYS` para limitarla).
 
+### Agregado
+
+- **Recordatorios antes de que el cliente se enfríe** (red de seguridad): a los 30 min y a las 3 h, con el pedido
+  guardado; nunca de noche, máximo 2.
+- **Freno de mensajes salientes** para todos los bots: topes por número para que un bucle no vuelva a bloquear un
+  WhatsApp (incidente del bot de Pilates).
+
 ### Corregido
 
 - **El pedido a medias ya no se pierde con un reinicio del bot**: queda guardado 12 horas y, si el cliente vuelve

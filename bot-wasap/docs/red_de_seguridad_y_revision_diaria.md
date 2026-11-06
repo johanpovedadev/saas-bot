@@ -24,6 +24,8 @@ Origen: Mundo Helados perdió cerca de 5 clientes. El último fue una Banana Spl
 - Textos variados (nunca la misma frase para todos) y como mucho uno por vuelta del reloj (cada 30 s): nunca varios
   clientes en el mismo segundo.
 - Se cortan apenas el cliente contesta, confirma, cancela, lo atiende una persona o el chat está silenciado.
+- Debajo de todo está el **freno de mensajes salientes** (`services/outboundGuard.js`): pase lo que pase, a un número
+  no le pueden salir más de 20 mensajes por minuto, 40 en 10 min ni 150 por hora (bucle de Pilates, 6 nov 2026).
 
 "Pedido abierto" significa que hay productos en el carrito, un producto a medio armar, productos en cola o una oferta de precio pendiente. Los chats de admins, los silenciados y los que ya atiende una persona nunca entran.
 
