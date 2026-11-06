@@ -76,21 +76,25 @@ gh api -X PUT repos/johanpovedadev/saas-bot/pulls/<n>/merge -f merge_method=merg
 
 ## 5. Poner el cambio en el PC de Johan (producción)
 
-El PC tiene el repo en la carpeta conectada `empanadas` y los arranques en `LionTelegram`.
+El PC tiene el repo en la carpeta conectada `empanadas`. **Cada script va en su propio proyecto**: `LionTelegram` es
+solo de Hermes (no dejar ahí cosas de otros proyectos).
 
 ```bash
 cd $HOME/mnt/empanadas && git pull --ff-only origin main
 ```
 
-Después hay que reiniciar con un doble clic en `LionTelegram` (desde aquí no se puede correr `pm2`):
+Después hay que reiniciar con un doble clic (desde aquí no se puede correr `pm2`):
 
 | Archivo | Qué reinicia |
 |---|---|
-| `arrancar_hermes.bat` | **Leo** (`bot-finance-telegram`). Ojo: el nombre engaña. |
-| `reiniciar_hermes_cola.bat` | **Hermes**, la cola que pone a OpenCode a resolver issues. |
+| `empanadas\scripts\windows\reiniciar_leo.bat` | **Leo** (`bot-finance-telegram`). |
+| `empanadas\scripts\windows\reiniciar_heladeria.bat` | **Mundo Helados** (solo `bot-heladeria`; Django no se toca). Cliente en producción: solo si Johan lo pide. |
+| `empanadas\scripts\windows\diagnostico_puertos.bat` | No reinicia: revisa quién escucha en los puertos de los bots. |
+| `LionTelegram\reiniciar_hermes_cola.bat` | **Hermes**, la cola que pone a OpenCode a resolver issues (repo de Hermes). |
+| `lion-platform-api\scripts\windows\arrancar_lion_platform.bat` | **Lion Platform** (Docker + Postgres 5433 + API 8081 + web 5173). |
 
-Cómo saber que quedó: `reinicio.log` / `reinicio_hermes.log` en `LionTelegram` (Leo debe decir "Telegram conectado";
-Hermes debe salir `online` en la tabla de PM2).
+Cómo saber que quedó: el `.log` que cada script deja a su lado (Leo debe decir "Telegram conectado" en el log de PM2;
+Hermes y los demás deben salir `online` en la tabla de PM2).
 
 **No tocar el bot de mascotas.** Producción, plata, datos y secretos los decide Johan.
 
