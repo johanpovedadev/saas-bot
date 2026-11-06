@@ -36,6 +36,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.10.2] - 2026-11-06
+
+### Cambiado
+
+- `scripts/windows/reiniciar_leo.bat` reemplaza a `arrancar_hermes.bat` (estaba en la carpeta de Hermes); la guía de
+  agentes lista qué script reinicia qué y dónde vive.
+
 ## [1.10.1] - 2026-11-06
 
 ### Cambiado
