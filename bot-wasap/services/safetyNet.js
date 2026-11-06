@@ -20,7 +20,13 @@
  *     - a los SAFETY_ALERT_MS (5 min) se le avisa a la dueña con el link al chat (el bot sigue activo: si el cliente
  *       vuelve, continúa normal). Fuera del horario del negocio no se le escribe a la dueña: queda en la revisión diaria.
  *     Si el bot se reinicia con un pedido abierto, el pedido en memoria se pierde: se le avisa a la dueña igual.
- *  4. REGISTRO: cada evento queda en safetyEventsStore para la revisión diaria (services/dailyReview.js).
+ *  4. RECORDATORIOS antes de que el cliente se enfríe (Johan, 6 nov 2026): con productos en el carrito y el cliente sin
+ *     contestar, hasta 2 recordatorios más, a los 30 min y a las 3 h (SAFETY_FOLLOWUP_MINUTES="30,180"), con el
+ *     resumen del pedido. Cuidados para no verse como spam ni hacer bloquear el número: textos variados, nunca de
+ *     noche (SAFETY_FOLLOWUP_HOURS="08:00-20:00", hora del negocio), máximo uno por vuelta del reloj, nada después de
+ *     20 h sin respuesta, y se cortan apenas el cliente contesta, confirma o lo atiende una persona. Una consulta de
+ *     precio sin productos recibe uno solo. Sobreviven a un reinicio: el pedido está en services/openCartStore.js.
+ *  5. REGISTRO: cada evento queda en safetyEventsStore para la revisión diaria (services/dailyReview.js).
  *
  * "Pedido abierto" = hay productos en el carrito, un producto a medio armar, productos en cola, o el bot acaba de
  * ofrecer un producto tras una pregunta de precio ("¿Quieres pedir X?"). Esa última solo recibe el seguimiento al
@@ -36,6 +42,17 @@ const safetyEventsStore = require('./safetyEventsStore');
 
 const MIN = 60 * 1000;
 const EXPIRE_MS = 30 * MIN; // igual que el reinicio de sesión por inactividad (sessionService)
+
+// Recordatorios: varias redacciones del mismo mensaje (nunca el mismo texto para todos, como humanBroadcast).
+const FOLLOWUP_VARIANTS = [
+    (cart) => `😊 Tu pedido sigue guardado: ${cart}.\n¿Te lo confirmo? Responde *sí* y lo dejamos listo.`,
+    (cart) => `👋 Pasaba a recordarte tu pedido: ${cart}.\nSi lo quieres, responde *sí* y seguimos.`,
+    (cart) => `🍦 ¿Seguimos con tu pedido? Lo tengo aquí: ${cart}.\nResponde *sí* y te lo dejo listo.`
+];
+const FOLLOWUP_NO_CART = [
+    '👋 ¿Te animas? Aquí sigo para tomarte el pedido cuando quieras 😊',
+    '😊 Cuando quieras seguimos con tu pedido, solo escríbeme.'
+];
 
 const TEXTS = {
     nudgeWithQuestion: (q) => `👋 ¿Seguimos con tu pedido?\n\n${q}`,
@@ -71,6 +88,30 @@ const nudgeMs = () => num('SAFETY_NUDGE_MS', 3 * MIN);
 const alertMs = () => num('SAFETY_ALERT_MS', 5 * MIN);
 const tickMs = () => num('SAFETY_TICK_MS', 30 * 1000);
 const noProgressTurns = () => num('SAFETY_NO_PROGRESS_TURNS', 4);
+const FOLLOWUP_MAX_AGE_MS = 20 * 60 * MIN;  // pasadas 20 h sin respuesta no se le escribe más
+
+/** Minutos de los recordatorios, en orden ("30,180"). Vacío o "0" = sin recordatorios. */
+function followupStagesMs() {
+    const raw = process.env.SAFETY_FOLLOWUP_MINUTES === undefined ? '30,180' : String(process.env.SAFETY_FOLLOWUP_MINUTES);
+    return raw.split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b).map((n) => n * MIN);
+}
+
+/** ¿Es hora de escribirle a un cliente? Entre SAFETY_FOLLOWUP_HOURS ("08:00-20:00"), en la zona del negocio. */
+function withinContactHours(now) {
+    const m = String(process.env.SAFETY_FOLLOWUP_HOURS || '08:00-20:00').match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+    if (!m) return true;
+    const tz = process.env.TIMEZONE || 'America/Bogota';
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(now));
+    const get = (type) => parseInt((parts.find((p) => p.type === type) || {}).value, 10) || 0;
+    const minutes = (get('hour') % 24) * 60 + get('minute');
+    return minutes >= Number(m[1]) * 60 + Number(m[2]) && minutes < Number(m[3]) * 60 + Number(m[4]);
+}
+
+/** Último momento en que la entrada todavía sirve (para no borrarla antes de los recordatorios). */
+function entryMaxAgeMs() {
+    const stages = followupStagesMs();
+    return Math.max(EXPIRE_MS, stages.length ? Math.min(stages[stages.length - 1] + 30 * MIN, FOLLOWUP_MAX_AGE_MS) : 0);
+}
 const biz = () => process.env.BUSINESS_KEY;
 
 function isEnabled() {
@@ -325,12 +366,13 @@ async function tick(sock, ctx, now = Date.now()) {
     ticking = true;
     let nudged = 0;
     let alerted = 0;
+    let followedUp = 0;
     try {
         for (const entry of followUpStore.listAll(biz())) {
             const { jid } = entry;
             try {
                 const age = now - (entry.lastBotAt || 0);
-                if (!isEnabledFor(jid) || age > EXPIRE_MS || isAdminOrMuted(jid, ctx)) { followUpStore.remove(biz(), jid); continue; }
+                if (!isEnabledFor(jid) || age > entryMaxAgeMs() || isAdminOrMuted(jid, ctx)) { followUpStore.remove(biz(), jid); continue; }
                 const session = ctx && ctx.sessions ? ctx.sessions[jid] : null;
                 // El cliente ya está con una persona o el pedido se cerró por otro camino.
                 if (session && !isOrderOpen(session)) { followUpStore.remove(biz(), jid); continue; }
@@ -343,21 +385,31 @@ async function tick(sock, ctx, now = Date.now()) {
                     nudged++;
                 }
 
+                // Consulta de precio sin productos: sin aviso a la dueña (no es un pedido a medias), pero sí su recordatorio.
+                if (!entry.alertedAt && age >= alertMs() && entry.alertOwner === false) {
+                    followUpStore.patch(biz(), jid, { alertedAt: now });
+                    entry.alertedAt = now;
+                }
                 if (!entry.alertedAt && age >= alertMs()) {
-                    if (entry.alertOwner === false) { followUpStore.remove(biz(), jid); continue; }
                     const lost = !session; // reinicio del bot: la sesión en memoria ya no existe
                     const open = require('../utils/businessHours').isWithinBusinessHours(new Date(now));
                     const minutes = Math.round(age / MIN);
                     const reason = lost
-                        ? `El bot se reinició mientras armaba su pedido (iba ${phaseLabel(entry.phase)}) y el pedido se borró. Escríbele para terminarlo.`
+                        ? `El bot se reinició mientras armaba su pedido (iba ${phaseLabel(entry.phase)}). El pedido quedó guardado: si vuelve, se lo muestro para confirmar; si quieres, escríbele tú.`
                         : `Dejó de responder hace ${minutes} minutos (iba ${phaseLabel(entry.phase)}). Ya le escribí para seguir; si no contesta, escríbele tú.`;
                     if (open) {
                         await notifyOwner(sock, ctx, { jid, kind: 'abandono', reason, botSaid: entry.question, cartText: entry.cart });
                     }
                     recordEvent(lost ? 'restart_lost' : 'abandon_alert', jid, entry.phase, open ? null : 'fuera de horario: sin aviso a la dueña');
-                    followUpStore.remove(biz(), jid);
+                    followUpStore.patch(biz(), jid, { alertedAt: now });
+                    entry.alertedAt = now;
                     alerted++;
                 }
+
+                // Recordatorios antes de que se enfríe (máximo uno por vuelta: nunca varios clientes en el mismo segundo).
+                const r = await maybeFollowUp(sock, ctx, entry, session, age, now, followedUp);
+                if (r === 'sent') followedUp++;
+                else if (r === 'done') followUpStore.remove(biz(), jid);
             } catch (e) {
                 logger.error(`[safetyNet] ${jid} error en el seguimiento: ${e.message}`);
             }
@@ -365,7 +417,38 @@ async function tick(sock, ctx, now = Date.now()) {
     } finally {
         ticking = false;
     }
-    return { nudged, alerted };
+    return { nudged, alerted, followedUp };
+}
+
+/**
+ * Un recordatorio si toca. 'sent' si lo mandó, 'done' si ya no quedan (se borra la entrada), null si todavía no.
+ * Sin sesión (el bot se reinició) usa el pedido guardado en disco; si tampoco hay, no hay a qué hacerle seguimiento.
+ */
+async function maybeFollowUp(sock, ctx, entry, session, age, now, alreadyThisTick) {
+    const stages = followupStagesMs();
+    const sent = Number(entry.followups) || 0;
+    const onlyOffer = entry.alertOwner === false;
+    const allowed = onlyOffer ? Math.min(1, stages.length) : stages.length;
+    if (sent >= allowed) return age >= (stages[allowed - 1] || 0) ? 'done' : null;
+    if (age < stages[sent]) return null;
+    if (age > FOLLOWUP_MAX_AGE_MS) return 'done';
+    if (alreadyThisTick > 0 || !withinContactHours(now)) return null;   // más tarde
+    if (session && (session.phase === PHASE.WAITING_HUMAN || session.waitingForHuman)) return 'done';
+    let cart = session ? require('./ownerMessages').cartLine(session) : null;
+    if (!session) {
+        // La vigencia del pedido guardado se mide con el reloj real (se guardó con él).
+        const saved = require('./openCartStore').get(biz(), entry.jid);
+        if (!saved || !saved.carrito.length) return 'done';
+        cart = require('./ownerMessages').cartLine({ carrito: saved.carrito });
+    }
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
+    const text = cart ? pick(FOLLOWUP_VARIANTS)(cart)
+        : (entry.question ? `👋 Sigo guardando tu pedido 😊\n\n${entry.question}` : pick(FOLLOWUP_NO_CART));
+    const { say } = require('./bot_core');
+    await say(sock, entry.jid, text, ctx);
+    followUpStore.patch(biz(), entry.jid, { followups: sent + 1, lastFollowupAt: now });
+    recordEvent('followup', entry.jid, entry.phase, `recordatorio ${sent + 1}`);
+    return 'sent';
 }
 
 let timer = null;
@@ -379,6 +462,8 @@ function start(sock, ctx) {
 function stop() { if (timer) clearInterval(timer); timer = null; }
 
 module.exports = {
+    followupStagesMs,
+    withinContactHours,
     isEnabled, isEnabledFor, recordEvent, beforeTurn, afterTurn, tapSocket, tick, start, stop, TEXTS,
     _internal: { isClientQuestion, isOrderOpen, isOnlyOffer, progressSignature, lastQuestion, questionKey, questionSentence, phaseLabel }
 };

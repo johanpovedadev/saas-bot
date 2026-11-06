@@ -58,6 +58,8 @@ function buildReview({ businessName, date, stats, events }) {
 
     const nudges = count(ev, 'nudge');
     if (nudges) lines.push(`⏰ Seguimientos a los 3 min: ${nudges} → volvieron ${count(ev, 'nudge_reply')} → pedidos salvados ${count(ev, 'recovered')}`);
+    const followups = count(ev, 'followup');
+    if (followups) lines.push(`🔔 Recordatorios (30 min / 3 h): ${followups}`);
 
     const abandon = count(ev, 'abandon_alert');
     const avisos = [

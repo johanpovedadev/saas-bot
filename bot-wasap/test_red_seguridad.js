@@ -197,7 +197,8 @@ function enable(extra = {}) { process.env.SAFETY_NET = '1'; delete process.env.S
             check(r.alerted === 1 && /no terminó su pedido/.test(aviso) && /wa\.me\//.test(aviso) && /eligiendo sabores/.test(aviso), 'C1 a los 5:00 le avisa a la dueña: en qué iba y link al chat');
             check(t.s().phase === 'HELADO_SABORES' && !t.s().waitingForHuman, 'C1 el bot sigue activo para ese cliente (no lo silencia)');
             r = await safetyNet.tick(t.sock, t.ctx, e.lastBotAt + 6 * MIN);
-            check(r.alerted === 0 && t.admin.length === 1 && !entryOf(t.jid), 'C1 un solo aviso por abandono');
+            // Desde el 6 nov 2026 el seguimiento sigue (recordatorios a los 30 min y 3 h), pero la dueña recibe un solo aviso.
+            check(r.alerted === 0 && t.admin.length === 1 && !!entryOf(t.jid) && !!entryOf(t.jid).alertedAt, 'C1 un solo aviso por abandono');
             check(types(t.jid).join() === 'nudge,abandon_alert', 'C1 quedan los eventos nudge y abandon_alert');
 
             // C2: vuelve después del aviso y continúa normal.
@@ -290,8 +291,9 @@ function enable(extra = {}) { process.env.SAFETY_NET = '1'; delete process.env.S
             const t = setup();
             await pedirBanana(t);
             const e = entryOf(t.jid);
-            const r = await safetyNet.tick(t.sock, t.ctx, e.lastBotAt + 31 * MIN);
-            check(r.nudged === 0 && r.alerted === 0 && !entryOf(t.jid), 'C12 una entrada de más de 30 min se descarta sin escribirle a nadie');
+            // Desde el 6 nov 2026 vive hasta el último recordatorio (3 h) + 30 min; después se descarta sin escribir.
+            const r = await safetyNet.tick(t.sock, t.ctx, e.lastBotAt + 4 * 60 * MIN);
+            check(r.nudged === 0 && r.alerted === 0 && !r.followedUp && !entryOf(t.jid), 'C12 una entrada vieja (4 h) se descarta sin escribirle a nadie');
         }
         {
             const t = setup();
@@ -492,6 +494,83 @@ function enable(extra = {}) { process.env.SAFETY_NET = '1'; delete process.env.S
             check(dailyReview.start() === true, 'J4 solo con DAILY_REVIEW=1');
             dailyReview.stop();
             if (prev === undefined) delete process.env.DAILY_REVIEW; else process.env.DAILY_REVIEW = prev;
+        }
+
+        // ───── R. Recordatorios antes de que el cliente se enfríe (Johan, 6 nov 2026) ─────
+        {
+            // 10:00 a. m. en Bogotá, para no depender del reloj real (los recordatorios no salen de noche).
+            const BASE = Date.parse('2026-11-06T15:00:00Z');
+            const t = setup();
+            await pedirBanana(t);
+            followUpStore.patch('heladeria', t.jid, { lastBotAt: BASE });
+            await safetyNet.tick(t.sock, t.ctx, BASE + 3 * MIN);
+            await safetyNet.tick(t.sock, t.ctx, BASE + 5 * MIN);
+            t.sent.length = 0;
+            let r = await safetyNet.tick(t.sock, t.ctx, BASE + 29 * MIN);
+            check(!r.followedUp && t.sent.length === 0, 'R1 a los 29 min todavía no le recuerda');
+            r = await safetyNet.tick(t.sock, t.ctx, BASE + 30 * MIN);
+            // Va armando la Banana Split (todavía sin carrito): el recordatorio le repite la pregunta pendiente.
+            check(r.followedUp === 1 && t.sent.length === 1 && /Sigo guardando tu pedido/.test(t.sent[0]) && /sabor/i.test(t.sent[0]), `R1 a los 30 min le recuerda su pedido con la pregunta pendiente (${t.sent[0] && t.sent[0].slice(0, 80)})`);
+            r = await safetyNet.tick(t.sock, t.ctx, BASE + 60 * MIN);
+            check(!r.followedUp && t.sent.length === 1, 'R2 no repite el recordatorio antes de tiempo');
+            r = await safetyNet.tick(t.sock, t.ctx, BASE + 180 * MIN);
+            check(r.followedUp === 1 && t.sent.length === 2, 'R2 a las 3 h, el segundo y último recordatorio');
+            r = await safetyNet.tick(t.sock, t.ctx, BASE + 200 * MIN);
+            check(!r.followedUp && t.sent.length === 2, 'R3 nunca más de 2 recordatorios');
+            check(types(t.jid).filter((x) => x === 'followup').length === 2, 'R3 quedan en la revisión diaria');
+        }
+        {
+            // De noche no: a las 9:30 p. m. espera; pasadas 20 h sin respuesta, no le escribe más.
+            const NOCHE = Date.parse('2026-11-07T02:00:00Z'); // 9:00 p. m. en Bogotá
+            const t = setup();
+            await pedirBanana(t);
+            followUpStore.patch('heladeria', t.jid, { lastBotAt: NOCHE, nudgedAt: NOCHE, alertedAt: NOCHE });
+            t.sent.length = 0;
+            const r = await safetyNet.tick(t.sock, t.ctx, NOCHE + 30 * MIN);
+            check(!r.followedUp && t.sent.length === 0 && !!entryOf(t.jid), 'R4 a las 9:30 p. m. no le escribe (espera a la mañana)');
+            const r2 = await safetyNet.tick(t.sock, t.ctx, NOCHE + 21 * 60 * MIN);
+            check(!r2.followedUp && t.sent.length === 0 && !entryOf(t.jid), 'R4 pasadas 20 h sin respuesta, no le escribe más');
+        }
+        {
+            // Si contesta, se corta; si lo atiende una persona, también.
+            const BASE = Date.parse('2026-11-06T15:00:00Z');
+            const t = setup();
+            await pedirBanana(t);
+            followUpStore.patch('heladeria', t.jid, { lastBotAt: BASE, nudgedAt: BASE, alertedAt: BASE });
+            t.s().phase = PHASE.WAITING_HUMAN;
+            t.sent.length = 0;
+            const r = await safetyNet.tick(t.sock, t.ctx, BASE + 30 * MIN);
+            check(!r.followedUp && t.sent.length === 0, 'R5 si ya lo atiende una persona, no le recuerda');
+        }
+        {
+            // Varios clientes a la vez: como mucho un recordatorio por vuelta del reloj.
+            const BASE = Date.parse('2026-11-06T15:00:00Z');
+            const a = setup();
+            await pedirBanana(a);
+            const b = setup();   // setup() borra los seguimientos: los dos se programan a mano
+            await pedirBanana(b);
+            for (const t of [a, b]) followUpStore.upsert('heladeria', { jid: t.jid, lastBotAt: BASE, nudgedAt: BASE, alertedAt: BASE, phase: 'HELADO_SABORES', question: '¿De qué sabores?', alertOwner: true });
+            const ctx = { ...a.ctx, sessions: { ...a.ctx.sessions, ...b.ctx.sessions } };
+            const out = [];
+            const sock = { sendMessage: async (to, c) => { out.push(to); return {}; } };
+            const r = await safetyNet.tick(sock, ctx, BASE + 30 * MIN);
+            check(r.followedUp === 1 && out.length === 1, `R6 un solo recordatorio por vuelta del reloj, nunca varios clientes en el mismo segundo (salieron ${out.length})`);
+            const r2 = await safetyNet.tick(sock, ctx, BASE + 30 * MIN + 30000);
+            check(r2.followedUp === 1 && new Set(out).size === 2, 'R6 el otro sale en la siguiente vuelta');
+        }
+        {
+            // Después de un reinicio: sin sesión, usa el pedido guardado en disco.
+            const BASE = Date.parse('2026-11-06T15:00:00Z');
+            const openCarts = require('./services/openCartStore');
+            const jid = '573997770001@c.us';
+            openCarts.saveFromSession('heladeria', jid, { carrito: [{ codigo: 'X', nombre: 'Banana Split', precio: 16000, cantidad: 2 }], order: {} });
+            followUpStore.upsert('heladeria', { jid, lastBotAt: BASE, nudgedAt: BASE, alertedAt: BASE, phase: 'confirm_order', cart: null, alertOwner: true });
+            const out = [];
+            const sock = { sendMessage: async (to, c) => { if (to === jid) out.push(String(c)); return {}; } };
+            const r = await safetyNet.tick(sock, { sessions: {}, mutedChats: new Set(), productsCache }, BASE + 30 * MIN);
+            check(r.followedUp === 1 && /2x Banana Split/.test(out.join('\n')), 'R7 tras un reinicio, el recordatorio sale con el pedido guardado');
+            openCarts.remove('heladeria', jid);
+            followUpStore.remove('heladeria', jid);
         }
     } catch (e) {
         failures++;

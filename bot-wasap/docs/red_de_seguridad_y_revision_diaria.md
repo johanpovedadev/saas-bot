@@ -13,8 +13,17 @@ Origen: Mundo Helados perdió cerca de 5 clientes. El último fue una Banana Spl
 | **4 mensajes** con pedido abierto sin avanzar (p. ej. el cliente pregunta muchas cosas) | Aviso a Isa "👀 Un cliente no avanza" (una sola vez) | Sí |
 | El cliente deja de contestar **3 min** | El bot le escribe "👋 ¿Seguimos con tu pedido?" + la pregunta que tenía pendiente | Sí |
 | **5 min** sin contestar | Aviso a Isa "⏰ Un cliente no terminó su pedido": qué lleva, en qué paso iba y link al chat. Fuera del horario no se le escribe (queda en la revisión) | Sí |
-| El bot se **reinicia** con un pedido a medias | A los 5 min, aviso a Isa: "el bot se reinició… escríbele" | — |
-| Solo preguntó el precio ("¿Quieres pedir X? Sí/No") y no contestó | Recibe el seguimiento de los 3 min; a Isa **no** se le avisa (es una consulta) | Sí |
+| **30 min y 3 h** sin contestar (6 nov 2026) | Hasta **2 recordatorios** antes de que se enfríe: "😊 Tu pedido sigue guardado: 2x Volcán… ¿Te lo confirmo? Responde *sí*". Si iba armando un producto, le repite la pregunta pendiente | Sí |
+| El bot se **reinicia** con un pedido a medias | A los 5 min, aviso a Isa; el pedido quedó guardado (`openCartStore`) y los recordatorios salen igual | — |
+| Solo preguntó el precio ("¿Quieres pedir X? Sí/No") y no contestó | Recibe el seguimiento de los 3 min y **un** recordatorio; a Isa **no** se le avisa (es una consulta) | Sí |
+
+**Recordatorios sin parecer spam** (para no repetir lo que puede hacer bloquear un número de WhatsApp):
+- Máximo 2 recordatorios después del "¿Seguimos?" de los 3 min; después, nada.
+- Nunca de noche: solo entre `SAFETY_FOLLOWUP_HOURS` (08:00-20:00, hora del negocio). Fuera de ese horario esperan; pasadas
+  20 h sin respuesta, no se mandan.
+- Textos variados (nunca la misma frase para todos) y como mucho uno por vuelta del reloj (cada 30 s): nunca varios
+  clientes en el mismo segundo.
+- Se cortan apenas el cliente contesta, confirma, cancela, lo atiende una persona o el chat está silenciado.
 
 "Pedido abierto" significa que hay productos en el carrito, un producto a medio armar, productos en cola o una oferta de precio pendiente. Los chats de admins, los silenciados y los que ya atiende una persona nunca entran.
 
@@ -27,6 +36,8 @@ SAFETY_NET_JIDS=573138777115     # canario: solo ese número (vacío = todos los
 # SAFETY_NUDGE_MS=180000         # 3 min
 # SAFETY_ALERT_MS=300000         # 5 min
 # SAFETY_NO_PROGRESS_TURNS=4
+# SAFETY_FOLLOWUP_MINUTES=30,180 # recordatorios (vacío o 0 = sin recordatorios)
+# SAFETY_FOLLOWUP_HOURS=08:00-20:00
 ```
 
 Quién recibe los avisos: `safety_net_admin_jids` en `config/businesses/<negocio>.json`. En heladería es **Isa** (573136939663). Si un negocio no lo configura, los avisos van a `business_admin_jids` (la dueña), nunca al admin de sistema.

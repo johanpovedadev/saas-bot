@@ -26,6 +26,7 @@ const BOGOTA_UTC_OFFSET_MS = -5 * 60 * 60 * 1000;
 const TYPES = new Set([
     'nudge',            // 3 min sin respuesta: el bot le escribió al cliente para seguir
     'nudge_reply',      // el cliente volvió a escribir después del seguimiento
+    'followup',         // recordatorio a los 30 min / 3 h con el pedido guardado (antes de que se enfríe)
     'abandon_alert',    // 5 min sin respuesta: se le avisó a la dueña
     'restart_lost',     // el bot se reinició con un pedido abierto: se le avisó a la dueña
     'loop_help',        // el bot iba a repetir la misma pregunta: se le ofreció ayuda (audio / persona)
