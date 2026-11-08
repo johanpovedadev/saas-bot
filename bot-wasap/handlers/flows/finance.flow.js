@@ -1004,6 +1004,12 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await say(sock, jid, financeReceipts.formatCheaper(cheaperProduct, results, (n) => formatMoney(n, fin)), ctx);
     }
 
+    // "mis compras de la semana" (#179): productos de los recibos agrupados por tienda, sin IA.
+    if (financeReceipts.isWeekPurchasesRequest(text)) {
+        const groups = financeReceipts.weekPurchases(fin.transactions, todayInBogota());
+        return await sayFull(sock, jid, financeReceipts.formatWeekPurchases(groups, (n) => formatMoney(n, fin)), ctx);
+    }
+
     // "resumen" / "informe" / "en qué se va mi plata": gastos agrupados con los datos reales, sin IA.
     if (isSpendingReportRequest(t)) {
         return await sendSpendingReport(sock, jid, ctx, fin);
@@ -1875,6 +1881,12 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         timestamp: Date.now(),
         ...extra
     };
+    // Recibo con productos (#179): cada uno con nombre normalizado, precio unitario, tienda y fecha, y se muestran.
+    if (Array.isArray(tx.items) && tx.items.length) {
+        tx.items = financeReceipts.enrichItems(tx.items, { store: tx.store, date: tx.date });
+        const summary = financeReceipts.receiptSummary({ store: tx.store, total: amount, items: tx.items }, (n) => formatMoney(n, fin));
+        if (summary) await sayFull(sock, jid, summary, ctx);
+    }
     fin.transactions.push(tx);
     // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
     fin.balance += financeCorrections.balanceEffect(tx);

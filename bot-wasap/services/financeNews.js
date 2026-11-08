@@ -14,6 +14,14 @@
  */
 const NEWS = [
     {
+        id: '1.11.0',
+        date: '2026-11-08',
+        items: [
+            { text: 'Cuando me mandás la *foto del recibo*, te muestro cada producto y lo guardo para comparar precios entre tiendas', probar: 'mandame la foto de tu próximo recibo y escribí _precio de la leche_', ai: true },
+            { text: 'Podés ver *tus compras de la semana*, producto por producto y por tienda', probar: 'escribí _mis compras de la semana_', ai: true },
+        ],
+    },
+    {
         id: '1.9.0',
         date: '2026-11-03',
         items: [
