@@ -92,6 +92,7 @@ Después hay que reiniciar con un doble clic (desde aquí no se puede correr `pm
 | `empanadas\scripts\windows\diagnostico_puertos.bat` | No reinicia: revisa quién escucha en los puertos de los bots. |
 | `LionTelegram\reiniciar_hermes_cola.bat` | **Hermes**, la cola que pone a OpenCode a resolver issues (repo de Hermes). |
 | `lion-platform-api\scripts\windows\arrancar_lion_platform.bat` | **Lion Platform** (Docker + Postgres 5433 + API 8081 + web 5173). |
+| `empanadas\scripts\windows\arrancar_escucha_whatsapp.bat` | **Escucha de WhatsApp** (`lion-escucha-whatsapp`, `lion-readonly-bot.js`, puerto 8099): solo lee el WhatsApp de Johan y le pasa los prospectos al CRM. **Nunca envía.** Crea su token en `bot-wasap\.env.escucha` y se lo pone al bot "Service Store VIP Bot (solo lectura)" de Lion Platform. Máx. 3 reintentos espaciados (reconectar en bucle es lo que WhatsApp castiga). Apagar: `detener_escucha_whatsapp.bat`. |
 
 Cómo saber que quedó: el `.log` que cada script deja a su lado (Leo debe decir "Telegram conectado" en el log de PM2;
 Hermes y los demás deben salir `online` en la tabla de PM2).
@@ -109,7 +110,8 @@ no los arranques, no los "arregles" ni gastes tiempo en sus pruebas o errores, s
 | `bot-finance-telegram` | 🟢 arriba | Leo Financiero (lo usa Johan). |
 | `hermes` | 🟢 arriba | Cola de issues para OpenCode. |
 | `admin-panel`, `cloudflare-tunnel` | 🟢 arriba | Soporte de lo de arriba. |
-| `bot-mascotas-prod` | 🟢 arriba | **No tocar.** |
+| `lion-escucha-whatsapp` | 🟡 a prueba (8 nov 2026) | Escucha de solo lectura del WhatsApp de Johan → prospectos en Lion Platform. Johan aceptó el riesgo de bloqueo para probar. No agregarle envíos, fotos de perfil ni nada que llame a WhatsApp por cada mensaje (en sept. 2026 eso hizo perder la sesión). |
+| `bot-mascotas-prod` | 🔴 apagar (Johan, 8 nov 2026) | Apagado **hasta nueva orden** con `detener_mascotas.bat`. No volver a prenderlo. |
 | `bot-pescaderia` + `django-pescaderia` | 🔴 abajo | A propósito. |
 | `bot-pilates`, `bot-pilates-clientas` | 🔴 abajo | A propósito. |
 

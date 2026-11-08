@@ -36,6 +36,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.10.3] - 2026-11-08
+
+### Agregado
+
+- `scripts/windows/arrancar_escucha_whatsapp.bat` y `detener_escucha_whatsapp.bat`: prenden y apagan el escucha de
+  WhatsApp de solo lectura (`lion-readonly-bot.js`, PM2 `lion-escucha-whatsapp`, puerto 8099) que le pasa los
+  prospectos al CRM Lion Platform. Revisa que el puerto esté libre, crea un token propio en `bot-wasap/.env.escucha`
+  (reemplaza el de ejemplo que quedó en la migración V12 de Lion Platform) y limita los reintentos a 3, espaciados.
+- `scripts/windows/detener_mascotas.bat`: apaga el bot de Mascotas hasta nueva orden.
+
 ## [1.10.2] - 2026-11-06
 
 ### Cambiado
