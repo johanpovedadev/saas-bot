@@ -34,6 +34,12 @@ if not exist "%ENVF%" (
   powershell -NoProfile -Command "$b=New-Object byte[] 32;[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b);'LION_READONLY_STATUS_TOKEN='+([Convert]::ToBase64String($b).Replace('+','-').Replace('/','_').TrimEnd('='))" > "%ENVF%"
   echo Token nuevo creado en bot-wasap\.env.escucha >> "%LOG%"
 )
+REM 3b) Clave para guardar el historial cifrado (#186). Se agrega una sola vez; si se pierde, lo guardado ya no se puede leer
+findstr /B /C:"LION_READONLY_ENCRYPTION_KEY=" "%ENVF%" >nul 2>&1
+if !errorlevel! neq 0 (
+  powershell -NoProfile -Command "$b=New-Object byte[] 32;[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b);'LION_READONLY_ENCRYPTION_KEY='+[Convert]::ToBase64String($b)" >> "%ENVF%"
+  echo Clave de cifrado del historial creada en bot-wasap\.env.escucha >> "%LOG%"
+)
 for /f "usebackq tokens=1,* delims==" %%a in ("%ENVF%") do set "%%a=%%b"
 set "LION_READONLY_STATUS_PORT=%PORT%"
 

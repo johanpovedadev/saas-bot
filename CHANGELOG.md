@@ -36,6 +36,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.11.0] - 2026-11-08
+
+### Agregado
+
+- **Escucha de WhatsApp: historial guardado y estudio de la IA de Meta (#186).** El escucha de solo lectura guarda
+  cada mensaje cifrado (AES-256-GCM, teléfono buscado por HMAC) por 30 días (`LION_READONLY_RETENTION_DAYS`), así el
+  CRM no pierde las conversaciones al reiniciar. Marca quién escribió cada mensaje (cliente / IA de Meta / tu número
+  sin marca) sin adivinar, y guarda los nombres de las marcas que trae cada mensaje para descubrir la de Meta.
+  `node scripts/estudio_ia_meta.js` arma un informe semanal con lo que más preguntan, cómo y qué tan rápido
+  responde la IA de Meta y cuándo entra Johan, con los teléfonos enmascarados. Sin clave no guarda nada; los bots de
+  clientes siguen solo en RAM.
+
 ## [1.10.3] - 2026-11-08
 
 ### Agregado
