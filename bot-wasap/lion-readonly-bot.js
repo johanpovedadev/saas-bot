@@ -21,6 +21,8 @@ const leadsTracker = require('./lion-leads-readonly');
 const chatHistory = require('./lion-chat-readonly');
 const socketRef = require('./lion-socket-ref-readonly');
 const { extractText } = require('./lion-readonly-message-text');
+const { detectAuthor } = require('./lion-readonly-author');
+const { openStore, retentionDays } = require('./lion-readonly-store');
 
 const STATUS_PORT = Number(process.env.LION_READONLY_STATUS_PORT || 8096);
 const STATUS_TOKEN = String(process.env.LION_READONLY_STATUS_TOKEN || '').trim();
@@ -142,12 +144,16 @@ function start() {
         const remoteJid = msg.from === 'status@broadcast' || msg.to === 'status@broadcast' ? null : (msg.fromMe ? msg.to : msg.from);
         if (!remoteJid) return;
         const text = extractText(msg);
+        // #186: quién lo escribió (cliente / IA de Meta / propio sin marca). Solo
+        // lee campos que ya trae el evento: no llama a WhatsApp.
+        const { autor, marcas } = detectAuthor(msg);
+        const extra = { autor, marcas, msgId: msg.id?._serialized };
         if (msg.fromMe) {
             leadsTracker.recordOutboundMessage(remoteJid, msg.id?._serialized || String(Date.now()));
-            chatHistory.recordMessage(remoteJid, true, text);
+            chatHistory.recordMessage(remoteJid, true, text, extra);
         } else {
             leadsTracker.recordInboundMessage(remoteJid, text, {});
-            chatHistory.recordMessage(remoteJid, false, text);
+            chatHistory.recordMessage(remoteJid, false, text, extra);
         }
     });
 
@@ -171,6 +177,29 @@ process.on('unhandledRejection', (reason) => {
 if (!STATUS_TOKEN) {
     console.error('LION_READONLY_STATUS_TOKEN no configurado — abortando (fail-closed, no arranca sin token).');
     process.exit(1);
+}
+
+// #186: historial guardado y cifrado. Sin LION_READONLY_ENCRYPTION_KEY no se
+// guarda nada en disco (el escucha sigue igual, solo en RAM).
+let store = null;
+try {
+    store = openStore();
+} catch (err) {
+    console.error('[lion-readonly-bot] no se pudo abrir el historial guardado:', err.message);
+}
+if (store) {
+    chatHistory.enablePersistence(store);
+    const purge = () => {
+        try {
+            const n = store.purge();
+            if (n) console.log(`[lion-readonly-bot] historial: ${n} mensajes vencidos borrados (retención ${retentionDays()} días)`);
+        } catch (err) { console.error('[lion-readonly-bot] barrido del historial falló:', err.message); }
+    };
+    purge();
+    setInterval(purge, 24 * 60 * 60 * 1000).unref();
+    console.log(`[lion-readonly-bot] historial guardado y cifrado (retención ${retentionDays()} días)`);
+} else {
+    console.warn('[lion-readonly-bot] LION_READONLY_ENCRYPTION_KEY ausente: el historial queda solo en RAM');
 }
 
 startReadOnlyStatusServer();
