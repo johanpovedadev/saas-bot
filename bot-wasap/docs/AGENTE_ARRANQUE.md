@@ -88,7 +88,7 @@ Después hay que reiniciar con un doble clic (desde aquí no se puede correr `pm
 | Archivo | Qué reinicia |
 |---|---|
 | `empanadas\scripts\windows\reiniciar_leo.bat` | **Leo** (`bot-finance-telegram`). |
-| `empanadas\scripts\windows\reiniciar_heladeria.bat` | **Mundo Helados** (solo `bot-heladeria`; Django no se toca). Cliente en producción: solo si Johan lo pide. |
+| `empanadas\scripts\windows\reiniciar_heladeria.bat` | **Mundo Helados** (solo `bot-heladeria`; Django no se toca). Apagado hasta nueva orden (8 nov 2026): no lo uses salvo que Johan lo pida. |
 | `empanadas\scripts\windows\diagnostico_puertos.bat` | No reinicia: revisa quién escucha en los puertos de los bots. |
 | `LionTelegram\reiniciar_hermes_cola.bat` | **Hermes**, la cola que pone a OpenCode a resolver issues (repo de Hermes). |
 | `lion-platform-api\scripts\windows\arrancar_lion_platform.bat` | **Lion Platform** (Docker + Postgres 5433 + API 8081 + web 5173). |
@@ -98,14 +98,14 @@ Hermes y los demás deben salir `online` en la tabla de PM2).
 
 **No tocar el bot de mascotas.** Producción, plata, datos y secretos los decide Johan.
 
-### Qué está arriba hoy (Johan, 2 nov 2026)
+### Qué está arriba hoy (Johan, 8 nov 2026)
 
-De los negocios de clientes, **solo Mundo Helados está en producción**. Los demás están abajo **a propósito**:
+Hoy **ningún negocio de clientes está en producción**: Mundo Helados quedó apagado hasta nueva orden. Todos están abajo **a propósito**:
 no los arranques, no los "arregles" ni gastes tiempo en sus pruebas o errores, salvo que el issue lo pida.
 
 | Servicio (PM2) | Estado | Nota |
 |---|---|---|
-| `bot-heladeria` + `django-heladeria` | 🟢 arriba | **Mundo Helados**, el único cliente en producción. Cuidado máximo. |
+| `bot-heladeria` + `django-heladeria` | 🔴 abajo | **Mundo Helados**: apagado hasta nueva orden (Johan, 8 nov 2026). No lo arranques hasta que Johan lo diga. |
 | `bot-finance-telegram` | 🟢 arriba | Leo Financiero (lo usa Johan). |
 | `hermes` | 🟢 arriba | Cola de issues para OpenCode. |
 | `admin-panel`, `cloudflare-tunnel` | 🟢 arriba | Soporte de lo de arriba. |
