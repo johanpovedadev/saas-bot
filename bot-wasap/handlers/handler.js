@@ -1259,30 +1259,11 @@ async function handleConfirmation(sock, jid, text, userSession, ctx) {
 // SOCKET EVENT HANDLERS
 // ===================================
 
-/**
- * Descarga el media de un mensaje con reintentos.
- * whatsapp-web.js a veces falla con ProtocolError (Network.getResponseBody) al
- * descargar media que aún se está resolviendo en el navegador; reintentar tras
- * una pequeña espera suele resolverlo. Devuelve MessageMedia o null.
- */
-async function downloadMediaWithRetry(msg, jid, maxAttempts = 3) {
-    let lastErr = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            const media = await msg.downloadMedia();
-            if (media && media.data) return media;
-            lastErr = new Error('downloadMedia devolvió undefined');
-        } catch (e) {
-            lastErr = e;
-        }
-        if (attempt < maxAttempts) {
-            const waitMs = attempt * 1500;
-            logger.warn(`[${jid}] Media descarga falló (intento ${attempt}/${maxAttempts}), reintentando en ${waitMs}ms: ${lastErr?.message || lastErr?.name || lastErr}`);
-            await new Promise(r => setTimeout(r, waitMs));
-        }
-    }
-    logger.error(`[${jid}] Media no pudo descargarse tras ${maxAttempts} intentos: ${lastErr?.stack?.split('\n').slice(0,4).join(' | ') || lastErr?.message || lastErr}`);
-    return null;
+// Descarga de media con respaldo para la falla "t: t" de whatsapp-web.js 1.34.7
+// (ver utils/waMediaDownload.js).
+const waMediaDownload = require('../utils/waMediaDownload');
+function downloadMediaWithRetry(msg, jid, maxAttempts = 3) {
+    return waMediaDownload.downloadMediaWithRetry(msg, jid, { logger, maxAttempts });
 }
 
 /**
