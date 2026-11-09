@@ -36,6 +36,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.11.1] - 2026-11-09
+
+### Corregido
+
+- **Mundo Helados no leía audios ni fotos (comprobantes) desde el 28 sep 2026.** Con whatsapp-web.js 1.34.7 (la
+  última publicada) `Message.downloadMedia()` falla con "t: t" porque WhatsApp Web cambió su descargador interno.
+  `utils/waMediaDownload.js` agrega como respaldo el arreglo oficial de wwebjs (PR #201697, en `main`, sin versión
+  publicada): descarga con el método del propio mensaje y lee la caché en memoria de WhatsApp Web. Primero se intenta
+  lo normal; si falla, el camino nuevo. No se parchea `node_modules`. Prueba: `test_descarga_media_respaldo.js`.
+
 ## [1.11.0] - 2026-11-08
 
 ### Agregado
