@@ -7,6 +7,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Agregado
 
+- **Bri Pilates: audios y comprobantes, como Mundo Helados.** Los dos bots de pilates ahora transcriben las notas
+  de voz (siguen como texto) y reenvían a Bri los comprobantes de pago con la clienta y su paquete del mes
+  (`handlers/modules/pilatesMedia.js`). El bot no carga clases ni valida pagos: Bri revisa en su banco.
+  `paymentProof.js` acepta un contexto y un aviso propios del negocio. Prueba: `test_pilates_audios_comprobantes.js`.
 - **CRM desde cualquier lado**: `lion-crm-publico` (sirve el build de lion-platform-web en el 4173 y reenvía
   `/api` a Lion Platform) y `lion-crm-tunel` (túnel rápido de Cloudflare; `scripts/tunel-crm.js` guarda la
   dirección y se la manda a Johan por Telegram porque cambia al reiniciar). Arranque:

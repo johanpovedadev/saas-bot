@@ -298,6 +298,8 @@ module.exports = {
     },
     handle,
     showWelcome,
+    // Audios y comprobantes de pago, igual que Mundo Helados (10 nov 2026): ver handlers/modules/pilatesMedia.js
+    handleMedia: require('../modules/pilatesMedia').createHandleMedia(),
     getInitialPhase: () => PHASE.PIL_WELCOME,
     isFlowPhase: (phase) => PIL_PHASES.includes(phase),
     getPhases: () => PIL_PHASES
