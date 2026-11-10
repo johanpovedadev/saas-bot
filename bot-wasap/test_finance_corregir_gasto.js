@@ -4,7 +4,7 @@
  * que escribir el gasto de nuevo (le pasó 9 veces).
  * Claro (monto y descripción) → se guarda de una con [✏️ Corregir] [🗑️ Borrar] [📋 Menú]:
  *  - Borrar quita el registro y devuelve el saldo; Corregir → [Monto] [Descripción] [Categoría] [Medio de pago].
- *  - "fue con tarjeta" justo después corrige el medio de pago (la tarjeta no baja el saldo).
+ *  - "fue con tarjeta" justo después corrige el medio de pago (el saldo no cambia: todo gasto resta, 10 nov 2026).
  *  - "5 cocas 7000 cada una" = $35.000; "gasté 14 mil, arepas 4000, pan 2000" = 3 gastos.
  * Dudoso (sin descripción, $1) → "¿Es correcto?" como en #125:
  *  - Un monto ("no, 15 mil", "15000", "no es 15 mil") cambia el monto y vuelve a preguntar.
@@ -158,7 +158,7 @@ const saved = () => financeStore.loadFinance(JID).transactions;
         await send('mercado 80 mil');
         r = await send('fue con tarjeta');
         assert.strictEqual(saved()[0].medium, 'tarjeta', r);
-        assert.strictEqual(financeStore.loadFinance(JID).balance, 500000, 'con tarjeta de crédito no baja el saldo');
+        assert.strictEqual(financeStore.loadFinance(JID).balance, 500000 - 80000, 'cambiar el medio a tarjeta no cambia el saldo: el gasto ya restó');
         assert.ok(/fue con tarjeta/.test(r), r);
         await send(`leo:corregir:${saved()[0].entryGroup}:0:medio`);
         r = await send('efectivo');

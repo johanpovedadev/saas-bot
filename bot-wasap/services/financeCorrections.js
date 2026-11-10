@@ -26,8 +26,6 @@ const FIELD_PROMPTS = Object.freeze({
     medio: '✏️ ¿Con qué lo pagaste? (_tarjeta_, _efectivo_, _banco_ o _envío_)',
 });
 const CORRECTION_WINDOW_MS = 30 * 60 * 1000;   // "fue con tarjeta" y la respuesta a "¿Qué cambio?" valen 30 min
-// La tarjeta de crédito no baja el saldo (se descuenta al pagarla), igual que en la bandeja de correos.
-const MEDIUMS_THAT_MOVE_BALANCE = new Set([MEDIUM.BANK, MEDIUM.CASH, MEDIUM.TRANSFER]);
 // Vocabulario de medios (#144, bloque 2): Rappi/RappiCard/tarjeta → tarjeta; Nequi, Daviplata, Bancolombia,
 // transferencia, PSE → banco; efectivo / plata en mano → efectivo. "Envío" queda para cuando lo dicen así.
 const MEDIUM_WORDS = [
@@ -46,10 +44,14 @@ function normalize(text) {
     return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
 
-/** Cuánto mueve el saldo un movimiento (los gastos con tarjeta de crédito no lo mueven). */
+/**
+ * Cuánto mueve el saldo un movimiento: los ingresos suman y los gastos restan, con tarjeta o sin ella (Johan,
+ * 10 nov 2026: se quitó el manejo aparte de la tarjeta). Otros tipos (p. ej. 'pago_tarjeta' viejos) no lo mueven.
+ */
 function balanceEffect(tx) {
     if (tx.type === 'income') return tx.amount;
-    return MEDIUMS_THAT_MOVE_BALANCE.has(mediumOf(tx)) ? -tx.amount : 0;
+    if (tx.type === 'expense') return -tx.amount;
+    return 0;
 }
 
 function todayEffect(tx, today) {

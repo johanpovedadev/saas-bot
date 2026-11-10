@@ -2,14 +2,13 @@
 
 /**
  * "¿En qué se va tu plata?": resumen de los últimos 30 días con los gastos agrupados (por categoría, por
- * medio de pago y por necesidad), gastos hormiga, lo que está por pagar de la tarjeta y sugerencias para
+ * medio de pago y por necesidad), gastos hormiga y sugerencias para
  * ahorrar y para generar más ingresos. Todo se calcula de los movimientos reales del usuario, sin IA y
  * sin inventar cifras; las sugerencias salen de reglas sobre esos mismos números.
  */
 
 const privacy = require('../utils/financePrivacy');
 const { DISCLAIMER } = require('../utils/financeDisclaimer');
-const cardStatement = require('./financeCardStatement');
 const { todayInBogota } = require('../utils/financeDate');
 const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../utils/financeMedium');
 
@@ -92,9 +91,6 @@ function buildSpendingReport(fin, today = todayInBogota(), days = REPORT_DAYS) {
         from, to: today, days, expenseTotal, incomeTotal: sumAmounts(incomes), expenseCount: expenses.length,
         byCategory, antSpending, byNeed, incomeBySource, byMedium,
         bankByAccount: sumBankExpensesByAccount(periodTx),
-        // Con extracto cargado, lo que dice el extracto (+ compras nuevas); si no, el estimado de compras con tarjeta.
-        cardInfo: cardStatement.owed(fin, today),
-        cardOwed: (cardStatement.owed(fin, today) || {}).total || byMedium[MEDIUM.CARD],
         pendingReview: pendingReviewOf(fin.transactions || [])
     };
 }
@@ -113,9 +109,6 @@ function savingTips(report, fin) {
     }
     if (report.byNeed[NEED.OPTIONAL] > 0) {
         tips.push(`✂️ Marcaste ${privacy.money(report.byNeed[NEED.OPTIONAL], fin)} como prescindible: es lo primero que podés quitar.`);
-    }
-    if (report.cardOwed > 0 && (fin.balance || 0) - report.cardOwed < 0) {
-        tips.push(`⚠️ Lo de la tarjeta (${privacy.money(report.cardOwed, fin)}) es más que lo que te queda: apartá plata para pagarla.`);
     }
     return tips;
 }
@@ -139,7 +132,7 @@ function incomeTips(report, fin) {
 
 function formatMediumLines(report, fin) {
     const lines = [];
-    if (report.byMedium[MEDIUM.CARD] > 0) lines.push(`   💳 Tarjeta (lo pagás a fin de mes): ${privacy.money(report.byMedium[MEDIUM.CARD], fin)}`);
+    if (report.byMedium[MEDIUM.CARD] > 0) lines.push(`   💳 Tarjeta: ${privacy.money(report.byMedium[MEDIUM.CARD], fin)}`);
     for (const [account, total] of Object.entries(report.bankByAccount)) lines.push(`   🏦 ${account}: ${privacy.money(total, fin)}`);
     if (report.byMedium[MEDIUM.TRANSFER] > 0) lines.push(`   📤 Envíos: ${privacy.money(report.byMedium[MEDIUM.TRANSFER], fin)}`);
     if (report.byMedium[MEDIUM.CASH] > 0) lines.push(`   💵 Efectivo: ${privacy.money(report.byMedium[MEDIUM.CASH], fin)}`);
@@ -189,11 +182,6 @@ function formatSpendingReport(report, fin) {
     }
 
     out.push('', `💵 Te queda: *${balance(fin.balance || 0)}*`);
-    if (report.cardInfo) {
-        out.push(cardStatement.formatOwed(report.cardInfo, fin));
-    } else if (report.cardOwed > 0) {
-        out.push(`💳 Compras con tarjeta del mes: ${money(report.cardOwed)} → te quedaría ${balance((fin.balance || 0) - report.cardOwed)} al pagarlas`);
-    }
 
     if (report.expenseCount > 0) {
         const saving = savingTips(report, fin);

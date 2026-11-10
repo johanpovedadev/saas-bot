@@ -36,6 +36,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
 
+## [1.12.0] - 2026-11-10
+
+### Cambiado
+
+- **Leo ya no maneja la tarjeta aparte** (Johan: "es muy complicado para todos los usuarios"). Sin extracto, fecha de
+  pago ni "te quedaría al pagar": cada gasto baja el saldo el día que se hace, con tarjeta o sin ella (chat y bandeja
+  de correos). "Pagué la tarjeta" ya no anota nada ni toca el saldo, porque las compras ya restaron.
+- **La confirmación dice de frente si fue GASTO o INGRESO**: "Registrado como INGRESO: 💰 +$9.200" y el saldo antes →
+  después. Un ingreso de DiDi con categoría "Servicios" parecía un gasto y terminó anotado 3 veces.
+
 ## [1.11.1] - 2026-11-09
 
 ### Corregido

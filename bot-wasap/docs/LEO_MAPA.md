@@ -30,7 +30,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeMedals.js` | Medallas: lista `MEDALS` (cada una con `check(fin)`), `awardNew(fin)`, `formatMedalList(fin)`. |
 | `services/financeCard.js` | Imágenes (canvas): `generateCard()` para medallas, `generateShareCard()` para "compartir". |
 | `services/financeCharts.js` | Gráficas (canvas, #139): dona por categoría, barras de 7 días y barra de la meta. `*Data()` arma los datos, `render*()` da el PNG, `buildChartLabels()` todo texto dibujado (sin montos en modo privado). |
-| `services/financeCardStatement.js` | Extracto de la tarjeta: `owed()`, `formatOwed()`, `parsePayment()`, `applyPayment()`. |
+| `services/financeCardStatement.js` | Solo reconoce "pagué la tarjeta" (`parsePayment`, `paymentReply`): no es un gasto nuevo. El extracto se quitó el 10 nov 2026. |
 | `services/financeEmailImport.js` + `financeEmailParsers.js` | Leen correos de RappiCard, Binance, RappiPay, BBVA. |
 | `services/financeEmailInbox.js` | Bandeja `data/correos_entrantes`: correos o ajustes `{ movimientos, saldo, tarjeta }`. |
 | `services/financeReview.js` + `financeLearning.js` | "¿En qué fue este gasto?" (`1 comida`) y lo que Leo aprende. |
@@ -41,17 +41,16 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `utils/financeDate.js` | `todayInBogota()` → "YYYY-MM-DD". **Usa esta fecha, no la del servidor.** `parseRelativeDay()`: "ayer", "antier", "el lunes" (el último lunes). |
 | `utils/financeDisclaimer.js` | Aviso "Leo no es asesor financiero" (solo en informes y consejos). |
 
-## Tarjeta de crédito: cómo cuenta Leo (para no perderse)
+## Tarjeta de crédito: cómo cuenta Leo (desde el 10 nov 2026)
 
-- **Una compra con tarjeta** ("almuerzo 20 mil con tarjeta", o la que llega por el correo) **es un gasto** el día que
-  se hace, pero **no baja el saldo**: la plata sale cuando pagás la tarjeta.
-- **Pagar la tarjeta** ("pagué la tarjeta 1.129.757", "pago de la tarjeta…", "aboné 500 mil a la tarjeta", "pagué
-  el extracto") **baja el saldo y lo pendiente del extracto, y NO es un gasto**: las compras ya se contaron una por
-  una. Queda un movimiento `pago_tarjeta` (`services/financeCardStatement.js`).
-- Si el pago quedó como un gasto normal (en "Otros"), las compras quedan **contadas dos veces** y el extracto sigue
-  "por pagar". Se arregla borrando ese gasto y escribiendo "pagué la tarjeta <monto>" (#164 amplió las frases).
-- El extracto (total, mínimo, fecha) entra por la bandeja de ajustes. En el informe, "Te queda" es tu saldo; aparte
-  sale "💳 pagá $X antes del …" y "al pagar el extracto te quedaría …" (el saldo menos lo que falta del extracto).
+- Johan: *"quita lo de la tarjeta, es muy complicado para todos los usuarios"*. Leo ya **no lleva extracto**, fecha de
+  pago ni "cuánto debés" (`fin.cardStatement` se ignora; la bandeja ignora `tarjeta`).
+- **Una sola regla:** cada gasto baja el saldo el día que se hace, con tarjeta o sin ella (`balanceEffect` en
+  `financeCorrections.js` y en `financeEmailInbox.js`). El medio de pago solo sirve para el desglose del informe.
+- **"pagué la tarjeta …"** no anota nada ni toca el saldo: esas compras ya restaron (`financeCardStatement.js`:
+  `parsePayment` + `paymentReply`).
+- La confirmación dice siempre *"Registrado como GASTO: −$X"* o *"Registrado como INGRESO: +$X"* y el saldo antes →
+  después (el 10 nov un ingreso con categoría "Servicios" parecía un gasto y quedó 3 veces).
 
 ## Datos de la cuenta (`fin`)
 
