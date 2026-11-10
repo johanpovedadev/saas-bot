@@ -5,6 +5,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+### Cambiado
+
+- **Leo ya no reenvía las facturas a Jarvis León (Telegram).** Johan, 10 nov 2026: los pagos del plan se hacen y el
+  comprobante se manda por WhatsApp al número de soporte; el paso 3 del pago lo dice con el enlace.
+
 ### Agregado
 
 - **Informes del CRM en el PC**: `agentvents-seguimientos` (lunes a sábado 7:45 a. m.), `agentvents-ventas` y
