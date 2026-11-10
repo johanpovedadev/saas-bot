@@ -5,6 +5,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+### Cambiado
+
+- **Leo ya no reenvía las facturas a Jarvis León (Telegram).** Johan, 10 nov 2026: los pagos del plan se hacen y el
+  comprobante se manda por WhatsApp al número de soporte; el paso 3 del pago lo dice con el enlace.
+
 ### Agregado
 
 - **Agente de IA de Ricuras del Pacífico** (restaurante) sobre el mismo núcleo de carrito que Mundo Helados, con
