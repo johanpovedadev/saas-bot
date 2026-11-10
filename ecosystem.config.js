@@ -228,6 +228,63 @@ module.exports = {
       }
     },
     {
+      // AGentVents: seguimientos vencidos, lunes a sábado 7:45 a. m.. Corre, manda el informe a Telegram y termina; PM2 lo vuelve a lanzar a la hora.
+      // Lion Platform vive en localhost:8081, por eso esto va en el PC y no en GitHub Actions.
+      name: 'agentvents-seguimientos',
+      cwd: 'C:\\Users\\Administrador\\Documents\\AGentVents',
+      script: 'scripts/runScheduledReport.js',
+      args: 'seguimientos',
+      interpreter: 'node',
+      watch: false,
+      autorestart: false,
+      // Mismo blindaje que las demás (17 oct 2026): nunca reinicios en bucle.
+      max_restarts: 10,
+      min_uptime: '20s',
+      stop_exit_codes: [78],
+      cron_restart: '45 7 * * 1-6',
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
+      // AGentVents: diagnóstico de ventas, lunes 8:10 a. m.. Corre, manda el informe a Telegram y termina; PM2 lo vuelve a lanzar a la hora.
+      // Lion Platform vive en localhost:8081, por eso esto va en el PC y no en GitHub Actions.
+      name: 'agentvents-ventas',
+      cwd: 'C:\\Users\\Administrador\\Documents\\AGentVents',
+      script: 'scripts/runScheduledReport.js',
+      args: 'ventas',
+      interpreter: 'node',
+      watch: false,
+      autorestart: false,
+      // Mismo blindaje que las demás (17 oct 2026): nunca reinicios en bucle.
+      max_restarts: 10,
+      min_uptime: '20s',
+      stop_exit_codes: [78],
+      cron_restart: '10 8 * * 1',
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
+      // AGentVents: prospectos por canal, lunes 8:20 a. m.. Corre, manda el informe a Telegram y termina; PM2 lo vuelve a lanzar a la hora.
+      // Lion Platform vive en localhost:8081, por eso esto va en el PC y no en GitHub Actions.
+      name: 'agentvents-marketing',
+      cwd: 'C:\\Users\\Administrador\\Documents\\AGentVents',
+      script: 'scripts/runScheduledReport.js',
+      args: 'marketing',
+      interpreter: 'node',
+      watch: false,
+      autorestart: false,
+      // Mismo blindaje que las demás (17 oct 2026): nunca reinicios en bucle.
+      max_restarts: 10,
+      min_uptime: '20s',
+      stop_exit_codes: [78],
+      cron_restart: '20 8 * * 1',
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
       name: 'bot-dev',
       cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
       script: 'index.js',

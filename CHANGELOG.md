@@ -7,6 +7,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Agregado
 
+- **Informes del CRM en el PC**: `agentvents-seguimientos` (lunes a sábado 7:45 a. m.), `agentvents-ventas` y
+  `agentvents-marketing` (lunes) en `ecosystem.config.js`, con cron de PM2 y sin reinicio automático. Mandan a
+  Telegram los seguimientos vencidos y los informes de AGentVents. Se arrancan con
+  `scripts/windows/arrancar_informes_crm.bat` (exige AGentVents en `main`). Antes corrían en GitHub Actions, que no
+  alcanza Lion Platform en localhost, y fallaban a diario.
 - **Agente de IA de Ricuras del Pacífico** (restaurante) sobre el mismo núcleo de carrito que Mundo Helados, con
   presentador conversacional, política de audio y comprobantes, avisos claros a la dueña y seguridad. Viene apagado
   (`PESCADERIA_AI_AGENT`); ver `bot-wasap/docs/agente_ricuras_pescaderia.md`.
