@@ -16,6 +16,7 @@ const { MEDIUM, sumExpensesByMedium, sumBankExpensesByAccount } = require('../..
 const financeInsights = require('../../services/financeInsights');
 const { isReviewPromptActive, applyReviewReply } = require('../../services/financeReview');
 const financeReceipts = require('../../services/financeReceipts');
+const financeStores = require('../../services/financeStores');
 const financeWeekly = require('../../services/financeWeekly');
 const financeEmailInbox = require('../../services/financeEmailInbox');
 const financeGoals = require('../../services/financeGoals');
@@ -835,6 +836,12 @@ async function handle(sock, jid, text, userSession, ctx) {
         return await backToMenu(sock, jid, userSession, ctx, fin);
     }
 
+    // "¿Dónde fue esta compra?" (#179, parte B): un botón de tienda, "Otra…" o el nombre escrito.
+    if (fin.pendingStoreQuestion) {
+        const storeReply = await handleStoreAnswer(sock, jid, t, ctx, fin);
+        if (storeReply) return;
+    }
+
     // Un botón de "lo de siempre" (#144, bloque 3): se registra con su categoría y medio de siempre.
     const frequentTap = financeFrequent.parseFrequentTap(t, fin, todayInBogota());
     if (frequentTap) {
@@ -1002,6 +1009,12 @@ async function handle(sock, jid, text, userSession, ctx) {
     if (cheaperProduct) {
         const results = financeReceipts.cheapestFor(fin.transactions, cheaperProduct);
         return await say(sock, jid, financeReceipts.formatCheaper(cheaperProduct, results, (n) => formatMoney(n, fin)), ctx);
+    }
+
+    // "mis compras de la semana" (#179): productos de los recibos agrupados por tienda, sin IA.
+    if (financeReceipts.isWeekPurchasesRequest(text)) {
+        const groups = financeReceipts.weekPurchases(fin.transactions, todayInBogota());
+        return await sayFull(sock, jid, financeReceipts.formatWeekPurchases(groups, (n) => formatMoney(n, fin)), ctx);
     }
 
     // "resumen" / "informe" / "en qué se va mi plata": gastos agrupados con los datos reales, sin IA.
@@ -1863,7 +1876,51 @@ async function handleEntryAction(sock, jid, action, ctx, fin) {
     await say(sock, jid, reply.text, ctx, reply.buttons ? { buttons: reply.buttons } : undefined);
 }
 
+const STORE_QUESTION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Respuesta a "¿Dónde fue esta compra?" (#179, parte B). true si el mensaje era la respuesta. Si después de "Otra…"
+ * escribe otra cosa (un gasto, una pregunta), se deja la pregunta y el mensaje sigue su camino normal.
+ */
+async function handleStoreAnswer(sock, jid, t, ctx, fin) {
+    const pending = fin.pendingStoreQuestion;
+    if (Date.now() - (pending.at || 0) > STORE_QUESTION_TTL_MS) {
+        fin.pendingStoreQuestion = null;
+        return false;
+    }
+    const answer = financeStores.parseAnswer(t, pending);
+    if (!answer) {
+        if (pending.waitingName) fin.pendingStoreQuestion = null;
+        return false;
+    }
+    if (answer.other) {
+        pending.waitingName = true;
+        financeStore.saveFinance(jid, fin);
+        await say(sock, jid, '✍️ ¿Cómo se llama la tienda? Escribime solo el nombre, por ejemplo _Surtimax_.', ctx);
+        return true;
+    }
+    const text = financeStores.learn(fin, pending, answer.name);
+    financeStore.saveFinance(jid, fin);
+    await say(sock, jid, text, ctx);
+    return true;
+}
+
+/** Si la factura solo trae una razón social que Leo no conoce, pregunta una vez dónde fue (y se acuerda). */
+async function askStoreIfNeeded(sock, jid, ask, tx, fin, ctx) {
+    if (!ask || !ask.razonSocial) return;
+    if (!fin.storeAliases || typeof fin.storeAliases !== 'object') fin.storeAliases = {};
+    const k = financeStores.aliasKey(ask);
+    if (!k || k in fin.storeAliases) return;
+    fin.storeAliases[k] = '';   // ya se preguntó: no se vuelve a preguntar aunque no conteste
+    fin.pendingStoreQuestion = { razonSocial: ask.razonSocial, nit: ask.nit || '', txTimestamp: tx.timestamp, at: Date.now() };
+    financeStore.saveFinance(jid, fin);
+    const q = financeStores.askQuestion(ask.razonSocial);
+    await say(sock, jid, q.text, ctx, { buttons: q.buttons });
+}
+
 async function saveAndConfirm(sock, jid, type, amount, category, description, fin, ctx, extra = {}, opts = {}) {
+    const { askStore, ...txExtra } = extra || {};
+    extra = txExtra;
     const prevFin = { ...fin, transactions: fin.transactions.length, balance: fin.balance, streak: fin.streak, firstTransactionDone: fin.firstTransactionDone, goalTarget: fin.goalTarget };
 
     const tx = {
@@ -1875,6 +1932,12 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         timestamp: Date.now(),
         ...extra
     };
+    // Recibo con productos (#179): cada uno con nombre normalizado, precio unitario, tienda y fecha, y se muestran.
+    if (Array.isArray(tx.items) && tx.items.length) {
+        tx.items = financeReceipts.enrichItems(tx.items, { store: tx.store, date: tx.date });
+        const summary = financeReceipts.receiptSummary({ store: tx.store, total: amount, items: tx.items }, (n) => formatMoney(n, fin));
+        if (summary) await sayFull(sock, jid, summary, ctx);
+    }
     fin.transactions.push(tx);
     // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
     fin.balance += financeCorrections.balanceEffect(tx);
@@ -1957,6 +2020,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     await sendNewMedals(sock, jid, fin, ctx);
 
     financeStore.saveFinance(jid, fin);
+    await askStoreIfNeeded(sock, jid, askStore, tx, fin, ctx);
     logger.info({ jid, type, category, description }, 'Finance transaction saved');
 }
 

@@ -34,7 +34,8 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeEmailImport.js` + `financeEmailParsers.js` | Leen correos de RappiCard, Binance, RappiPay, BBVA. |
 | `services/financeEmailInbox.js` | Bandeja `data/correos_entrantes`: correos o ajustes `{ movimientos, saldo, tarjeta }`. |
 | `services/financeReview.js` + `financeLearning.js` | "¿En qué fue este gasto?" (`1 comida`) y lo que Leo aprende. |
-| `services/financeReceipts.js` | Productos del recibo y "¿dónde está más barato?". |
+| `services/financeReceipts.js` | Productos del recibo (#179): `enrichItems()` (nombre normalizado, cantidad, `unitario`, `total`, tienda, fecha), `receiptSummary()` (lo que se ve al registrar la foto, máx. 8), "¿dónde está más barato?" (`cheapestFor`, por precio unitario y nombres parecidos) y "mis compras de la semana" (`weekPurchases`). Prueba: `test_finance_recibo_productos.js`. |
+| `services/financeStores.js` | Tiendas (#179, parte B): razón social / NIT del tiquete → nombre comercial (`KNOWN_STORES`: Jerónimo Martins → Ara, Koba/D1 S.A.S. → D1, Almacenes Éxito → Éxito, OXXO, Olímpica, Colsubsidio...). Si no la conoce, pregunta una vez con botones y aprende el alias en `fin.storeAliases` (cifrado). Prueba: `test_finance_tiendas.js`. |
 | `utils/financeMoney.js` | `formatMoney(n, fin)` → "$1.234.567". **Úsalo siempre para mostrar plata.** |
 | `utils/financePrivacy.js` | Modo privado (#139): `money(n, fin, { kind })` con `kind` = `saldo` / `ahorro` / `meta` / `gasto`. **Para saldo, ahorro o meta usá este, no `formatMoney`**: con el modo prendido sale `$•••••`. |
 | `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. `normalizeSpokenAmounts()` (#144): "15 lucas", "luca y media", "un palo", "medio palo", "2 barras", "15k", "30000.000" → cifras; lo llaman `financeAi.interpret` (con nombre puesto) e `interpretEntries`. También montos en letras ("quince mil", `wordNumbersToDigits`), para los audios. Pruebas: `test_finance_lenguaje_natural.js`, `test_finance_audios_fotos.js`. |
@@ -57,7 +58,9 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 
 `name`, `balance` (saldo), `transactions` (cada una: `type` expense/income, `amount`, `date` YYYY-MM-DD, `description`,
 `category`, `medium` tarjeta/banco/efectivo/envio, `necesidad`), `goalName`, `goalTarget`, `goalMonthly`, `streak`,
-`bestStreak`, `streakFreezes`, `streakLevel`, `medals`, `cardStatement`.
+`bestStreak`, `streakFreezes`, `streakLevel`, `medals`, `cardStatement`, `storeAliases` (razón social/NIT → tienda),
+`pendingStoreQuestion`. Un gasto de una foto también trae `store` (nombre comercial), `razonSocial` (la del papel) e
+`items` (productos: `producto`, `nombre`, `cantidad`, `unitario`, `total`, `tienda`, `fecha`).
 
 ## Cómo agregar algo nuevo (patrón)
 
