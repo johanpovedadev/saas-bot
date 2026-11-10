@@ -953,12 +953,10 @@ async function handle(sock, jid, text, userSession, ctx) {
             return await say(sock, jid, `✅ Listo, tu saldo quedó en ${privacy.money(amount, fin, { kind: privacy.KINDS.BALANCE })}. Desde aquí sigo sumando lo que te entra y restando lo que gastás 🦁`, ctx);
         }
     }
-    // "pagué la tarjeta": baja el saldo sin contarlo como gasto (las compras ya se anotaron). Sin IA.
-    const cardPayment = cardStatement.parsePayment(command, fin, todayInBogota());
+    // "pagué la tarjeta": no es un gasto nuevo (cada compra ya bajó el saldo). Sin IA. Johan, 10 nov 2026.
+    const cardPayment = cardStatement.parsePayment(command);
     if (cardPayment) {
-        const reply = cardStatement.applyPayment(fin, cardPayment, todayInBogota());
-        financeStore.saveFinance(jid, fin);
-        return await say(sock, jid, reply, ctx);
+        return await say(sock, jid, cardStatement.paymentReply(fin, cardPayment), ctx);
     }
 
     // "solo informe semanal", "no me mandes informes", "activar informe diario" (#123). Sin IA.
@@ -1876,7 +1874,8 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
         ...extra
     };
     fin.transactions.push(tx);
-    // Con el medio de pago (#143): un gasto con tarjeta de crédito no baja el saldo (se descuenta al pagarla).
+    const prevBalance = fin.balance || 0;
+    // Cada gasto baja el saldo el día que se hace, con tarjeta o sin ella (Johan, 10 nov 2026).
     fin.balance += financeCorrections.balanceEffect(tx);
     if (type === 'expense' && tx.date === todayInBogota()) fin.todaySpending += amount;
 
@@ -1888,7 +1887,7 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     const hasIncome = fin.transactions.some(t => t.type === 'income');
     const balanceLine = !hasIncome && fin.balance < 0
         ? `💸 Comprado hoy: ${privacy.money(fin.todaySpending, fin)}`
-        : `💵 Saldo: ${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}`;
+        : `💵 Saldo: ${typeof prevBalance === 'number' && prevBalance !== fin.balance ? `${privacy.money(prevBalance, fin, { kind: privacy.KINDS.BALANCE })} → ` : ''}${privacy.money(fin.balance, fin, { kind: privacy.KINDS.BALANCE })}`;
 
     const todayMsg = fin.todaySpending > 0
         ? `📊 Hoy: ${privacy.money(fin.todaySpending, fin)}\n`
@@ -1917,7 +1916,9 @@ async function saveAndConfirm(sock, jid, type, amount, category, description, fi
     // Corto (#144): lo que se anotó, el saldo y la racha en 3 líneas; el resto queda detrás de "➕ Ver más".
     const dayLabel = tx.date === todayInBogota() ? '' : ` (${tx.date})`;
     await say(sock, jid,
-        `✅ *Registrado:* ${type === 'expense' ? '💸' : '💰'} ${privacy.money(amount, fin)} — ${description} · ${category}${dayLabel}\n` +
+        // Johan, 10 nov 2026: "Servicio Didi · Servicios" parecía un gasto y lo corrigió dos veces (quedó 3 veces).
+        // La confirmación dice siempre, de frente, si fue GASTO (−) o INGRESO (+).
+        `✅ *Registrado como ${type === 'expense' ? 'GASTO' : 'INGRESO'}:* ${type === 'expense' ? '💸 −' : '💰 +'}${privacy.money(amount, fin)} — ${description} · ${category}${dayLabel}\n` +
         balanceLine + (todayMsg ? ` · ${todayMsg.trim()}` : '') + '\n' +
         streakMsg +
         (streakEventLines.length ? `${streakEventLines.join('\n')}\n` : '') +
@@ -2301,7 +2302,7 @@ async function generateNightReport(sock, jid, fin, ctx, { registeredOn, reveal =
     const bankLines = Object.entries(sumBankExpensesByAccount(todayTx))
         .map(([account, total]) => `   🏦 Con ${account}: ${gasto(total)}\n`).join('');
     const breakdown = hasNonCash
-        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta (lo pagás a fin de mes): ${gasto(byMedium[MEDIUM.CARD])}\n` : '') +
+        ? (byMedium[MEDIUM.CARD] > 0 ? `   💳 Con tarjeta: ${gasto(byMedium[MEDIUM.CARD])}\n` : '') +
           bankLines +
           (byMedium[MEDIUM.TRANSFER] > 0 ? `   📤 En envíos: ${gasto(byMedium[MEDIUM.TRANSFER])}\n` : '') +
           (byMedium[MEDIUM.CASH] > 0 ? `   💵 En efectivo: ${gasto(byMedium[MEDIUM.CASH])}\n` : '')
