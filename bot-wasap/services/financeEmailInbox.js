@@ -16,13 +16,10 @@ const fs = require('fs');
 const path = require('path');
 const { importEmails, usdPurchaseDates } = require('./financeEmailImport');
 const financeStore = require('./financeStore');
-const { sanitizeStatement } = require('./financeCardStatement');
 const financeNightPolicy = require('./financeNightPolicy');
 const { todayInBogota } = require('../utils/financeDate');
 
-// Ingresos suman al saldo; gastos pagados con plata disponible (banco, efectivo, envío) restan. La tarjeta de
-// crédito no: es deuda y se descuenta cuando se paga ("pagué la tarjeta").
-const MEDIUMS_THAT_MOVE_BALANCE = new Set(['banco', 'efectivo', 'envio']);
+// Ingresos suman al saldo y gastos restan, con tarjeta o sin ella (Johan, 10 nov 2026: se quitó la tarjeta aparte).
 
 const VALID_TYPES = new Set(['expense', 'income']);
 
@@ -33,19 +30,19 @@ const VALID_TYPES = new Set(['expense', 'income']);
 function balanceEffect(m) {
     if (m.afectaSaldo === false) return 0;
     if (m.type === 'income') return Math.round(m.amount);
-    if (m.type === 'expense' && MEDIUMS_THAT_MOVE_BALANCE.has(m.medium)) return -Math.round(m.amount);
+    if (m.type === 'expense') return -Math.round(m.amount);
     return 0;
 }
 
 /**
- * Ajustes: { "movimientos": [...], "saldo": 1726057, "tarjeta": { cuenta, pagoTotal, pagoMinimo, fechaPago, corte } }.
+ * Ajustes: { "movimientos": [...], "saldo": 1726057 }.
  * - movimientos: cada uno mueve el saldo según balanceEffect (afectaSaldo: false para historia vieja).
  * - saldo: el saldo real que dijo el usuario; se aplica al final y manda sobre lo anterior.
- * - tarjeta: el extracto vigente, para mostrar lo que de verdad hay que pagar.
+ * - "tarjeta" (extracto) ya no se usa desde el 10 nov 2026: si llega, se ignora.
  */
 function importAdjustmentFile(jid, data) {
     const summary = importAdjustments(jid, data.movimientos || []);
-    if (data.saldo == null && !data.tarjeta) return summary;
+    if (data.saldo == null) return summary;
     const fin = financeStore.loadFinance(jid);
     if (data.saldo != null) {
         const saldo = Math.round(Number(data.saldo));
@@ -53,12 +50,6 @@ function importAdjustmentFile(jid, data) {
         fin.balance = saldo;
         financeNightPolicy.markBalanceKnown(fin, todayInBogota());
         summary.saldo = saldo;
-    }
-    if (data.tarjeta) {
-        const statement = sanitizeStatement(data.tarjeta);
-        if (!statement) throw new Error('extracto de tarjeta inválido (falta pagoTotal, fechaPago o corte)');
-        fin.cardStatement = statement;
-        summary.tarjeta = statement.cuenta;
     }
     if (!financeStore.saveFinance(jid, fin)) throw new Error('No se pudo guardar (¿falta FINANCE_ENCRYPTION_KEY?)');
     return summary;
