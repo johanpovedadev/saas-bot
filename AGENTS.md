@@ -2,7 +2,7 @@
 
 > ⚡ **¿Entrás al proyecto? Empieza por [`bot-wasap/docs/AGENTE_ARRANQUE.md`](bot-wasap/docs/AGENTE_ARRANQUE.md)**: en 2 minutos sabés cómo trabajar, probar, subir y desplegar sin demorarte.
 >
-> 🍦 **Hoy solo Mundo Helados está en producción** (de los clientes). Pescadería y pilates están abajo a propósito: no los arranques ni los arregles salvo que el issue lo pida. Tabla completa en la guía de arranque.
+> 🍦 **Mundo Helados está APAGADO hasta nueva orden** (Johan, 8 nov 2026): `bot-heladeria` y `django-heladeria` quedan detenidos en PM2. No los arranques ni con `start:safe` ni con `reiniciar_heladeria.bat` hasta que Johan lo diga. Hoy ningún bot de clientes está en producción; pescadería y pilates también están abajo a propósito. Tabla completa en la guía de arranque.
 >
 > **¿El issue es de Leo Financiero (finanzas, `finance`)?** Lee primero `bot-wasap/docs/LEO_MAPA.md`: dice qué archivo hace qué y cómo probar en ~2 min. No recorras el repo ni corras la suite completa.
 
