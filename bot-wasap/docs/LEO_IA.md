@@ -37,7 +37,7 @@ prioridad sobre el `.env` compartido. Ninguna clave se escribe en el código, en
 | `OPENROUTER_API_KEY` | Si está, Leo usa OpenRouter primero y Gemini de respaldo. | **Comentada** (`# OPENROUTER_API_KEY=...`). |
 | `FINANCE_AI_MODEL` | Modelo. Si empieza por `models/` es de Gemini; si no, de OpenRouter (ej. `google/...`). | Vacía o `models/gemini-3.1-flash-lite`. |
 | `AI_DAILY_MAX` | Tope de llamadas a la IA por día **de este bot** (se cuenta aparte en `logs/ai-usage-finance.json`). Por defecto 5000. | Ponerla baja mientras use la clave de helados, ej. `AI_DAILY_MAX=300`. |
-| `LEO_TRIAL_PROMO_UNTIL` | Último día de la promo de lanzamiento de los 15 días. | `2026-11-15` (por defecto). |
+| `LEO_TRIAL_PROMO_UNTIL` | Opcional. Último día en que los antiguos reciben los 15 días de regalo. Vacía = sin fin (#179: "dejemos los 15 días de regalo"). | Vacía (sin fin). |
 | `FINANCE_AI_USAGE_LOG` | Dónde se guarda cada llamada (tokens, costo, modelo, sin texto del usuario). | Por defecto `logs/ai-usage-finance.jsonl`. |
 
 **Después de cambiar `.env.finance`:** `pm2 restart bot-finance-telegram --update-env`. Sin `--update-env`, PM2

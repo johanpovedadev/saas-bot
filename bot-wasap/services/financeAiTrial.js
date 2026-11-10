@@ -3,12 +3,10 @@
 /**
  * 15 días de Leo con IA gratis (#143, parte C).
  *
- *  - Usuarios nuevos: al crear la cuenta reciben 15 días de IA (fotos de recibos, audios, preguntas). La promo de
- *    lanzamiento es para quien entra hasta LEO_TRIAL_PROMO_UNTIL (2026-11-15); después los nuevos también la reciben
- *    (es la regla de ahora en adelante): la fecha solo sirve para medir la promo (fin.aiTrial.promo).
- *  - Antiguos en la promo de lanzamiento (Johan, 4 nov): "para quien entre hasta el 15 de noviembre" incluye a los
- *    que ya usaban Leo. Hasta LEO_TRIAL_PROMO_UNTIL, un antiguo que nunca tuvo la prueba la recibe al escribir, mandar
- *    un audio o una foto (fuente 'lanzamiento'). Después de esa fecha, ya no.
+ *  - Usuarios nuevos: al crear la cuenta reciben 15 días de IA (fotos de recibos, audios, preguntas).
+ *  - Antiguos sin plan que nunca la tuvieron: la reciben UNA vez al volver a escribir, mandar un audio o una foto
+ *    (fuente 'lanzamiento'). Desde el 8 nov 2026 (#179, Johan: "dejemos los 15 días de regalo") esto ya no tiene fecha
+ *    de fin. LEO_TRIAL_PROMO_UNTIL ("YYYY-MM-DD") queda opcional para cortarlo un día; vacío = sin fin.
  *  - Antiguos que retoman: quien llevaba 7 días o más sin registrar y vuelve recibe 15 días UNA sola vez
  *    (fin.aiTrialReturnUsed), también después de la promo. Quien ya tiene IA por plan no cambia.
  *  - Tope de 300 interacciones en los 15 días. Aviso el día 12 y mensaje al terminar. SIN precios (#94).
@@ -21,18 +19,24 @@ const TRIAL_DAYS = 15;
 const TRIAL_CAP = 300;
 const RETURN_GAP_DAYS = 7;
 const WARN_DAYS_LEFT = 3;              // el día 12 de 15
-const DEFAULT_PROMO_UNTIL = '2026-11-15';
 const SOURCE = Object.freeze({ NEW: 'nuevo', RETURN: 'regreso', PROMO: 'lanzamiento' });
 
 const MESSAGES = Object.freeze({
     welcomeBack: '¡Volviste! 🦁 Te regalo 15 días de Leo con IA: mandame fotos de recibos o audios',
-    promo: '🎁 Por el lanzamiento te regalo 15 días de Leo con IA: mandame fotos de recibos o audios 🦁',
+    promo: '🎁 Te regalo 15 días de Leo con IA: mandame fotos de recibos o audios 🦁',
     warning: '🦁 Te quedan 3 días de Leo con IA: fotos de recibos, audios y preguntas. ¡Aprovechalos!',
     ended: 'Tu prueba con IA terminó. Seguís usando Leo gratis: anotás escribiendo, tu racha y tus metas siguen igual 🦁',
 });
 
+/** Último día del regalo a los antiguos ("YYYY-MM-DD"), o '' si no tiene fin (lo normal desde el 8 nov 2026). */
 function promoUntil() {
-    return process.env.LEO_TRIAL_PROMO_UNTIL || DEFAULT_PROMO_UNTIL;
+    return String(process.env.LEO_TRIAL_PROMO_UNTIL || '').trim();
+}
+
+/** ¿El regalo sigue abierto este día? Sin LEO_TRIAL_PROMO_UNTIL, siempre. */
+function promoOpen(today) {
+    const until = promoUntil();
+    return !until || today <= until;
 }
 
 function isoDay(now) {
@@ -46,7 +50,7 @@ function startTrial(fin, now, source) {
         startedAt: now,
         used: 0,
         source,
-        promo: source === SOURCE.PROMO || (source === SOURCE.NEW && isoDay(now) <= promoUntil()),
+        promo: source === SOURCE.PROMO || (source === SOURCE.NEW && promoOpen(isoDay(now))),
         warned: false,
         endNotified: false,
         // El nuevo ya lo lee en la bienvenida; al antiguo se le cuenta con su próximo mensaje (announcementFor).
@@ -94,7 +98,7 @@ function returnTrialDue(fin, today, now) {
 function trialDueFor(fin, today, now) {
     if (!fin || !fin.name || isActive(fin, now)) return null;
     if (returnTrialDue(fin, today, now)) return SOURCE.RETURN;
-    if (!fin.aiTrialUntil && today <= promoUntil()) return SOURCE.PROMO;
+    if (!fin.aiTrialUntil && promoOpen(today)) return SOURCE.PROMO;
     return null;
 }
 
@@ -129,5 +133,5 @@ function noticeText(notice) {
 
 module.exports = {
     TRIAL_DAYS, TRIAL_CAP, SOURCE, MESSAGES,
-    startTrial, isActive, consume, returnTrialDue, trialDueFor, announcementFor, dueNotice, noticeText, promoUntil,
+    startTrial, isActive, consume, returnTrialDue, trialDueFor, announcementFor, dueNotice, noticeText, promoUntil, promoOpen,
 };
