@@ -285,6 +285,43 @@ module.exports = {
       }
     },
     {
+      // CRM desde cualquier lado (Johan, 10 nov 2026): sirve el build de lion-platform-web (carpeta publico\\,
+      // fuera de git) y reenvía /api a Lion Platform en localhost:8081. Solo localhost y *.trycloudflare.com.
+      name: 'lion-crm-publico',
+      cwd: 'C:\\Users\\Administrador\\Documents\\lion-platform-web\\publico',
+      script: 'servidor-publico.mjs',
+      args: 'dist',
+      interpreter: 'node',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      stop_exit_codes: [78],
+      env: {
+        NODE_ENV: 'production',
+        PORT: '4173',
+        LION_API_TARGET: 'http://localhost:8081'
+      }
+    },
+    {
+      // Túnel rápido de Cloudflare hacia lion-crm-publico. La dirección cambia al reiniciar: queda en
+      // bot-wasap\\data\\tunel_crm_url.txt y le llega a Johan por Telegram (scripts/tunel-crm.js).
+      name: 'lion-crm-tunel',
+      cwd: 'C:\\Users\\Administrador\\Documents\\empanadas',
+      script: 'scripts/tunel-crm.js',
+      interpreter: 'node',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 5000,
+      min_uptime: '20s',
+      exp_backoff_restart_delay: 2000,
+      stop_exit_codes: [78],
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
       name: 'bot-dev',
       cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
       script: 'index.js',
