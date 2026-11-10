@@ -5,6 +5,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+### Agregado
+
+- **CRM desde cualquier lado**: `lion-crm-publico` (sirve el build de lion-platform-web en el 4173 y reenvía
+  `/api` a Lion Platform) y `lion-crm-tunel` (túnel rápido de Cloudflare; `scripts/tunel-crm.js` guarda la
+  dirección y se la manda a Johan por Telegram porque cambia al reiniciar). Arranque:
+  `scripts/windows/arrancar_crm_publico.bat`. Prueba: `test_tunel_crm.js`.
+
 ### Cambiado
 
 - **Leo ya no reenvía las facturas a Jarvis León (Telegram).** Johan, 10 nov 2026: los pagos del plan se hacen y el
