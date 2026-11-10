@@ -5,6 +5,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+### Corregido
+
+- **Mascotas seguía medio prendido.** Además de `bot-mascotas-prod` en PM2, quedaban el Django de mascotas
+  (`run_wsgi.py`, puerto 8001) corriendo fuera de PM2 y la tarea de Windows `empanadas-bot-mascotas`, que lo volvía
+  a prender al iniciar sesión. `detener_mascotas.bat` ahora apaga los tres (la tarea se deshabilita, no se borra).
+
 ### Agregado
 
 - **CRM desde cualquier lado**: `lion-crm-publico` (sirve el build de lion-platform-web en el 4173 y reenvía
