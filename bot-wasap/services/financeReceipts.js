@@ -10,6 +10,9 @@
 const RECEIPT_TTL_MS = 30 * 60 * 1000; // la foto vale para el gasto que se confirme en la siguiente media hora
 const MAX_ITEMS = 60;
 const MAX_RESULTS = 5;
+const MAX_SHOWN_ITEMS = 8;      // en la confirmación: 8 productos y "y N más" (#179)
+const WEEK_DAYS = 7;
+const MIN_WORD = 3;
 
 function normalize(text) {
     return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
@@ -43,6 +46,55 @@ function parseReceiptJson(text) {
     return { tienda, total, items };
 }
 
+/** Nombre para comparar: sin tildes, minúsculas, sin signos ("Leche Alquería 1L" → "leche alqueria 1l"). */
+function productKey(name) {
+    return normalize(name);
+}
+
+/**
+ * Cada producto del recibo con lo que hace falta para comparar después (#179): nombre normalizado, cantidad, precio
+ * unitario, total de la línea, tienda y fecha. `precio` (total de la línea) se mantiene por los gastos ya guardados.
+ */
+function enrichItems(items, { store, date } = {}) {
+    return (Array.isArray(items) ? items : []).map((it) => {
+        const cantidad = Number(it.cantidad) > 0 ? Number(it.cantidad) : 1;
+        const total = toAmount(it.total) || toAmount(it.precio);
+        return {
+            ...it,
+            producto: it.producto,
+            nombre: productKey(it.producto),
+            cantidad,
+            precio: total,
+            total,
+            unitario: Math.round(total / cantidad),
+            ...(store ? { tienda: store } : {}),
+            ...(date ? { fecha: date } : {}),
+        };
+    }).filter((it) => it.producto && it.total);
+}
+
+function unitPrice(it) {
+    return toAmount(it.unitario) || Math.round((toAmount(it.precio) || 0) / (Number(it.cantidad) || 1));
+}
+
+function itemLine(it, money) {
+    const cantidad = Number(it.cantidad) || 1;
+    const total = toAmount(it.total) || toAmount(it.precio);
+    return cantidad > 1
+        ? `• ${it.producto} x${cantidad} — ${money(total)} (${money(unitPrice(it))} c/u)`
+        : `• ${it.producto} — ${money(total)}`;
+}
+
+/** "🧾 Ara · $14.100" + un renglón por producto (máx. 8, el resto "y N más"). '' si el recibo no trae productos. */
+function receiptSummary({ store, total, items }, money) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return '';
+    const shown = list.slice(0, MAX_SHOWN_ITEMS).map((it) => itemLine(it, money));
+    const rest = list.length - shown.length;
+    if (rest > 0) shown.push(`y ${rest} más`);
+    return `🧾 ${store || 'Tu compra'}${total ? ` · ${money(total)}` : ''}\n${shown.join('\n')}`;
+}
+
 function purchaseLine(receipt) {
     return `Compré ${receipt.tienda} por ${receipt.total} pesos`;
 }
@@ -68,23 +120,89 @@ function cheaperQuestion(text) {
     return product.length >= 2 ? product : null;
 }
 
-/** Precio unitario más bajo por tienda para el producto, con la fecha de esa compra. */
+// Palabras que no dicen qué producto es ("leche de la entera" → "leche entera").
+const FILLER_WORDS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'con', 'sin', 'para', 'por', 'un', 'una']);
+
+function wordsOf(text) {
+    return normalize(text).split(' ').map((w) => (w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w))
+        .filter((w) => w && !FILLER_WORDS.has(w));
+}
+
+/** Una palabra buscada aparece en el nombre: igual, o abreviada en el tiquete ("alq" por "alqueria", "ent" por "entera"). */
+function wordMatches(wanted, nameWords) {
+    return nameWords.some((w) => w === wanted
+        || (w.length >= MIN_WORD && wanted.startsWith(w))
+        || (wanted.length >= MIN_WORD && w.startsWith(wanted)));
+}
+
+/**
+ * Precio unitario más bajo por tienda (#179). Primero los productos que tienen todas las palabras buscadas ("leche
+ * alqueria"); si no hay ninguno, los parecidos que comparten la primera ("leche" para "leche entera").
+ */
 function cheapestFor(transactions, product) {
-    const wanted = normalize(product).split(' ').filter((w) => w.length >= 3);
+    const wanted = wordsOf(product).filter((w) => w.length >= MIN_WORD || /\d/.test(w));
     if (!wanted.length) return [];
-    const best = new Map();
-    for (const tx of transactions || []) {
-        if (!Array.isArray(tx.items) || !tx.store) continue;
-        for (const it of tx.items) {
-            const name = normalize(it.producto);
-            if (!wanted.every((w) => name.includes(w))) continue;
-            const unit = Math.round(it.precio / (it.cantidad || 1));
-            const key = normalize(tx.store);
-            const prev = best.get(key);
-            if (!prev || unit < prev.precio) best.set(key, { tienda: tx.store, producto: it.producto, precio: unit, fecha: tx.date });
+    const collect = (words) => {
+        const best = new Map();
+        for (const tx of transactions || []) {
+            if (!Array.isArray(tx.items) || !tx.store) continue;
+            for (const it of tx.items) {
+                const nameWords = wordsOf(it.nombre || it.producto);
+                if (!words.every((w) => wordMatches(w, nameWords))) continue;
+                const unit = unitPrice(it);
+                if (!unit) continue;
+                const key = normalize(tx.store);
+                const prev = best.get(key);
+                if (!prev || unit < prev.precio) best.set(key, { tienda: tx.store, producto: it.producto, precio: unit, fecha: tx.date });
+            }
         }
+        return [...best.values()].sort((a, b) => a.precio - b.precio).slice(0, MAX_RESULTS);
+    };
+    const exact = collect(wanted);
+    return exact.length || wanted.length === 1 ? exact : collect(wanted.slice(0, 1));
+}
+
+const WEEK_PATTERN = /^\s*(?:mis\s+)?compras\s+(?:de\s+)?(?:la|esta)\s+semana\s*[?.!]*\s*$|^\s*[¿]?\s*qu[eé]\s+compr[eé]\s+(?:esta|en\s+la)\s+semana\s*[?.!]*\s*$/i;
+
+/** "mis compras de la semana" / "¿qué compré esta semana?". */
+function isWeekPurchasesRequest(text) {
+    return WEEK_PATTERN.test(String(text || ''));
+}
+
+function addDays(isoDate, days) {
+    const d = new Date(`${isoDate}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+}
+
+/** Productos de los últimos 7 días (hoy incluido) agrupados por tienda, la tienda donde más gastaste primero. */
+function weekPurchases(transactions, today) {
+    const from = addDays(today, -(WEEK_DAYS - 1));
+    const stores = new Map();
+    for (const tx of transactions || []) {
+        if (tx.type !== 'expense' || !Array.isArray(tx.items) || !tx.items.length) continue;
+        if (!tx.date || tx.date < from || tx.date > today) continue;
+        const name = tx.store || 'Sin tienda';
+        const key = normalize(name);
+        const group = stores.get(key) || { tienda: name, compras: 0, total: 0, items: [] };
+        group.compras += 1;
+        group.total += Number(tx.amount) || 0;
+        group.items.push(...tx.items);
+        stores.set(key, group);
     }
-    return [...best.values()].sort((a, b) => a.precio - b.precio).slice(0, MAX_RESULTS);
+    return [...stores.values()].sort((a, b) => b.total - a.total);
+}
+
+function formatWeekPurchases(groups, money) {
+    if (!groups.length) {
+        return '🛒 Esta semana no tengo productos tuyos todavía.\nMandame la *foto del recibo* cuando compres y te los guardo uno por uno 🦁';
+    }
+    const blocks = groups.map((g) => {
+        const shown = g.items.slice(0, MAX_SHOWN_ITEMS).map((it) => itemLine(it, money));
+        if (g.items.length > shown.length) shown.push(`y ${g.items.length - shown.length} más`);
+        return `🧾 *${g.tienda}* · ${money(g.total)} (${g.compras === 1 ? '1 compra' : `${g.compras} compras`})\n${shown.join('\n')}`;
+    });
+    return `🛒 *Tus compras de la semana*\n\n${blocks.join('\n\n')}\n\n_Escribí "precio de la leche" para comparar entre tiendas._`;
 }
 
 function formatCheaper(product, results, money) {
@@ -127,4 +245,6 @@ function parseTicketWithoutTotal(text) {
     return { tienda, description: known ? known.description : tienda, category: known ? known.category : '' };
 }
 
-module.exports = { parseReceiptJson, parseTicketWithoutTotal, purchaseLine, receiptExtraFor, cheaperQuestion, cheapestFor, formatCheaper, RECEIPT_PROMPT, RECEIPT_TTL_MS };
+module.exports = {
+    productKey, enrichItems, receiptSummary, isWeekPurchasesRequest, weekPurchases, formatWeekPurchases,
+    parseReceiptJson, parseTicketWithoutTotal, purchaseLine, receiptExtraFor, cheaperQuestion, cheapestFor, formatCheaper, RECEIPT_PROMPT, RECEIPT_TTL_MS };
