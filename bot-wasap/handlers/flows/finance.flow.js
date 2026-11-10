@@ -309,35 +309,7 @@ async function notifyHumanEscalation(sock, jid, reason, ctx) {
         `${reason}`);
 }
 
-async function sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption) {
-    const token = process.env.HERMES_BOT_TOKEN;
-    if (!token) return false;
-    try {
-        const buf = Buffer.from(base64Data, 'base64');
-        const form = new FormData();
-        form.append('chat_id', String(chatId));
-        if (caption) form.append('caption', caption);
-        form.append('photo', new Blob([buf], { type: mimetype || 'image/jpeg' }), 'recibo.jpg');
-        const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
-        const data = await res.json();
-        if (!data.ok) {
-            logger.error(`[sendTelegramPhotoViaJarvis] API: ${data.description}`);
-            return false;
-        }
-        return true;
-    } catch (e) {
-        logger.error(`[sendTelegramPhotoViaJarvis] ${e.message}`);
-        return false;
-    }
-}
 
-/**
- * Reenvia al admin (Johan) la foto de un recibo/factura que un usuario le
- * mandó a Leo, junto con lo que la IA entendió (monto/categoria) — para que
- * pueda auditar. Se llama SIEMPRE que un usuario manda una imagen (no solo
- * cuando falla la lectura), vía el mismo canal (Jarvis) que el resto de
- * notificaciones a admin.
- */
 // Respuestas cortas para la foto o el audio sin texto que registrar (#144, 5 nov). Máx. 2 líneas, voseo, sin culpa.
 const MEDIA_TEXT = {
     photoNoAmount: (store) => `📷 Es el tiquete de *${store}*, pero no trae el valor.\n¿Cuánto pagaste?`,
@@ -387,23 +359,6 @@ async function handleMediaOutcome(sock, jid, t, userSession, ctx, fin) {
     return true;
 }
 
-async function notifyAdminReceipt(sock, jid, userSession, ctx, base64Data, mimetype, rawSummary) {
-    const summaryText = MEDIA_SUMMARY[rawSummary] || rawSummary;
-    const label = getTelegramLabel(userSession, jid);
-    const caption = `🧾 *Recibo de Leo Financiero* 🦁\n\n👤 Usuario: ${label}\n🆔 ID: ${String(jid).split('@')[0]}\n\n${summaryText || '(sin lectura de la IA)'}`;
-    for (const adminJid of getAdminJids()) {
-        try {
-            if (String(adminJid).endsWith('@telegram')) {
-                const chatId = String(adminJid).split('@')[0];
-                const sent = await sendTelegramPhotoViaJarvis(chatId, base64Data, mimetype, caption);
-                if (sent) continue;
-            }
-            await sock.sendMessage(adminJid, { data: base64Data, mimetype: mimetype || 'image/jpeg', filename: 'recibo.jpg' }, { caption });
-        } catch (e) {
-            logger.error(`[notifyAdminReceipt] Error notificando a ${adminJid}: ${e.message}`);
-        }
-    }
-}
 
 async function notifyNewUser(sock, jid, userSession, ctx) {
     const label = getTelegramLabel(userSession, jid);
@@ -432,8 +387,8 @@ async function showPremiumRequired(sock, jid, ctx) {
         `📲 *Cómo pagar:*\n` +
         `1️⃣ Nequi: *${payment.nequi}*${payment.nequiAlias ? ` (${payment.nequiAlias})` : ''}\n` +
         (payment.bancolombia ? `2️⃣ Bancolombia: *${payment.bancolombia}*${payment.bancolombiaName ? ` (${payment.bancolombiaName})` : ''}\n` : `2️⃣ Bancolombia: (configurar)\n`) +
-        `3️⃣ Enviá la *captura del pago* por este chat` +
-        (waLink ? `, o por WhatsApp acá (ya te lleva con el mensaje listo): ${waLink}\n` : '.\n') +
+        // Johan, 10 nov 2026: el comprobante va directo a su WhatsApp (no por este chat ni reenviado por Jarvis).
+        `3️⃣ Mandá la *captura del pago* por WhatsApp: ${waLink || 'wa.me/573138777115'}\n` +
         `4️⃣ Te activamos tu plan en minutos. 🦁\n\n` +
         `_Escribí "Actualizar a Pro" cuando hayas pagado._`, ctx);
 }
@@ -2613,7 +2568,6 @@ module.exports = {
     handle,
     handleUnknown,
     showWelcome,
-    notifyAdminReceipt,
     notifyHumanEscalation,
     generateNightReport,
     startNightReporter,
