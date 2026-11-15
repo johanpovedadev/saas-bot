@@ -14,7 +14,9 @@
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { resolveWwebjs, wwebjsVersion } = require('./lion-readonly-wwebjs');
+const WWEBJS = resolveWwebjs();
+const { Client, LocalAuth } = require(WWEBJS.request);
 const qrcode = require('qrcode');
 
 const leadsTracker = require('./lion-leads-readonly');
@@ -91,10 +93,13 @@ function startReadOnlyStatusServer() {
 
 function start() {
     console.log(`[lion-readonly-bot] usando sesion: ${AUTH_DIR}`);
+    console.log(`[lion-readonly-bot] whatsapp-web.js ${wwebjsVersion(WWEBJS.request)}${WWEBJS.separate ? ' (copia aparte del escucha)' : ''}`);
 
     const client = new Client({
         authStrategy: new LocalAuth({ dataPath: AUTH_DIR }),
         authTimeoutMs: 600000,
+        // Con la copia aparte no se usa la página de WhatsApp Web guardada en .wwebjs_cache (puede ser vieja).
+        ...(WWEBJS.separate ? { webVersionCache: { type: 'none' } } : {}),
         puppeteer: {
             executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             headless: false,
@@ -121,6 +126,11 @@ function start() {
             console.log(url);
         });
     });
+
+    // Para saber dónde se queda cuando no conecta (14 nov 2026): escaneado, cargando, estado.
+    client.on('authenticated', () => console.log('[lion-readonly-bot] QR escaneado: sesión autenticada, cargando chats...'));
+    client.on('loading_screen', (percent, message) => console.log(`[lion-readonly-bot] cargando ${percent}% ${message || ''}`));
+    client.on('change_state', (state) => console.log('[lion-readonly-bot] estado:', state));
 
     client.on('ready', () => {
         connected = true;
