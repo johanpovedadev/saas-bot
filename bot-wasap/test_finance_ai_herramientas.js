@@ -167,7 +167,7 @@ const gasto = (monto, descripcion, extra = {}) => ({ name: 'registrar_gasto', ar
         resetUser();
         await send('mercado 80 mil con tarjeta', [gasto(80000, 'mercado', { medio: 'tarjeta' })]);
         assert.strictEqual(saved()[0].medium, 'tarjeta');
-        assert.strictEqual(financeStore.loadFinance(JID).balance, 500000, 'con tarjeta de crédito no baja el saldo');
+        assert.strictEqual(financeStore.loadFinance(JID).balance, 500000 - 80000, 'con tarjeta baja el saldo como cualquier gasto (10 nov 2026)');
         resetUser();
         await send('almuerzo 15 mil', [gasto(15000, 'almuerzo')]);
         r = await send('no, fue 18 mil', [{ name: 'corregir_ultimo', args: { campo: 'monto', valor: '18 mil' } }]);
@@ -177,7 +177,7 @@ const gasto = (monto, descripcion, extra = {}) => ({ name: 'registrar_gasto', ar
         // corregir_ultimo con un monto inventado: no.
         r = await send('corregilo', [{ name: 'corregir_ultimo', args: { campo: 'monto', valor: '99000' } }]);
         assert.deepStrictEqual(saved().map((t) => t.amount), [18000], r);
-        console.log('OK: el medio de pago se guarda (la tarjeta no baja el saldo) y corregir_ultimo cambia lo último, anclado');
+        console.log('OK: el medio de pago se guarda (la tarjeta baja el saldo como cualquier gasto) y corregir_ultimo cambia lo último, anclado');
 
         // --- 8. Charla sin cifras inventadas, y consultas con los datos ---
         resetUser();

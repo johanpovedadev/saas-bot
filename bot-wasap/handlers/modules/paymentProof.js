@@ -67,7 +67,8 @@ function buildCaption(jid, userSession, context, customerCaption, monto) {
         `👤 Cliente: ${nombre ? nombre + ' · ' : ''}${numberOf(jid)}`
     ];
     if (context) {
-        lines.push(`📦 ${context.estado[0].toUpperCase()}${context.estado.slice(1)}${context.productos ? ': ' + context.productos : ''}`);
+        lines.push(`${context.icono || '📦'} ${context.estado[0].toUpperCase()}${context.estado.slice(1)}${context.productos ? ': ' + context.productos : ''}`);
+        for (const extra of context.lineas || []) lines.push(extra);
         if (context.total) lines.push(`💰 Total del pedido: $${Number(context.total).toLocaleString('es-CO')}`);
         if (context.pago) lines.push(`💳 Pago: ${context.pago}`);
     } else {
@@ -104,6 +105,9 @@ async function handleVoiceNote(sock, jid, media, ctx, deps) {
  * @param {Object} [deps] inyectable para pruebas
  * @param {(data:string, mime:string) => Promise<{isPaymentProof:boolean, monto:number|null}|null>} [deps.classify]
  * @param {(data:string, mime:string) => Promise<string|null>} [deps.transcribe]
+ * @param {(userSession:Object, ctx:Object, jid:string) => (Object|null|Promise<Object|null>)} [deps.describeContext]
+ *   contexto propio del negocio para el aviso (citas: la clienta y su paquete). Por defecto, el pedido del carrito.
+ * @param {string} [deps.ack] mensaje al cliente cuando el comprobante llegó a la dueña.
  * @returns {Promise<{text: string}|undefined>} con un audio entendido devuelve el texto para que el handler lo
  *   procese como mensaje escrito; en cualquier otro caso no devuelve nada.
  */
@@ -111,7 +115,9 @@ async function handleMedia(sock, jid, media, userSession, ctx, deps = {}) {
     if (media.type === 'audio') return handleVoiceNote(sock, jid, media, ctx, deps);
 
     const classify = deps.classify || require('../../services/heladeriaAi').classifyPaymentProof;
-    const context = describeOrderContext(userSession, ctx, jid);
+    const describe = deps.describeContext || describeOrderContext;
+    let context = null;
+    try { context = await describe(userSession, ctx, jid); } catch (e) { logger.warn(`[${jid}] Sin contexto para el comprobante: ${e.message}`); }
 
     let file = null;
     try { file = await media.download(); } catch (e) { logger.warn(`[${jid}] No se pudo descargar la imagen: ${e.message}`); }
@@ -150,7 +156,7 @@ async function handleMedia(sock, jid, media, userSession, ctx, deps = {}) {
         details: { conPedido: !!context, detectadoPorIA: !!verdict, monto: verdict ? verdict.monto : null, entregadoA: delivered, destinatarios: recipients.length }
     });
 
-    if (delivered > 0) await say(sock, jid, CUSTOMER_ACK, ctx);
+    if (delivered > 0) await say(sock, jid, deps.ack || CUSTOMER_ACK, ctx);
 }
 
 module.exports = { handleMedia, VOICE_NOT_UNDERSTOOD, describeOrderContext, proofRecipients, buildCaption, CUSTOMER_ACK, RECENT_ORDER_WINDOW_MS };
