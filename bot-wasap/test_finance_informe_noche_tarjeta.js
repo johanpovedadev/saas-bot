@@ -53,7 +53,7 @@ const lastReport = () => [...sent].reverse().find((m) => typeof m === 'string') 
         await generateNightReport(sock, '573000009555@telegram', fin, { sessions: {} });
         const report = lastReport();
         assert.ok(/Compraste: \$\s*37\.500/.test(report), `suma las compras de hoy: tarjeta + efectivo, sin las de otros días (${report})`);
-        assert.ok(/Con tarjeta \(lo pagás a fin de mes\): \$\s*33\.500/.test(report), 'separa cuánto fue con tarjeta');
+        assert.ok(/Con tarjeta: \$\s*33\.500/.test(report), 'separa cuánto fue con tarjeta');
         assert.ok(/En efectivo: \$\s*4\.000/.test(report), 'y cuánto en efectivo');
         assert.ok(/Te entró: \$\s*20\.000/.test(report));
         assert.ok(/Te queda: \$\s*280\.710/.test(report), 'cierra con cuánto le queda');

@@ -82,7 +82,7 @@ const buttonNumber = (reply, label) => (reply.match(new RegExp(`(\\d)️⃣ [^\\
         const tx = all.transactions[all.transactions.length - 1];
         assert.deepStrictEqual([tx.amount, tx.description, tx.category, tx.medium, tx.date], [6000, 'Parqueadero', 'Transporte', 'tarjeta', TODAY], JSON.stringify(tx));
         assert.ok(/Registrado/.test(r) && /Corregir/.test(r), `confirma con ✏️ Corregir: ${r}`);
-        assert.strictEqual(all.balance, 500000, 'con tarjeta no baja el saldo');
+        assert.strictEqual(all.balance, 500000 - 6000, 'con tarjeta baja el saldo como cualquier gasto (10 nov 2026)');
         console.log('OK: tocar "🅿️ Parqueadero $6.000" lo registra con su categoría y medio, con ✏️ Corregir');
 
         // --- 3. Después del menú, sin mover los números de siempre ---

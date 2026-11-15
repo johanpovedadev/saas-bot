@@ -1,11 +1,10 @@
 'use strict';
 /**
- * Johan, 1 nov 2026: "no aparece lo de mi sueldo" y "toca validar lo de la tarjeta (600 o millón algo)".
- *  - Un ingreso que entra por la bandeja suma al saldo; un gasto con banco/efectivo resta; con tarjeta no.
+ * Johan, 1 nov 2026: "no aparece lo de mi sueldo". 10 nov 2026: "quita lo de la tarjeta".
+ *  - Un ingreso que entra por la bandeja suma al saldo; un gasto resta, con tarjeta o sin ella.
  *  - "saldo" en la bandeja o "mi saldo es X" en el chat fija el saldo real.
- *  - Con el extracto cargado, el informe muestra el pago total, el mínimo y la fecha (no el estimado de 30 días),
- *    más las compras nuevas que van al próximo extracto.
- *  - "pagué la tarjeta" baja el saldo y lo pendiente, y NO cuenta como gasto.
+ *  - El extracto ("tarjeta" en la bandeja) ya no se usa: se ignora y el informe no habla de él.
+ *  - "pagué la tarjeta" no toca el saldo ni cuenta como gasto (las compras ya restaron).
  * Base temporal, ID de prueba, IA simulada. Uso: node test_finance_saldo_y_extracto.js
  */
 const assert = require('assert');
@@ -22,7 +21,6 @@ process.env.FINANCE_ENCRYPTION_KEY = process.env.FINANCE_ENCRYPTION_KEY || crypt
 
 const financeStore = require('./services/financeStore');
 const insights = require('./services/financeInsights');
-const card = require('./services/financeCardStatement');
 const { processInbox } = require('./services/financeEmailInbox');
 const financeFlow = require('./handlers/flows/finance.flow.js');
 const financeAdmin = require('./services/financeAdmin');
@@ -59,45 +57,34 @@ function drop(name, data) {
             { sourceId: 'v1', type: 'expense', amount: 9999, date: today, description: 'Viejo', medium: 'banco', afectaSaldo: false }
         ] });
         await processInbox({ jid: JID, dir: INBOX, ownMarkers: [] });
-        assert.strictEqual(financeStore.loadFinance(JID).balance, 142752 + 1656000 - 6000, 'sueldo suma, banco resta, tarjeta e historia vieja no');
+        assert.strictEqual(financeStore.loadFinance(JID).balance, 142752 + 1656000 - 6000 - 15900, 'sueldo suma, banco y tarjeta restan, historia vieja no');
         drop('a2.json', { movimientos: [{ sourceId: 's1', type: 'income', amount: 1656000, date: today, description: 'Sueldo', medium: 'banco' }] });
         await processInbox({ jid: JID, dir: INBOX, ownMarkers: [] });
-        assert.strictEqual(financeStore.loadFinance(JID).balance, 142752 + 1656000 - 6000, 'repetido no vuelve a sumar');
-        console.log('OK: el sueldo que entra por la bandeja suma al saldo; la tarjeta no lo toca; repetido no suma dos veces');
+        assert.strictEqual(financeStore.loadFinance(JID).balance, 142752 + 1656000 - 6000 - 15900, 'repetido no vuelve a sumar');
+        console.log('OK: el sueldo que entra por la bandeja suma al saldo; los gastos restan (también con tarjeta); repetido no suma dos veces');
 
-        // --- 2. Saldo real y extracto por la bandeja ---
-        const corte = '2026-10-29';
-        const fechaPago = '2099-11-10';
-        drop('b.json', { saldo: 1726057, tarjeta: { cuenta: 'RappiCard', pagoTotal: 1129757, pagoMinimo: 1048257, fechaPago, corte, cupo: 1200000 } });
-        await processInbox({ jid: JID, dir: INBOX, ownMarkers: [] });
+        // --- 2. Saldo real por la bandeja; el extracto se ignora ---
+        drop('b.json', { saldo: 1726057, tarjeta: { cuenta: 'RappiCard', pagoTotal: 1129757, pagoMinimo: 1048257, fechaPago: '2099-11-10', corte: '2026-10-29' } });
+        const res = await processInbox({ jid: JID, dir: INBOX, ownMarkers: [] });
+        assert.ok(!res[0].error, 'un archivo con "tarjeta" no da error: se ignora');
         let fin = financeStore.loadFinance(JID);
         assert.strictEqual(fin.balance, 1726057, 'el saldo real manda');
-        assert.strictEqual(fin.cardStatement.pagoTotal, 1129757, 'el extracto queda guardado (cifrado)');
-        drop('malo.json', { tarjeta: { cuenta: 'X' } });
-        const malo = await processInbox({ jid: JID, dir: INBOX, ownMarkers: [] });
-        assert.ok(malo[0].error, 'un extracto sin datos no se acepta');
-
-        const info = card.owed(fin, today);
-        assert.strictEqual(info.pendiente, 1129757);
-        assert.strictEqual(info.nuevas, 15900, 'la compra con tarjeta de hoy va al próximo extracto');
         const report = insights.formatSpendingReport(insights.buildSpendingReport(fin, today), fin);
-        assert.ok(/RappiCard:\* pagá \$\s?1\.129\.757 antes del \*10 nov\* \(mínimo \$\s?1\.048\.257\)/.test(report), report);
-        assert.ok(/\$\s?15\.900 de compras nuevas/.test(report), report);
-        assert.ok(!card.owed({ ...fin, cardStatement: { ...fin.cardStatement, fechaPago: '2020-01-01' } }, today), 'un extracto vencido no se muestra');
-        console.log('OK: con el extracto, el informe dice el total, el mínimo y la fecha reales, más las compras nuevas');
+        assert.ok(!/extracto|antes del|te quedar[ií]a|lo pagás a fin de mes/i.test(report), `el informe ya no habla de la tarjeta: ${report}`);
+        assert.ok(/💳 Tarjeta: \$\s?15\.900/.test(report), `las compras con tarjeta se ven como un medio de pago más: ${report}`);
+        console.log('OK: el saldo real por la bandeja manda; el extracto se ignora y el informe no lo menciona');
 
         // --- 3. En el chat ---
         financeAdmin.registerUser(JID, 'Prueba');
         ctx.sessions[JID] = {};
         let r = await send('Mi saldo es 1.700.000');
         assert.ok(/saldo quedó en \$\s?1\.700\.000/.test(r), r);
-        r = await send('pagué la tarjeta');
-        assert.ok(/Pago de la tarjeta: \$\s?1\.129\.757/.test(r) && /Extracto pagado completo/.test(r) && /No lo cuento como gasto/.test(r), r);
+        r = await send('pagué la tarjeta 1.129.757');
+        assert.ok(/No lo resto otra vez/.test(r), r);
         fin = financeStore.loadFinance(JID);
-        assert.strictEqual(fin.balance, 1700000 - 1129757);
-        assert.ok(!fin.transactions.some((t) => t.type === 'expense' && t.amount === 1129757), 'el pago no es un gasto');
-        assert.strictEqual(card.owed(fin, today), null, 'extracto pagado: ya no se muestra');
-        console.log('OK: "mi saldo es X" fija el saldo y "pagué la tarjeta" lo baja sin contarlo como gasto');
+        assert.strictEqual(fin.balance, 1700000, 'pagar la tarjeta no toca el saldo');
+        assert.ok(!fin.transactions.some((t) => t.amount === 1129757), 'el pago no se anota');
+        console.log('OK: "mi saldo es X" fija el saldo y "pagué la tarjeta" no lo toca ni cuenta como gasto');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

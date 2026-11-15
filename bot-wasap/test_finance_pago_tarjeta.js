@@ -1,9 +1,9 @@
 'use strict';
 /**
- * Pagar la tarjeta no es un gasto (Johan, 5 nov 2026). Pagó el extracto de la RappiCard y Leo lo anotó como un gasto
- * más en "Otros": las compras con tarjeta quedaron contadas dos veces y el extracto seguía "por pagar".
- * La dinámica: una compra con tarjeta es un gasto el día que se hace, pero no baja el saldo; pagar la tarjeta baja
- * el saldo y el extracto, y NO es un gasto.
+ * Pagar la tarjeta no es un gasto (Johan, 5 nov 2026: Leo lo anotó como un gasto más en "Otros").
+ * Desde el 10 nov 2026 Leo ya no lleva extracto ("quita lo de la tarjeta, es muy complicado para todos"): cada
+ * compra baja el saldo el día que se hace, con tarjeta o sin ella. Por eso "pagué la tarjeta" no anota nada ni
+ * toca el saldo: esas compras ya estaban contadas.
  * Base temporal, sin IA. Uso: node test_finance_pago_tarjeta.js
  */
 const assert = require('assert');
@@ -21,7 +21,6 @@ process.env.FINANCE_ENCRYPTION_KEY = process.env.FINANCE_ENCRYPTION_KEY || crypt
 process.env.TIME_WRITING_SIMULATION_MS = '1';
 
 const PHASE = require('./utils/phases');
-const cardStatement = require('./services/financeCardStatement');
 const financeStore = require('./services/financeStore');
 const financeFlow = require('./handlers/flows/finance.flow.js');
 const financeAdmin = require('./services/financeAdmin');
@@ -34,9 +33,8 @@ const sock = { sendMessage: async (jid, payload) => { if (typeof payload === 'st
 const ctx = { sessions: {}, mutedChats: new Set(), carts: {}, lastSent: {}, botEnabled: true, order: {}, geminiKey: null, geminiAvailable: false, productsCache: [] };
 
 function resetUser() {
-    const statement = cardStatement.sanitizeStatement({ cuenta: 'RappiCard', pagoTotal: 1129757, pagoMinimo: 1048257, fechaPago: shiftDay(TODAY, 5), corte: shiftDay(TODAY, -10) });
     financeStore.saveFinance(JID, {
-        name: 'Prueba', balance: 2000000, todaySpending: 0, loans: [], lastCheckinDate: TODAY, firstTransactionDone: true, cardStatement: statement,
+        name: 'Prueba', balance: 2000000, todaySpending: 0, loans: [], lastCheckinDate: TODAY, firstTransactionDone: true,
         transactions: [{ type: 'expense', amount: 703517, date: shiftDay(TODAY, -12), description: 'Compras', category: 'Comida', medium: 'tarjeta' }],
     });
     ctx.sessions[JID] = { phase: PHASE.FIN_MAIN };
@@ -63,27 +61,23 @@ const expenses = () => financeStore.loadFinance(JID).transactions.filter((t) => 
             const r = await send(phrase);
             const fin = financeStore.loadFinance(JID);
             assert.strictEqual(expenses().length, 1, `"${phrase}" no es un gasto: ${r}`);
-            assert.ok(fin.transactions.some((t) => t.type === 'pago_tarjeta' && t.amount === 1129757), `"${phrase}" queda como pago de tarjeta: ${r}`);
-            assert.strictEqual(fin.balance, 2000000 - 1129757, `"${phrase}" baja el saldo`);
-            assert.ok(/Extracto pagado completo/.test(r) && /No lo cuento como gasto/.test(r), `"${phrase}": ${r}`);
+            assert.strictEqual(fin.transactions.length, 1, `"${phrase}" no anota nada: ${r}`);
+            assert.strictEqual(fin.balance, 2000000, `"${phrase}" no toca el saldo`);
+            assert.ok(/No lo resto otra vez/.test(r) && /Saldo: \$\s?2\.000\.000/.test(r), `"${phrase}": ${r}`);
+            assert.ok(!/extracto|antes del|mínimo/i.test(r), `"${phrase}" ya no habla de extracto: ${r}`);
         }
-        console.log(`OK: las ${PHRASES.length} formas de decir "pagué la tarjeta" bajan el saldo y el extracto, sin contarlo como gasto`);
+        console.log(`OK: las ${PHRASES.length} formas de decir "pagué la tarjeta" no anotan un gasto ni tocan el saldo`);
 
-        // Un abono parcial deja lo que falta.
-        resetUser();
-        let r = await send('aboné 500 mil a la tarjeta');
-        assert.ok(/Te falta \$629\.757 del extracto/.test(r), `abono parcial: ${r}`);
-        console.log('OK: un abono parcial dice cuánto falta del extracto');
-
-        // Una compra CON tarjeta sí es un gasto (y no baja el saldo).
+        let r;
+        // Una compra CON tarjeta sí es un gasto y baja el saldo como cualquier otra.
         for (const phrase of ['almuerzo 20 mil con tarjeta', 'pagué con tarjeta 20 mil el almuerzo']) {
             resetUser();
             r = await send(phrase);
             const fin = financeStore.loadFinance(JID);
             assert.strictEqual(expenses().length, 2, `"${phrase}" sí es un gasto: ${r}`);
-            assert.ok(!fin.transactions.some((t) => t.type === 'pago_tarjeta'), `"${phrase}" no es un pago de tarjeta`);
+            assert.strictEqual(fin.balance, 2000000 - 20000, `"${phrase}" baja el saldo`);
         }
-        console.log('OK: una compra con tarjeta sigue siendo un gasto, no un pago de la tarjeta');
+        console.log('OK: una compra con tarjeta es un gasto y baja el saldo como cualquier otra');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

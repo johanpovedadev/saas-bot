@@ -7,6 +7,47 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Agregado
 
+- **Chats de WhatsApp → Lion Platform**: app de PM2 `agentvents-importar-chats` (cada 15 min, sin reinicio
+  automático) que importa los chats que deja la tarea programada de Claude (lee el WhatsApp Web de Johan en su
+  Chrome). Se arranca con `arrancar_informes_crm.bat`. Lógica en AGentVents (johanpovedadev/AGentVents#10).
+
+### Corregido
+
+- **El escucha de WhatsApp no se dejaba vincular** (QR pegado, error en el celular). Ahora puede usar una copia
+  aparte de whatsapp-web.js (1.34.8, salió el 12 nov) en `bot-wasap/escucha_lib`, sin tocar la librería de Mundo
+  Helados (`lion-readonly-wwebjs.js`, variable `LION_READONLY_WWEBJS_DIR`). La instala y reinicia el escucha
+  `scripts/windows/escucha_libreria_nueva.bat`. El log ahora dice la versión, cuándo se escaneó el QR y el % de carga.
+  Prueba: `test_escucha_libreria_aparte.js`.
+
+### Corregido
+
+- **Mascotas seguía medio prendido.** Además de `bot-mascotas-prod` en PM2, quedaban el Django de mascotas
+  (`run_wsgi.py`, puerto 8001) corriendo fuera de PM2 y la tarea de Windows `empanadas-bot-mascotas`, que lo volvía
+  a prender al iniciar sesión. `detener_mascotas.bat` ahora apaga los tres (la tarea se deshabilita, no se borra).
+
+### Agregado
+
+- **Bri Pilates: audios y comprobantes, como Mundo Helados.** Los dos bots de pilates ahora transcriben las notas
+  de voz (siguen como texto) y reenvían a Bri los comprobantes de pago con la clienta y su paquete del mes
+  (`handlers/modules/pilatesMedia.js`). El bot no carga clases ni valida pagos: Bri revisa en su banco.
+  `paymentProof.js` acepta un contexto y un aviso propios del negocio. Prueba: `test_pilates_audios_comprobantes.js`.
+- **CRM desde cualquier lado**: `lion-crm-publico` (sirve el build de lion-platform-web en el 4173 y reenvía
+  `/api` a Lion Platform) y `lion-crm-tunel` (túnel rápido de Cloudflare; `scripts/tunel-crm.js` guarda la
+  dirección y se la manda a Johan por Telegram porque cambia al reiniciar). Arranque:
+  `scripts/windows/arrancar_crm_publico.bat`. Prueba: `test_tunel_crm.js`.
+
+### Cambiado
+
+- **Leo ya no reenvía las facturas a Jarvis León (Telegram).** Johan, 10 nov 2026: los pagos del plan se hacen y el
+  comprobante se manda por WhatsApp al número de soporte; el paso 3 del pago lo dice con el enlace.
+
+### Agregado
+
+- **Informes del CRM en el PC**: `agentvents-seguimientos` (lunes a sábado 7:45 a. m.), `agentvents-ventas` y
+  `agentvents-marketing` (lunes) en `ecosystem.config.js`, con cron de PM2 y sin reinicio automático. Mandan a
+  Telegram los seguimientos vencidos y los informes de AGentVents. Se arrancan con
+  `scripts/windows/arrancar_informes_crm.bat` (exige AGentVents en `main`). Antes corrían en GitHub Actions, que no
+  alcanza Lion Platform en localhost, y fallaban a diario.
 - **Agente de IA de Ricuras del Pacífico** (restaurante) sobre el mismo núcleo de carrito que Mundo Helados, con
   presentador conversacional, política de audio y comprobantes, avisos claros a la dueña y seguridad. Viene apagado
   (`PESCADERIA_AI_AGENT`); ver `bot-wasap/docs/agente_ricuras_pescaderia.md`.
@@ -35,6 +76,48 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 - Dos unidades iguales salen como una línea "2x" en el resumen y en el aviso a la dueña.
 - Textos de heladería (🍨, "Empanada de pollo") en negocios que no son heladería.
 - El aviso a la dueña ahora usa el nombre que el cliente dio al saludar.
+
+## [1.12.0] - 2026-11-10
+
+### Cambiado
+
+- **Leo ya no maneja la tarjeta aparte** (Johan: "es muy complicado para todos los usuarios"). Sin extracto, fecha de
+  pago ni "te quedaría al pagar": cada gasto baja el saldo el día que se hace, con tarjeta o sin ella (chat y bandeja
+  de correos). "Pagué la tarjeta" ya no anota nada ni toca el saldo, porque las compras ya restaron.
+- **La confirmación dice de frente si fue GASTO o INGRESO**: "Registrado como INGRESO: 💰 +$9.200" y el saldo antes →
+  después. Un ingreso de DiDi con categoría "Servicios" parecía un gasto y terminó anotado 3 veces.
+
+## [1.11.1] - 2026-11-09
+
+### Corregido
+
+- **Mundo Helados no leía audios ni fotos (comprobantes) desde el 28 sep 2026.** Con whatsapp-web.js 1.34.7 (la
+  última publicada) `Message.downloadMedia()` falla con "t: t" porque WhatsApp Web cambió su descargador interno.
+  `utils/waMediaDownload.js` agrega como respaldo el arreglo oficial de wwebjs (PR #201697, en `main`, sin versión
+  publicada): descarga con el método del propio mensaje y lee la caché en memoria de WhatsApp Web. Primero se intenta
+  lo normal; si falla, el camino nuevo. No se parchea `node_modules`. Prueba: `test_descarga_media_respaldo.js`.
+
+## [1.11.0] - 2026-11-08
+
+### Agregado
+
+- **Escucha de WhatsApp: historial guardado y estudio de la IA de Meta (#186).** El escucha de solo lectura guarda
+  cada mensaje cifrado (AES-256-GCM, teléfono buscado por HMAC) por 30 días (`LION_READONLY_RETENTION_DAYS`), así el
+  CRM no pierde las conversaciones al reiniciar. Marca quién escribió cada mensaje (cliente / IA de Meta / tu número
+  sin marca) sin adivinar, y guarda los nombres de las marcas que trae cada mensaje para descubrir la de Meta.
+  `node scripts/estudio_ia_meta.js` arma un informe semanal con lo que más preguntan, cómo y qué tan rápido
+  responde la IA de Meta y cuándo entra Johan, con los teléfonos enmascarados. Sin clave no guarda nada; los bots de
+  clientes siguen solo en RAM.
+
+## [1.10.3] - 2026-11-08
+
+### Agregado
+
+- `scripts/windows/arrancar_escucha_whatsapp.bat` y `detener_escucha_whatsapp.bat`: prenden y apagan el escucha de
+  WhatsApp de solo lectura (`lion-readonly-bot.js`, PM2 `lion-escucha-whatsapp`, puerto 8099) que le pasa los
+  prospectos al CRM Lion Platform. Revisa que el puerto esté libre, crea un token propio en `bot-wasap/.env.escucha`
+  (reemplaza el de ejemplo que quedó en la migración V12 de Lion Platform) y limita los reintentos a 3, espaciados.
+- `scripts/windows/detener_mascotas.bat`: apaga el bot de Mascotas hasta nueva orden.
 
 ## [1.10.2] - 2026-11-06
 
