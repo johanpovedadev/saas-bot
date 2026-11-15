@@ -27,7 +27,7 @@ curl -s -m 5 -o nul -w "Lion Platform: HTTP %%{http_code}\n" http://localhost:80
 
 REM 3) Arrancar por el arranque seguro del ecosistema (valida puertos y que esten en ecosystem.config.js)
 pushd "%ROOT%"
-call npm run start:safe -- agentvents-seguimientos agentvents-ventas agentvents-marketing >> "%LOG%" 2>&1
+call npm run start:safe -- agentvents-seguimientos agentvents-ventas agentvents-marketing agentvents-importar-chats >> "%LOG%" 2>&1
 popd
 call pm2 save >> "%LOG%" 2>&1
 timeout /t 20 /nobreak >nul
