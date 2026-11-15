@@ -38,12 +38,15 @@ function parseReceiptJson(text) {
     const total = toAmount(data && data.total);
     const tienda = String((data && data.tienda) || '').trim().slice(0, 60);
     if (!total || !tienda) return null;
+    // Razón social y NIT del papel (#179, parte B): con eso Leo sabe que "JERONIMO MARTINS" es Ara.
+    const razonSocial = String((data && data.razon_social) || '').trim().slice(0, 80);
+    const nit = String((data && data.nit) || '').trim().slice(0, 20);
     const items = (Array.isArray(data.items) ? data.items : []).slice(0, MAX_ITEMS).map((it) => ({
         producto: String((it && it.producto) || '').trim().slice(0, 60),
         cantidad: Number(it && it.cantidad) > 0 ? Number(it.cantidad) : 1,
         precio: toAmount(it && it.precio)
     })).filter((it) => it.producto && it.precio);
-    return { tienda, total, items };
+    return { tienda, total, items, ...(razonSocial ? { razonSocial } : {}), ...(nit ? { nit } : {}) };
 }
 
 /** Nombre para comparar: sin tildes, minúsculas, sin signos ("Leche Alquería 1L" → "leche alqueria 1l"). */
@@ -105,7 +108,12 @@ function receiptExtraFor(userSession, confirm, now = Date.now()) {
     if (!r || !confirm || confirm.type !== 'expense') return {};
     if (now - r.at > RECEIPT_TTL_MS || r.total !== confirm.amount) return {};
     userSession.lastReceipt = null;
-    return r.items.length ? { items: r.items, store: r.tienda } : { store: r.tienda };
+    const store = {
+        store: r.tienda,
+        ...(r.razonSocial ? { razonSocial: r.razonSocial } : {}),
+        ...(r.askStore ? { askStore: { razonSocial: r.razonSocial, nit: r.nit || '' } } : {}),
+    };
+    return r.items.length ? { items: r.items, ...store } : store;
 }
 
 const CHEAPER_PATTERN = /(?:d[oó]nde|en qu[eé] (?:tienda|lugar|negocio|parte))\s+(?:est[aá]|venden|consigo|compro|sale|es)?\s*(?:m[aá]s\s+)?(?:barat[oa]s?|econ[oó]mic[oa]s?)\s+(?:el|la|los|las)?\s*(.+)/i;
@@ -217,7 +225,9 @@ function formatCheaper(product, results, money) {
 }
 
 const RECEIPT_PROMPT = 'Lee esta foto de un recibo, factura o tiquete de compra. Responde SOLO un JSON con esta forma: '
-    + '{"tienda": "nombre del negocio", "tipo": "parqueadero", "recibo" u "otro", '
+    + '{"tienda": "nombre comercial del negocio si aparece (letrero o logo), si no la razón social", '
+    + '"razon_social": "razón social tal como está impresa (por ejemplo, la que termina en S.A.S.), o vacío", '
+    + '"nit": "NIT impreso, o vacío", "tipo": "parqueadero", "recibo" u "otro", '
     + '"total": número total pagado en pesos sin puntos, '
     + '"items": [{"producto": "nombre corto", "cantidad": número, "precio": precio total de esa línea en pesos sin puntos}]}. '
     + 'Si no ves productos, deja "items": []. Si el valor pagado no aparece (por ejemplo, un tiquete de entrada a un '

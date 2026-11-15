@@ -8,6 +8,7 @@ const { todayInBogota } = require('../utils/financeDate');
 const { normalizeSpokenAmounts } = require('../utils/financeAmount');
 const privacy = require('../utils/financePrivacy');
 const receipts = require('./financeReceipts');
+const stores = require('./financeStores');
 
 // gemini-2.0-flash fue retirado por Google (2026): con él, Leo caía siempre al modo sin IA y las fotos de recibos no
 // se leían. El modelo se puede cambiar sin tocar código con FINANCE_AI_MODEL.
@@ -147,6 +148,11 @@ async function interpretImage(imageBase64, userSession, mimeType = 'image/jpeg')
             logger.info(`financeAi interpretImage: no es un recibo legible ("${text.substring(0, 80)}")`);
             return text;
         }
+        // Nombre comercial aunque el papel solo traiga la razón social (#179, parte B).
+        const store = stores.resolveStore(receipt, userSession && userSession.finance);
+        receipt.tienda = store.tienda;
+        if (store.razonSocial) receipt.razonSocial = store.razonSocial;
+        if (store.ask) receipt.askStore = true;
         if (userSession) userSession.lastReceipt = { ...receipt, at: Date.now() };
         logger.info(`financeAi interpretImage: ${receipt.tienda} $${receipt.total}, ${receipt.items.length} productos`);
         return receipts.purchaseLine(receipt);
