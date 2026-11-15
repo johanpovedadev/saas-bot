@@ -1,11 +1,11 @@
 'use strict';
 /**
  * 15 días de Leo con IA gratis (#143, parte C). IA simulada, sin red.
- *  - Un usuario nuevo tiene IA 15 días (promo de lanzamiento hasta LEO_TRIAL_PROMO_UNTIL, y desde ahí la regla).
+ *  - Un usuario nuevo tiene IA 15 días.
  *  - Aviso cuando quedan 3 días (día 12), mensaje al terminar (día 15), y después sigue gratis sin IA. Sin precios.
  *  - Un antiguo inactivo 7 días que vuelve a registrar recibe 15 días UNA sola vez.
- *  - Promo de lanzamiento (Johan, 4 nov): un antiguo activo también los recibe hasta el 15 de noviembre, aunque lo
- *    primero que mande sea un audio. Después de esa fecha, un antiguo activo no.
+ *  - Un antiguo sin plan que nunca la tuvo también la recibe una vez, aunque lo primero que mande sea un audio. Desde
+ *    el 8 nov 2026 (#179) sin fecha de fin; LEO_TRIAL_PROMO_UNTIL es opcional y, si se pone, la corta.
  *  - Tope de 300 interacciones; quien ya tiene IA por plan no cambia.
  * Base temporal, IDs de prueba. Uso: node test_finance_prueba_ia_15_dias.js
  */
@@ -22,7 +22,7 @@ process.env.FINANCE_DB_PATH = TMP_DB;
 process.env.FINANCE_ENCRYPTION_KEY = process.env.FINANCE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('base64');
 process.env.TIME_WRITING_SIMULATION_MS = '1';
 process.env.FINANCE_AI_USAGE_LOG = path.join(os.tmpdir(), `leo_trial_usage_${process.pid}.jsonl`);
-process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-15';
+delete process.env.LEO_TRIAL_PROMO_UNTIL;
 
 const PHASE = require('./utils/phases');
 const trial = require('./services/financeAiTrial');
@@ -89,12 +89,22 @@ function setTrialEnd(jid, until) {
         process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-01';
         const later = trial.startTrial({}, now, trial.SOURCE.NEW);
         assert.deepStrictEqual([later.aiTrial.promo, trial.isActive(later, now)], [false, true], 'pasada la promo, los nuevos igual reciben los 15 días');
-        process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-15';
+        delete process.env.LEO_TRIAL_PROMO_UNTIL;
+        // Sin LEO_TRIAL_PROMO_UNTIL no hay fecha de fin (#179): nuevos y antiguos la reciben también en 2027, una vez.
+        const far = Date.parse('2027-06-01T15:00:00Z');
+        assert.strictEqual(trial.promoUntil(), '', 'por defecto, sin fecha de fin');
+        assert.strictEqual(trial.startTrial({}, far, trial.SOURCE.NEW).aiTrial.promo, true, 'un nuevo en 2027 también');
+        const oldFin = { name: 'Antiguo', transactions: [{ type: 'expense', amount: 1000, date: '2027-05-30' }] };
+        assert.strictEqual(trial.trialDueFor(oldFin, '2027-06-01', far), trial.SOURCE.PROMO, 'un antiguo sin plan en 2027 también');
+        trial.startTrial(oldFin, far, trial.trialDueFor(oldFin, '2027-06-01', far));
+        oldFin.transactions.push({ type: 'expense', amount: 1000, date: '2027-06-19' }); // activo: no es un regreso
+        assert.strictEqual(trial.trialDueFor(oldFin, '2027-06-20', far + 19 * DAY), null, 'una sola vez: terminada, no se repite');
+        assert.ok(!/lanzamiento/i.test(trial.MESSAGES.promo), 'el mensaje ya no habla de lanzamiento');
         f.aiTrial.used = trial.TRIAL_CAP;
         assert.strictEqual(trial.isActive(f, now), false, 'tope de 300 interacciones');
         assert.strictEqual(trial.dueNotice({ ...f, aiTrial: { ...f.aiTrial } }, now + 11 * DAY), null, 'el día 11 todavía nada');
         for (const text of Object.values(trial.MESSAGES)) assert.ok(!PRICES.test(text), `sin precios: ${text}`);
-        console.log('OK: la prueba dura 15 días, mide la promo de lanzamiento, tiene tope de 300 y sus mensajes no tienen precios');
+        console.log('OK: la prueba dura 15 días, no tiene fecha de fin (una vez por persona), tiene tope de 300 y sus mensajes no tienen precios');
 
         // --- 2. Usuario nuevo: 15 días de IA desde el primer mensaje ---
         let r = await send(NEW, 'hola');
@@ -177,15 +187,15 @@ function setTrialEnd(jid, until) {
         assert.deepStrictEqual(financeStore.loadFinance(AUDIO).transactions.map((t) => t.amount), [9000, 15000]);
         console.log('OK: un antiguo que manda un audio de primeras recibe los 15 días y el audio pasa');
 
-        // --- 7. Pasada la promo, un antiguo activo ya no ---
+        // --- 7. Si se pone LEO_TRIAL_PROMO_UNTIL y ya pasó, un antiguo activo ya no ---
         process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-01';
         financeStore.saveFinance(AFTER, { name: 'Despues', balance: 100000, transactions: [{ type: 'expense', amount: 9000, date: daysAgo(2), description: 'x', category: 'Comida' }], loans: [], lastCheckinDate: TODAY });
         assert.strictEqual(financeFlow.isPremiumBlocked(AFTER), true, 'pasada la promo, un antiguo activo sin plan no tiene IA');
         ctx.sessions[AFTER] = { phase: PHASE.FIN_MAIN };
         r = await send(AFTER, 'almuerzo 15 mil');
         assert.ok(!r.includes(trial.MESSAGES.promo) && !financeStore.loadFinance(AFTER).aiTrialUntil, `pasada la promo, nada: ${r}`);
-        process.env.LEO_TRIAL_PROMO_UNTIL = '2026-11-15';
-        console.log('OK: pasada la promo, un antiguo activo no recibe la prueba');
+        delete process.env.LEO_TRIAL_PROMO_UNTIL;
+        console.log('OK: con LEO_TRIAL_PROMO_UNTIL vencida (opcional), un antiguo activo no recibe la prueba');
 
         console.log('\nTodos los tests pasaron.');
     } catch (e) {

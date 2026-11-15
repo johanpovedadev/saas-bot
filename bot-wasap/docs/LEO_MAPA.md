@@ -19,7 +19,7 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeAi.js` | IA (Gemini) y `fallbackInterpret()` (parser sin IA). En pruebas la IA va simulada (`NODE_ENV=test`, sin `GEMINI_API_KEY`). |
 | `services/financeAiProvider.js` | Proveedor de IA (#143): OpenRouter (`OPENROUTER_API_KEY` en `.env.finance`, modelo `FINANCE_AI_MODEL`) con respaldo en Gemini (`GEMINI_API_KEY`; 2 fallas seguidas → Gemini 30 min). Costo por llamada en `logs/ai-usage-finance.jsonl` (sin textos); `/costo_ia` lo resume. En pruebas, transportes falsos con `_setTransports()`. |
 | `services/financeAiTools.js` | La IA solo elige herramientas (#143): `registrar_gasto`, `varios_gastos`, `corregir_ultimo`, `consultar`, `meta`, `charla`... → intenciones de `applyIntent`. `groundAmount()` (el monto tiene que salir del texto), `groundDescription()`, `maskSensitive()` (tarjetas, cédulas, claves) y `groundChat()` (sin cifras inventadas). |
-| `services/financeAiTrial.js` | 15 días de IA gratis (#143): nuevos; hasta `LEO_TRIAL_PROMO_UNTIL` también todo antiguo sin plan que nunca la tuvo; y antiguos que vuelven tras 7 días, una vez. `grantTrialIfDue()` de `finance.flow.js` la da con cualquier mensaje, audio o foto (también en `isPremiumBlocked`). Las pruebas que no son de esto fijan `LEO_TRIAL_PROMO_UNTIL='2000-01-01'`. `fin.aiTrialUntil`, `fin.aiTrialReturnUsed`, `fin.aiTrial` (uso, tope 300, avisos). `canUseAi()` la cuenta como un plan. Aviso a 3 días del final y mensaje al terminar, sin precios. |
+| `services/financeAiTrial.js` | 15 días de IA gratis (#143): nuevos; todo antiguo sin plan que nunca la tuvo, una vez (sin fecha de fin desde #179; `LEO_TRIAL_PROMO_UNTIL` opcional la corta); y antiguos que vuelven tras 7 días, una vez. `grantTrialIfDue()` de `finance.flow.js` la da con cualquier mensaje, audio o foto (también en `isPremiumBlocked`). Las pruebas que no son de esto fijan `LEO_TRIAL_PROMO_UNTIL='2000-01-01'`. `fin.aiTrialUntil`, `fin.aiTrialReturnUsed`, `fin.aiTrial` (uso, tope 300, avisos). `canUseAi()` la cuenta como un plan. Aviso a 3 días del final y mensaje al terminar, sin precios. |
 | `services/financePresenter.js` | Presentador (#144): toda respuesta pasa por `present()` dentro del `say` de `finance.flow.js` (máx. 3 líneas + "➕ Ver más", una pregunta, sin "escribí el número", saludo una vez por día). Pantallas largas a propósito (informes, resumen, salud...) usan `sayFull`. |
 | `services/financeEntry.js` | `isClearEntry()` (guardar de una) y `extractDetails()`: medio de pago (Rappi→tarjeta, Nequi/PSE→banco) y día ("ayer") del mensaje, para no preguntarlos. |
 | `services/financeFrequent.js` | "Lo de siempre" (#144): los 3 gastos más repetidos en 30 días (3+ veces, monto parecido) como botones bajo "¿Qué compraste?" y después del menú (`leo:siempre:<monto>:<slug>`). Prueba: `test_finance_lo_de_siempre.js`. |
@@ -34,7 +34,8 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 | `services/financeEmailImport.js` + `financeEmailParsers.js` | Leen correos de RappiCard, Binance, RappiPay, BBVA. |
 | `services/financeEmailInbox.js` | Bandeja `data/correos_entrantes`: correos o ajustes `{ movimientos, saldo, tarjeta }`. |
 | `services/financeReview.js` + `financeLearning.js` | "¿En qué fue este gasto?" (`1 comida`) y lo que Leo aprende. |
-| `services/financeReceipts.js` | Productos del recibo y "¿dónde está más barato?". |
+| `services/financeReceipts.js` | Productos del recibo (#179): `enrichItems()` (nombre normalizado, cantidad, `unitario`, `total`, tienda, fecha), `receiptSummary()` (lo que se ve al registrar la foto, máx. 8), "¿dónde está más barato?" (`cheapestFor`, por precio unitario y nombres parecidos) y "mis compras de la semana" (`weekPurchases`). Prueba: `test_finance_recibo_productos.js`. |
+| `services/financeStores.js` | Tiendas (#179, parte B): razón social / NIT del tiquete → nombre comercial (`KNOWN_STORES`: Jerónimo Martins → Ara, Koba/D1 S.A.S. → D1, Almacenes Éxito → Éxito, OXXO, Olímpica, Colsubsidio...). Si no la conoce, pregunta una vez con botones y aprende el alias en `fin.storeAliases` (cifrado). Prueba: `test_finance_tiendas.js`. |
 | `utils/financeMoney.js` | `formatMoney(n, fin)` → "$1.234.567". **Úsalo siempre para mostrar plata.** |
 | `utils/financePrivacy.js` | Modo privado (#139): `money(n, fin, { kind })` con `kind` = `saldo` / `ahorro` / `meta` / `gasto`. **Para saldo, ahorro o meta usá este, no `formatMoney`**: con el modo prendido sale `$•••••`. |
 | `utils/financeAmount.js` | `parseAmountText("2 millones")` → 2000000. `normalizeSpokenAmounts()` (#144): "15 lucas", "luca y media", "un palo", "medio palo", "2 barras", "15k", "30000.000" → cifras; lo llaman `financeAi.interpret` (con nombre puesto) e `interpretEntries`. También montos en letras ("quince mil", `wordNumbersToDigits`), para los audios. Pruebas: `test_finance_lenguaje_natural.js`, `test_finance_audios_fotos.js`. |
@@ -56,7 +57,9 @@ Tono: voseo ("llevás", "decime"), cálido, **nunca culpa ni miedo**, nunca mont
 
 `name`, `balance` (saldo), `transactions` (cada una: `type` expense/income, `amount`, `date` YYYY-MM-DD, `description`,
 `category`, `medium` tarjeta/banco/efectivo/envio, `necesidad`), `goalName`, `goalTarget`, `goalMonthly`, `streak`,
-`bestStreak`, `streakFreezes`, `streakLevel`, `medals`, `cardStatement`.
+`bestStreak`, `streakFreezes`, `streakLevel`, `medals`, `cardStatement`, `storeAliases` (razón social/NIT → tienda),
+`pendingStoreQuestion`. Un gasto de una foto también trae `store` (nombre comercial), `razonSocial` (la del papel) e
+`items` (productos: `producto`, `nombre`, `cantidad`, `unitario`, `total`, `tienda`, `fecha`).
 
 ## Cómo agregar algo nuevo (patrón)
 
