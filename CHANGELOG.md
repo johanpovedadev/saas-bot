@@ -5,6 +5,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+### Agregado
+
+- **Chats de WhatsApp → Lion Platform**: app de PM2 `agentvents-importar-chats` (cada 15 min, sin reinicio
+  automático) que importa los chats que deja la tarea programada de Claude (lee el WhatsApp Web de Johan en su
+  Chrome). Se arranca con `arrancar_informes_crm.bat`. Lógica en AGentVents (johanpovedadev/AGentVents#10).
+
 ### Corregido
 
 - **Mascotas seguía medio prendido.** Además de `bot-mascotas-prod` en PM2, quedaban el Django de mascotas
