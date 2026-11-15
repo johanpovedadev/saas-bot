@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Modo privado (#139). Johan, 2 nov 2026: "que se pueda ocultar cuánto tiene uno ahorrado en plata".
- *  - "ocultar saldo" / Configuración → saldo, lo ahorrado, la meta y lo que queda tras la tarjeta se ven $•••••;
+ *  - "ocultar saldo" / Configuración → saldo, lo ahorrado y la meta se ven $•••••;
  *    la meta en % y tiempo. Los gastos del día sí se ven, salvo "ocultar todo".
  *  - El informe, el saludo, "¿cuánto tengo?", metas, resumen y extracto no muestran el saldo ni la meta en plata.
  *  - [👀 Ver montos] los muestra solo en ese mensaje; "mostrar saldo" los vuelve a mostrar. Queda guardado cifrado.
@@ -26,7 +26,6 @@ const financeStore = require('./services/financeStore');
 const financeFlow = require('./handlers/flows/finance.flow.js');
 const financeAdmin = require('./services/financeAdmin');
 const weekly = require('./services/financeWeekly');
-const cardStatement = require('./services/financeCardStatement');
 const { todayInBogota } = require('./utils/financeDate');
 
 const JID = '573000009797@telegram';
@@ -130,12 +129,9 @@ function assertNoPrivateMoney(text, where) {
         assert.ok(r.includes(`Te queda: *${MASK}*`) && /Gastaste: \*\$\s?25\.000\*/.test(r), r);
         sent.length = 0;
         const fin = financeStore.loadFinance(JID);
-        const owed = cardStatement.formatOwed({ statement: { cuenta: 'RappiCard', fechaPago: '2026-11-20', pagoTotal: 400000 }, pendiente: 400000, nuevas: 0, total: 400000 }, fin);
-        assert.ok(owed.includes(`te quedaría ${MASK}`) && /400\.000/.test(owed), `lo que queda después de la tarjeta se oculta: ${owed}`);
-        assert.ok(!/834\.567/.test(owed), owed);
         r = await send('4'); // salud financiera (número de siempre)
         assertNoPrivateMoney(r, 'salud financiera');
-        console.log('OK: "¿cuánto tengo?", el saludo, metas, el resumen, la salud y el extracto no muestran el saldo ni la meta');
+        console.log('OK: "¿cuánto tengo?", el saludo, metas, el resumen y la salud no muestran el saldo ni la meta');
 
         // --- 5. "ocultar todo": también los gastos, quedan los porcentajes ---
         await send('ocultar todo');

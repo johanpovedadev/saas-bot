@@ -140,7 +140,11 @@ async function send(text) {
 
         // --- 5. Semanal: dona + barras ---
         const sentImages = [];
-        const weeklyFin = { ...FIN };
+        // Fecha fija del barrido (un sábado 9:30 p. m.): los movimientos se corren a esa semana para que la
+        // prueba no dependa del día en que corre (14 nov 2026 falló porque los gastos de "hoy" quedaban fuera).
+        const WEEKLY_DAY = '2026-11-07';
+        const shift = Date.parse(`${WEEKLY_DAY}T00:00:00Z`) - Date.parse(`${TODAY}T00:00:00Z`);
+        const weeklyFin = { ...FIN, transactions: TRANSACTIONS.map((t) => ({ ...t, date: new Date(Date.parse(`${t.date}T00:00:00Z`) + shift).toISOString().slice(0, 10) })) };
         await weekly.runWeeklySweep({
             now: new Date('2026-11-07T21:30:00-05:00'), adminJids: ['a'],
             loadFinance: () => weeklyFin, saveFinance: () => {},

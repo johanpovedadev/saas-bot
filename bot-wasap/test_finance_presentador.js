@@ -68,7 +68,7 @@ const contentLines = (text) => text.split('\n').filter((l) => l.trim() && !/^\d�
         resetUser({ firstTransactionDone: false });
         let r = await send('almuerzo 15 mil');
         assert.ok(contentLines(r).length <= 3, `la confirmación cabe en 3 líneas: ${r}`);
-        assert.ok(/✅ \*Registrado:\* 💸 \$\s?15\.000 — Almuerzo · Comida/.test(r) && /Saldo|Comprado hoy/.test(r), r);
+        assert.ok(/✅ \*Registrado como GASTO:\* 💸 −\$\s?15\.000 — Almuerzo · Comida/.test(r) && /Saldo|Comprado hoy/.test(r), r);
         assert.ok(/➕ Ver más/.test(r), `lo demás (el tip del primer registro) va detrás de Ver más: ${r}`);
         const buttonNumber = (r.match(/(\d)️⃣ ➕ Ver más/) || [])[1];
         r = await send(buttonNumber);
@@ -102,7 +102,7 @@ const contentLines = (text) => text.split('\n').filter((l) => l.trim() && !/^\d�
         assert.deepStrictEqual([tx.amount, tx.description, tx.medium, tx.date], [15000, 'Almuerzo', 'tarjeta', shiftDay(TODAY, -1)], JSON.stringify(tx));
         assert.ok(!/¿Es correcto\?|con qué|cuándo/i.test(r), `no pregunta nada de eso: ${r}`);
         let fin = financeStore.loadFinance(JID);
-        assert.deepStrictEqual([fin.balance, fin.todaySpending], [500000, 0], 'con tarjeta no baja el saldo, y no es un gasto de hoy');
+        assert.deepStrictEqual([fin.balance, fin.todaySpending], [500000 - 15000, 0], 'con tarjeta baja el saldo como cualquier gasto (10 nov 2026), y no es un gasto de hoy');
         resetUser();
         await send('mercado 80 mil con nequi');
         tx = financeStore.loadFinance(JID).transactions[0];

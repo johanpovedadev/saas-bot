@@ -106,14 +106,12 @@ function cleanup() {
         const comida = report.byCategory[0];
         assert.ok(text.includes(`Comida: $${money(comida.total)} (${comida.share}%)`), `muestra Comida con su porcentaje (${text})`);
         assert.ok(/Transporte: \$34\.000/.test(text), 'agrupa Transporte: gasolina + parqueadero');
-        assert.ok(/Tarjeta \(lo pagás a fin de mes\): \$/.test(text), 'separa lo pagado con tarjeta');
+        assert.ok(/Tarjeta: \$/.test(text), 'separa lo pagado con tarjeta');
         assert.ok(/Binance: \$36\.957/.test(text) && /Envíos: \$15\.000/.test(text) && /Efectivo: \$36\.000/.test(text), 'y banco, envíos y efectivo');
         assert.ok(/Urgente: \$30\.000/.test(text) && /Prescindible: \$63\.490/.test(text), 'agrupa por qué tan necesario fue');
         assert.ok(/Tostao ×4 = \$30\.800/.test(text), 'detecta el gasto hormiga');
         assert.ok(/Te queda: \*\$100\.000\*/.test(text));
-        const cardOwed = report.byMedium.tarjeta;
-        assert.ok(text.includes(`Compras con tarjeta del mes: $${money(cardOwed)}`), 'sin extracto muestra las compras con tarjeta del mes (no dice que es lo que se debe)');
-        assert.ok(text.includes(`te quedaría $${money(100000 - cardOwed).replace('-', '')}`) || /te quedaría -\$/.test(text), 'y cuánto le quedaría al pagarla');
+        assert.ok(!/te quedar[ií]a|lo pagás a fin de mes|Compras con tarjeta del mes/.test(text), 'ya no habla de la tarjeta aparte (10 nov 2026)');
         assert.ok(/Para gastar menos/.test(text) && /Tostao\* se repite 4 veces/.test(text), 'sugiere dónde recortar con las cifras reales');
         assert.ok(/Prescindible|prescindible/.test(text) && /lo primero que podés quitar/.test(text));
         assert.ok(/Para generar más plata/.test(text) && /Didi/.test(text), 'sugiere cómo generar más con lo que ya entra');

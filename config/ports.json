@@ -15,6 +15,7 @@
     { "name": "social-bot", "project": "AGentVents (social-bot/)", "port": 8300, "env": "PORT", "manual": true },
     { "name": "lion-platform-api", "project": "lion-platform-api", "port": 8080, "env": "PORT", "manual": true },
     { "name": "lion-platform-api (prueba local)", "project": "lion-platform-api", "port": 8081, "env": "PORT", "manual": true },
+    { "name": "lion-crm-publico", "project": "lion-platform-web", "port": 4173, "env": "PORT" },
     { "name": "lion-platform-web (vite)", "project": "lion-platform-web", "port": 5173, "env": "--port", "manual": true },
     { "name": "postgres (pruebas locales)", "project": "AGentVents / lion-platform-api", "port": 5432, "env": "DATABASE_URL", "manual": true }
   ]

@@ -905,6 +905,8 @@ module.exports = {
     },
     handle,
     showWelcome,
+    // Audios y comprobantes de pago, igual que Mundo Helados (10 nov 2026): ver handlers/modules/pilatesMedia.js
+    handleMedia: require('../modules/pilatesMedia').createHandleMedia(),
     // Punto unico de arranque de todos los jobs programados de este bot
     // (campana de sabados + recordatorios de clase) — ver el hook generico
     // en index.js, reusable por cualquier otro bot de citas a futuro.
