@@ -322,6 +322,24 @@ module.exports = {
       }
     },
     {
+      // AGentVents: chats de WhatsApp → Lion Platform (Johan, 14 nov 2026). Cada 15 min revisa si la tarea de
+      // Claude dejó chats en AGentVents\\data\\chats_entrantes; si no hay, no hace nada.
+      name: 'agentvents-importar-chats',
+      cwd: 'C:\\Users\\Administrador\\Documents\\AGentVents',
+      script: 'scripts/importWhatsappChats.js',
+      interpreter: 'node',
+      watch: false,
+      autorestart: false,
+      // Mismo blindaje que las demás (17 oct 2026): nunca reinicios en bucle.
+      max_restarts: 10,
+      min_uptime: '20s',
+      stop_exit_codes: [78],
+      cron_restart: '*/15 * * * *',
+      env: {
+        NODE_ENV: 'production'
+      }
+    },
+    {
       name: 'bot-dev',
       cwd: 'C:\\Users\\Administrador\\Documents\\empanadas\\bot-wasap',
       script: 'index.js',

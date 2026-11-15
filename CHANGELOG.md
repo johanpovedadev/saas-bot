@@ -7,6 +7,30 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Agregado
 
+- **Chats de WhatsApp → Lion Platform**: app de PM2 `agentvents-importar-chats` (cada 15 min, sin reinicio
+  automático) que importa los chats que deja la tarea programada de Claude (lee el WhatsApp Web de Johan en su
+  Chrome). Se arranca con `arrancar_informes_crm.bat`. Lógica en AGentVents (johanpovedadev/AGentVents#10).
+
+### Corregido
+
+- **El escucha de WhatsApp no se dejaba vincular** (QR pegado, error en el celular). Ahora puede usar una copia
+  aparte de whatsapp-web.js (1.34.8, salió el 12 nov) en `bot-wasap/escucha_lib`, sin tocar la librería de Mundo
+  Helados (`lion-readonly-wwebjs.js`, variable `LION_READONLY_WWEBJS_DIR`). La instala y reinicia el escucha
+  `scripts/windows/escucha_libreria_nueva.bat`. El log ahora dice la versión, cuándo se escaneó el QR y el % de carga.
+  Prueba: `test_escucha_libreria_aparte.js`.
+
+### Corregido
+
+- **Mascotas seguía medio prendido.** Además de `bot-mascotas-prod` en PM2, quedaban el Django de mascotas
+  (`run_wsgi.py`, puerto 8001) corriendo fuera de PM2 y la tarea de Windows `empanadas-bot-mascotas`, que lo volvía
+  a prender al iniciar sesión. `detener_mascotas.bat` ahora apaga los tres (la tarea se deshabilita, no se borra).
+
+### Agregado
+
+- **Bri Pilates: audios y comprobantes, como Mundo Helados.** Los dos bots de pilates ahora transcriben las notas
+  de voz (siguen como texto) y reenvían a Bri los comprobantes de pago con la clienta y su paquete del mes
+  (`handlers/modules/pilatesMedia.js`). El bot no carga clases ni valida pagos: Bri revisa en su banco.
+  `paymentProof.js` acepta un contexto y un aviso propios del negocio. Prueba: `test_pilates_audios_comprobantes.js`.
 - **CRM desde cualquier lado**: `lion-crm-publico` (sirve el build de lion-platform-web en el 4173 y reenvía
   `/api` a Lion Platform) y `lion-crm-tunel` (túnel rápido de Cloudflare; `scripts/tunel-crm.js` guarda la
   dirección y se la manda a Johan por Telegram porque cambia al reiniciar). Arranque:
