@@ -7,6 +7,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ### Corregido
 
+- **El escucha de WhatsApp no se dejaba vincular** (QR pegado, error en el celular). Ahora puede usar una copia
+  aparte de whatsapp-web.js (1.34.8, salió el 12 nov) en `bot-wasap/escucha_lib`, sin tocar la librería de Mundo
+  Helados (`lion-readonly-wwebjs.js`, variable `LION_READONLY_WWEBJS_DIR`). La instala y reinicia el escucha
+  `scripts/windows/escucha_libreria_nueva.bat`. El log ahora dice la versión, cuándo se escaneó el QR y el % de carga.
+  Prueba: `test_escucha_libreria_aparte.js`.
+
+### Corregido
+
 - **Mascotas seguía medio prendido.** Además de `bot-mascotas-prod` en PM2, quedaban el Django de mascotas
   (`run_wsgi.py`, puerto 8001) corriendo fuera de PM2 y la tarea de Windows `empanadas-bot-mascotas`, que lo volvía
   a prender al iniciar sesión. `detener_mascotas.bat` ahora apaga los tres (la tarea se deshabilita, no se borra).
