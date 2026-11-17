@@ -97,3 +97,6 @@ scripts/windows/*.log
 
 # Copia aparte de whatsapp-web.js solo para el escucha (scripts/windows/escucha_libreria_nueva.bat)
 bot-wasap/escucha_lib/
+
+# Llaves del servidor de Oracle (nunca al repo)
+.oracle/
