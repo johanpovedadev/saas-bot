@@ -17,9 +17,10 @@ fi
 echo "== Paquetes base, Python y Chromium"
 sudo apt-get update -y
 sudo apt-get install -y git curl ca-certificates python3 python3-venv python3-pip fonts-noto-color-emoji
-# En Ubuntu, chromium-browser es un snap; funciona con puppeteer pasando su ruta en CHROME_PATH.
-command -v chromium-browser >/dev/null || sudo snap install chromium
-command -v chromium-browser >/dev/null || { echo "No quedó Chromium instalado"; exit 1; }
+# En Ubuntu, Chromium es un snap; puppeteer lo usa pasando /snap/bin/chromium en CHROME_PATH.
+# El snap deja el binario en /snap/bin/chromium, que no siempre esta en el PATH de una sesion por SSH.
+[ -x /snap/bin/chromium ] || sudo snap install chromium
+[ -x /snap/bin/chromium ] || { echo "No quedó Chromium instalado"; exit 1; }
 
 echo "== Node 20 y PM2"
 if ! command -v node >/dev/null || ! node -v | grep -q '^v20'; then
