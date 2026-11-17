@@ -37,7 +37,7 @@ function linuxCwd(winCwd) {
 function adaptar(app) {
   const out = { ...app, cwd: linuxCwd(app.cwd), env: { ...(app.env || {}), TZ: 'America/Bogota' } };
   if (app.interpreter === 'python') out.interpreter = path.join(SAAS, '.venv', 'bin', 'python');
-  if (/^bot-/.test(app.name)) out.env.CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/chromium-browser';
+  if (/^bot-/.test(app.name)) out.env.CHROME_PATH = process.env.CHROME_PATH || '/snap/bin/chromium';
   return out;
 }
 
