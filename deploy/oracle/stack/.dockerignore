@@ -1,0 +1,4 @@
+# El contexto de build es todo el stack (incluye saas-bot con la sesion de WhatsApp):
+# solo hace falta requirements.txt para la imagen de Django.
+*
+!saas-bot/requirements.txt

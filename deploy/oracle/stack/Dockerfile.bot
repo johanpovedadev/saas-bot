@@ -1,0 +1,9 @@
+# Bot de WhatsApp (whatsapp-web.js) con el Chromium de Debian, que si existe para ARM.
+# El codigo y node_modules vienen montados desde ./saas-bot (node_modules se instala para Linux
+# con instalar_stack.sh: lo de Windows no sirve).
+FROM node:20-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      chromium fonts-noto-color-emoji fonts-liberation ca-certificates ffmpeg \
+      python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+ENV CHROME_PATH=/usr/bin/chromium PUPPETEER_SKIP_DOWNLOAD=1

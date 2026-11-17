@@ -1,0 +1,105 @@
+# Stack de produccion en el servidor de Oracle: Lion Platform (CRM) + Mundo Helados.
+# Johan, 17 nov 2026: cada servicio en su contenedor, todos en el mismo servidor, siempre prendidos.
+#
+# network_mode: host -> todos hablan por localhost igual que en el PC (Django 8000, API 8081,
+# Postgres 5432, estado del bot 8096). Hacia internet solo salen 80/443 (Caddy): el firewall de
+# Ubuntu y la security list de Oracle cierran todo lo demas.
+# Lo sube y lo arranca scripts/windows/mudar_heladeria_lion_oracle.bat (ver instalar_stack.sh).
+
+x-logs: &logs
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    network_mode: host
+    restart: unless-stopped
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=5432"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: lionplatform
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 10s
+      retries: 12
+    mem_limit: 512m
+    <<: *logs
+
+  lion-api:
+    build: ./lion-api
+    network_mode: host
+    restart: unless-stopped
+    env_file: ./lion-api/lion-api.env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:5432/lionplatform
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      PORT: "8081"
+      CORS_ALLOWED_ORIGINS: https://${PUBLIC_HOST}
+      JAVA_TOOL_OPTIONS: -Xmx512m -XX:+UseSerialGC
+      TZ: America/Bogota
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 768m
+    <<: *logs
+
+  heladeria-django:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    network_mode: host
+    restart: unless-stopped
+    working_dir: /app
+    volumes: [./saas-bot:/app]
+    command: ["python", "run_wsgi.py"]
+    environment:
+      BUSINESS_KEY: heladeria
+      DJANGO_PORT: "8000"
+      PYTHONUNBUFFERED: "1"
+      TZ: America/Bogota
+    mem_limit: 384m
+    <<: *logs
+
+  heladeria-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    network_mode: host
+    restart: unless-stopped
+    working_dir: /app/bot-wasap
+    volumes: [./saas-bot:/app]
+    command: ["node", "index.js"]
+    environment:
+      NODE_ENV: production
+      BUSINESS_KEY: heladeria
+      LION_STATUS_PORT: "8096"
+      LION_STATUS_TOKEN: dev-lion-status-token-mundo-helados-2026
+      CHROME_PATH: /usr/bin/chromium
+      WA_HEADLESS: "1"
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+      TZ: America/Bogota
+    shm_size: 512m
+    depends_on: [heladeria-django]
+    mem_limit: 1g
+    <<: *logs
+
+  caddy:
+    image: caddy:2-alpine
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - ./saas-bot/bot-wasap/assets/heladeria:/srv/qr:ro
+      - caddy_data:/data
+    depends_on: [lion-api]
+    mem_limit: 128m
+    <<: *logs
+
+volumes:
+  pgdata:
+  caddy_data:

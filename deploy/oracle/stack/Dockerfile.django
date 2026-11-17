@@ -1,0 +1,5 @@
+# Django de los negocios (inventario, menu, pedidos). El codigo y db.sqlite3 vienen montados.
+FROM python:3.12-slim
+WORKDIR /app
+COPY saas-bot/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
