@@ -21,11 +21,17 @@ if not exist "%DOCS%\lion-platform-api\.env.oracle" ( echo FALTA lion-platform-a
 for /f "usebackq tokens=1,* delims==" %%a in ("%DOCS%\lion-platform-api\.env.oracle") do set "%%a=%%b"
 if not exist "%KEY%" ( echo FALTA la llave %KEY% >> "%LOG%" & goto fin )
 icacls "%KEY%" /inheritance:r /grant:r "%USERNAME%:R" >nul
-set SSH=-i "%KEY%" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
+REM OpenSSH de Windows rechaza llaves cuyo dueno no es este usuario o que otros pueden leer:
+REM se usa una copia propia en %TEMP% con permisos solo para este usuario.
+if exist "%TEMP%\oracle_lion_key" ( icacls "%TEMP%\oracle_lion_key" /grant "%USERNAME%:F" >nul & del /q "%TEMP%\oracle_lion_key" )
+copy /y "%KEY%" "%TEMP%\oracle_lion_key" >nul
+set KEY=%TEMP%\oracle_lion_key
+icacls "%KEY%" /inheritance:r /grant:r "%USERNAME%:R" >nul
+set SSH=-i "%KEY%" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o BatchMode=yes
 set SRV=ubuntu@!ORACLE_IP!
 
 echo 1. Probando la conexion con !ORACLE_IP! ... >> "%LOG%"
-ssh %SSH% !SRV! "echo conectado" >> "%LOG%" 2>&1 || ( echo NO HAY CONEXION con el servidor: Leo sigue en el PC >> "%LOG%" & goto fin )
+ssh -n %SSH% !SRV! "echo conectado" >> "%LOG%" 2>&1 || ( echo NO HAY CONEXION con el servidor: Leo sigue en el PC >> "%LOG%" & goto fin )
 
 echo 2. Deteniendo Leo en el PC... >> "%LOG%"
 call pm2 stop bot-finance-telegram >> "%LOG%" 2>&1
@@ -41,8 +47,8 @@ echo 4. Subiendo... >> "%LOG%"
 scp %SSH% "%TEMP%\leo_code.tar" "%PKG%" !SRV!:~/ >> "%LOG%" 2>&1 || ( echo FALLO scp >> "%LOG%" & goto volver )
 
 echo 5. Preparando el servidor y arrancando Leo... >> "%LOG%"
-ssh %SSH% !SRV! "set -e; command -v pm2 >/dev/null || curl -fsSL https://raw.githubusercontent.com/johanpovedadev/saas-bot/main/deploy/oracle/setup.sh | bash; rm -rf ~/saas-bot.nuevo; mkdir ~/saas-bot.nuevo; tar -xf ~/leo_code.tar -C ~/saas-bot.nuevo; tar -xzf ~/leo_oracle.tgz -C ~/saas-bot.nuevo; cd ~/saas-bot.nuevo/bot-wasap; PUPPETEER_SKIP_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund; cd ~; pm2 delete bot-finance-telegram >/dev/null 2>&1 || true; rm -rf ~/saas-bot.anterior; if [ -d ~/saas-bot ]; then mv ~/saas-bot ~/saas-bot.anterior; fi; mv ~/saas-bot.nuevo ~/saas-bot; rm -f ~/leo_code.tar ~/leo_oracle.tgz; cd ~/saas-bot; pm2 start deploy/oracle/ecosystem.oracle.config.js --only bot-finance-telegram; pm2 save; sleep 20; pm2 ls; pm2 logs bot-finance-telegram --lines 15 --nostream" >> "%LOG%" 2>&1 || ( echo FALLO en el servidor >> "%LOG%" & goto volver )
-ssh %SSH% !SRV! "pm2 jlist | grep -q '\"name\":\"bot-finance-telegram\".*\"status\":\"online\"'" || ( echo Leo NO quedo online en el servidor >> "%LOG%" & goto volver )
+ssh -n %SSH% !SRV! "set -e; command -v pm2 >/dev/null || curl -fsSL https://raw.githubusercontent.com/johanpovedadev/saas-bot/main/deploy/oracle/setup.sh | bash; rm -rf ~/saas-bot.nuevo; mkdir ~/saas-bot.nuevo; tar -xf ~/leo_code.tar -C ~/saas-bot.nuevo; tar -xzf ~/leo_oracle.tgz -C ~/saas-bot.nuevo; cd ~/saas-bot.nuevo/bot-wasap; PUPPETEER_SKIP_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund; cd ~; pm2 delete bot-finance-telegram >/dev/null 2>&1 || true; rm -rf ~/saas-bot.anterior; if [ -d ~/saas-bot ]; then mv ~/saas-bot ~/saas-bot.anterior; fi; mv ~/saas-bot.nuevo ~/saas-bot; rm -f ~/leo_code.tar ~/leo_oracle.tgz; cd ~/saas-bot; pm2 start deploy/oracle/ecosystem.oracle.config.js --only bot-finance-telegram; pm2 save; sleep 20; pm2 ls; pm2 logs bot-finance-telegram --lines 15 --nostream" >> "%LOG%" 2>&1 || ( echo FALLO en el servidor >> "%LOG%" & goto volver )
+ssh -n %SSH% !SRV! "pm2 jlist | grep -q '\"name\":\"bot-finance-telegram\".*\"status\":\"online\"'" || ( echo Leo NO quedo online en el servidor >> "%LOG%" & goto volver )
 
 echo 6. Leo corre en Oracle: lo quito del PC >> "%LOG%"
 call pm2 delete bot-finance-telegram >> "%LOG%" 2>&1
@@ -53,6 +59,7 @@ goto fin
 
 :volver
 echo Vuelvo a prender Leo en el PC para que no quede caido >> "%LOG%"
-call pm2 start bot-finance-telegram >> "%LOG%" 2>&1
+cd /d "%SAAS%"
+call pm2 start ecosystem.config.js --only bot-finance-telegram >> "%LOG%" 2>&1
 :fin
 echo FIN >> "%LOG%"

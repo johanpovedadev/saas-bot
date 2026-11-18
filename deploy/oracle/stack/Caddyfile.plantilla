@@ -1,0 +1,16 @@
+{{HOST}} {
+  encode gzip
+  # QR del bot de la heladeria (ruta secreta) para vincular WhatsApp sin entrar al servidor
+  handle_path /{{QR_TOKEN}}/* {
+    root * /srv/qr
+    file_server
+  }
+  handle /api/* {
+    reverse_proxy 127.0.0.1:8081
+  }
+  handle {
+    root * /srv/web
+    try_files {path} /index.html
+    file_server
+  }
+}
