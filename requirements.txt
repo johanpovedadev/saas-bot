@@ -30,6 +30,13 @@ google-auth-httplib2==0.2.0
 # -----------------------------------------------------------------------------
 python-dotenv==1.0.0
 requests==2.31.0
+Levenshtein          # inventario/views.py (busqueda aproximada de productos)
+oauth2client         # inventario (credenciales de Google Sheets)
+
+# -----------------------------------------------------------------------------
+# 🚀 SERVIDOR (run_wsgi.py)
+# -----------------------------------------------------------------------------
+waitress
 
 # -----------------------------------------------------------------------------
 # 🐛 DEBUG Y DESARROLLO

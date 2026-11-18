@@ -27,18 +27,23 @@ icacls "%KEY%" /inheritance:r /grant:r "%USERNAME%:R" >nul
 set SSH=-i "%KEY%" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=30
 set SRV=ubuntu@!ORACLE_IP!
 
+taskkill /im ssh.exe /f >nul 2>&1
 echo 1. Probando la conexion con !ORACLE_IP! ... >> "%LOG%"
-ssh %SSH% !SRV! "echo conectado" >> "%LOG%" 2>&1 || ( echo NO HAY CONEXION con el servidor: no se toco nada >> "%LOG%" & goto fin )
+ssh -n %SSH% !SRV! "echo conectado" >> "%LOG%" 2>&1 || ( echo NO HAY CONEXION con el servidor: no se toco nada >> "%LOG%" & goto fin )
 
 echo 2. Compilando la API y la web del CRM ^(antes de apagar nada^)... >> "%LOG%"
+REM Windows bloquea archivos en uso (el .jar de la API, node_modules de la web): se apagan antes de compilar
+call pm2 stop lion-platform-api lion-platform-web lion-crm-publico >> "%LOG%" 2>&1
 cd /d "%API%"
-call mvnw.cmd -q -DskipTests package >> "%LOG%" 2>&1 || ( echo FALLO LA COMPILACION DE LA API >> "%LOG%" & goto fin )
+call mvnw.cmd -q -DskipTests package >> "%LOG%" 2>&1 || ( echo FALLO LA COMPILACION DE LA API >> "%LOG%" & goto volver )
 set JAR=
 for %%j in (target\lion-platform-api-*.jar) do echo %%j | findstr /I "original" >nul || set JAR=%%j
-if "!JAR!"=="" ( echo NO ENCONTRE el .jar >> "%LOG%" & goto fin )
+if "!JAR!"=="" ( echo NO ENCONTRE el .jar >> "%LOG%" & goto volver )
 cd /d "%WEB%"
-call npm ci --no-audit --no-fund >> "%LOG%" 2>&1 || ( echo FALLO npm ci de la web >> "%LOG%" & goto fin )
-call npm run build:publico >> "%LOG%" 2>&1 || ( echo FALLO LA COMPILACION DE LA WEB >> "%LOG%" & goto fin )
+call npm ci --no-audit --no-fund >> "%LOG%" 2>&1 || ( echo FALLO npm ci de la web >> "%LOG%" & goto volver )
+REM La web llama a la API por el mismo dominio: VITE_API_URL vacio (.env.publico.local gana sobre .env y .env.local)
+> ".env.publico.local" echo VITE_API_URL=
+call npx vite build --mode publico >> "%LOG%" 2>&1 || ( echo FALLO LA COMPILACION DE LA WEB >> "%LOG%" & goto volver )
 
 echo 3. Apagando en el PC la heladeria y el CRM ^(para copiar datos quietos^)... >> "%LOG%"
 call pm2 stop bot-heladeria django-heladeria lion-platform-api >> "%LOG%" 2>&1
@@ -82,7 +87,7 @@ echo 6. Subiendo... >> "%LOG%"
 scp %SSH% "%TEMP%\stack_oracle.tgz" "%TEMP%\saas_oracle.tgz" "%SAAS%\deploy\oracle\stack\instalar_stack.sh" !SRV!:~/ >> "%LOG%" 2>&1 || ( echo FALLO scp >> "%LOG%" & goto volver )
 
 echo 7. Instalando con Docker en el servidor ^(la primera vez tarda 15-25 min^)... >> "%LOG%"
-ssh %SSH% !SRV! "bash ~/instalar_stack.sh" >> "%LOG%" 2>&1
+ssh -n %SSH% !SRV! "bash ~/instalar_stack.sh" >> "%LOG%" 2>&1
 findstr /C:"LISTO_STACK" "%LOG%" >nul || ( echo FALLO la instalacion en el servidor >> "%LOG%" & goto volver )
 
 echo 8. Todo corre en Oracle: lo quito del PC y apunto los informes al CRM en la nube >> "%LOG%"
@@ -96,6 +101,6 @@ goto fin
 
 :volver
 echo Vuelvo a prender la heladeria y el CRM en el PC >> "%LOG%"
-call pm2 restart lion-platform-api django-heladeria bot-heladeria >> "%LOG%" 2>&1
+call pm2 restart lion-platform-api lion-platform-web lion-crm-publico django-heladeria bot-heladeria >> "%LOG%" 2>&1
 :fin
 echo FIN >> "%LOG%"
