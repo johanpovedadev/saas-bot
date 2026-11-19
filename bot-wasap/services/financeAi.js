@@ -4,6 +4,7 @@ const { logger } = require('../utils/logger');
 const { formatMoney } = require('../utils/financeMoney');
 const aiProvider = require('./financeAiProvider');
 const aiTools = require('./financeAiTools');
+const corrections = require('./financeCorrections');
 const { todayInBogota } = require('../utils/financeDate');
 const { normalizeSpokenAmounts } = require('../utils/financeAmount');
 const privacy = require('../utils/financePrivacy');
@@ -47,6 +48,8 @@ async function interpret(rawMessage, userSession, forceFallback) {
     const fin = (userSession && userSession.finance) || {};
     const { text: safeText } = aiTools.maskSensitive(message);
     const fallback = fallbackInterpret(safeText, userSession);
+    // Varias cosas en un mensaje, separadas sin IA: respaldo si la IA mezcla los montos (financeAiTools.toIntent).
+    const entriesFallback = await corrections.interpretEntries(safeText, async (part) => fallbackInterpret(part, userSession)).catch(() => null);
     const messages = [
         { role: 'system', content: aiTools.buildToolsPrompt(fin, todayInBogota()) },
         { role: 'user', content: safeText },
@@ -58,7 +61,7 @@ async function interpret(rawMessage, userSession, forceFallback) {
                 messages, jid: jidOf(userSession), json: true, tools: aiTools.TOOL_DECLARATIONS,
                 temperature: TOOLS_TEMPERATURE, timeoutMs: TOOLS_TIMEOUT_MS,
             });
-            const intent = aiTools.toIntent(aiTools.callsFromResult(result), safeText, fin, fallback);
+            const intent = aiTools.toIntent(aiTools.callsFromResult(result), safeText, fin, fallback, entriesFallback);
             // "¿Cuánto tengo?" se responde con los datos, nunca con lo que redacte la IA.
             if (intent && intent.intent === 'query' && fallback.intent !== 'query') {
                 intent.response = fallbackInterpret('cuanto tengo', userSession).response;

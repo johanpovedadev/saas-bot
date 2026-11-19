@@ -188,6 +188,45 @@ function amountCandidates(text) {
     return out;
 }
 
+/**
+ * Cuántas veces escribió el usuario cada monto. "almuerzo 14 mil, arepas 4000, pan 2000" → 14000×1, 4000×1, 2000×1.
+ * Sirve para que la IA no reparta UN precio entre varias cosas (18 nov 2026: Leo guardó el mismo precio en
+ * varios gastos de un mensaje; cada monto "salía del texto", pero se usaba más veces de las que el usuario lo dijo).
+ */
+function amountCounts(text) {
+    const t = normalize(text);
+    const counts = new Map();
+    const add = (v) => counts.set(v, (counts.get(v) || 0) + 1);
+    for (const match of t.matchAll(AMOUNT_TOKEN)) {
+        const unit = (match[2] || '').replace(/^lucas?$/, 'mil');
+        const decimalMillions = /^millon/.test(unit) && /^\$?\s*\d+[.,]\d{1,2}$/.test(match[1].trim());
+        const value = decimalMillions
+            ? Math.round(parseFloat(match[1].replace(/[$\s]/g, '').replace(',', '.')) * 1000000)
+            : parseAmountText(`${match[1]} ${unit}`.trim());
+        if (!value) continue;
+        const bare = !unit && !/\$/.test(match[1]);
+        if (bare && value < MIN_BARE_AMOUNT) continue;
+        add(value);
+    }
+    // "3 empanadas a 2000 cada una" → el total (6000) también vale una vez por parte.
+    for (const part of corrections.splitEntryParts(text)) {
+        const q = corrections.parseQuantity(part);
+        if (q && !counts.has(q.amount)) add(q.amount);
+    }
+    return counts;
+}
+
+/** ¿Los montos de la IA caben en lo que escribió el usuario, sin usar un monto más veces de las que aparece? */
+function amountsFitText(text, amounts) {
+    const left = amountCounts(text);
+    for (const a of amounts) {
+        const n = Math.round(Number(a));
+        if (!(left.get(n) > 0)) return false;
+        left.set(n, left.get(n) - 1);
+    }
+    return true;
+}
+
 /** ¿El monto que propone la IA salió del texto del usuario? */
 function groundAmount(text, amount) {
     const n = Math.round(Number(amount));
@@ -275,7 +314,7 @@ function groundChat(answer, fin, userText) {
  * mensaje del usuario YA filtrado (sin datos sensibles); `fallback` es lo que dijo el parser sin IA, para
  * tomar la descripción cuando la de la IA no sale de sus palabras.
  */
-function toIntent(calls, text, fin, fallback = {}) {
+function toIntent(calls, text, fin, fallback = {}, entriesFallback = null) {
     const call = calls[0];
     if (!call) return null;
     const args = call.args || {};
@@ -289,6 +328,9 @@ function toIntent(calls, text, fin, fallback = {}) {
         case 'varios_gastos': {
             const items = Array.isArray(args.movimientos) ? args.movimientos : [];
             if (items.length === 0 || !items.every((m) => groundAmount(text, m.monto))) return askAmount();
+            // Un precio repetido más veces de las que lo escribió el usuario: la IA mezcló los montos. Se usa el parser
+            // sin IA, que separa "almuerzo 14 mil, arepas 4000" por partes y toma el monto de cada una.
+            if (!amountsFitText(text, items.map((m) => m.monto))) return entriesFallback || askAmount();
             return registerIntent(items.map((m) => entryFrom(m, m.tipo === 'ingreso' ? 'income' : 'expense', text)), fin);
         }
         case 'corregir_ultimo':
@@ -316,6 +358,6 @@ function toIntent(calls, text, fin, fallback = {}) {
 }
 
 module.exports = {
-    TOOL_DECLARATIONS, buildToolsPrompt, maskSensitive, amountCandidates, groundAmount, groundDescription,
+    TOOL_DECLARATIONS, buildToolsPrompt, maskSensitive, amountCandidates, amountCounts, amountsFitText, groundAmount, groundDescription,
     callsFromResult, toIntent, groundChat, NOT_GROUNDED_REPLY,
 };
