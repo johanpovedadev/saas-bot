@@ -105,6 +105,28 @@ const gasto = (monto, descripcion, extra = {}) => ({ name: 'registrar_gasto', ar
         assert.strictEqual(financeStore.loadFinance(JID).balance, 482000);
         console.log('OK: "almuerzo 14 mil, arepas 4000" → 2 gastos, guardados de una');
 
+        // --- 2b. La IA repite un precio en varias cosas (18 nov 2026) → se usa el monto de cada parte ---
+        resetUser();
+        r = await send('almuerzo 14 mil, arepas 4000, pan 2000', [{ name: 'varios_gastos', args: { movimientos: [
+            { tipo: 'gasto', monto: 4000, descripcion: 'almuerzo', categoria: 'Comida' },
+            { tipo: 'gasto', monto: 4000, descripcion: 'arepas', categoria: 'Comida' },
+            { tipo: 'gasto', monto: 4000, descripcion: 'pan', categoria: 'Comida' },
+        ] } }]);
+        if (saved().length === 0) r = await send('si');
+        assert.deepStrictEqual(saved().map((t) => t.amount), [14000, 4000, 2000], `cada cosa con su precio: ${r}`);
+        console.log('OK: la IA repite 4000 en 3 cosas → se guardan 14000, 4000 y 2000 (el precio de cada parte)');
+        // Dos cosas con el MISMO precio escrito dos veces sí valen.
+        resetUser();
+        r = await send('taxi 10 mil, almuerzo 10 mil', [{ name: 'varios_gastos', args: { movimientos: [
+            { tipo: 'gasto', monto: 10000, descripcion: 'taxi', categoria: 'Transporte' },
+            { tipo: 'gasto', monto: 10000, descripcion: 'almuerzo', categoria: 'Comida' },
+        ] } }]);
+        if (saved().length === 0) r = await send('si');
+        assert.deepStrictEqual(saved().map((t) => t.amount), [10000, 10000], r);
+        assert.ok(aiTools.amountsFitText('taxi 10 mil, almuerzo 10 mil', [10000, 10000]));
+        assert.ok(!aiTools.amountsFitText('almuerzo 14 mil, arepas 4000', [4000, 4000]));
+        console.log('OK: el mismo precio escrito dos veces ("taxi 10 mil, almuerzo 10 mil") sí se guarda dos veces');
+
         // --- 3. Un número de tarjeta no llega al proveedor ---
         resetUser();
         await send('pagué con mi tarjeta 4111 1111 1111 1111 el mercado 80 mil, clave 1234', [gasto(80000, 'mercado')]);
