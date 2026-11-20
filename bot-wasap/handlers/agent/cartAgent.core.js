@@ -46,6 +46,7 @@ const unansweredQuestionsStore = require('../../services/unansweredQuestionsStor
 const notificationService = require('../../services/notificationService');
 const agentAi = require('../../services/cartAgentAi');
 const chatHistory = require('../../lion-chat-readonly');
+const conversationStyle = require('../../services/conversationStyle');
 const G = require('./grounding');
 
 const { norm } = G;
@@ -1051,6 +1052,17 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
     } catch (e) {
         logger.error(`[${plugin.logTag}] ${jid} error presentando la respuesta, se envía tal cual: ${e.message}`);
     }
+    // Tono del cliente (corto si va de afán, de usted si es formal): solo cortesía, nunca datos del pedido.
+    if (plugin.styleAdaptation !== false) {
+        try {
+            const style = conversationStyle.detectStyle(customerTexts(T));
+            if (T.userSession) T.userSession.estiloCliente = style;
+            const adapted = conversationStyle.adaptMessages(final, style);
+            if (Array.isArray(adapted) && adapted.length) final = adapted;
+        } catch (e) {
+            logger.warn(`[${plugin.logTag}] ${jid} no se pudo ajustar el tono, se envía tal cual: ${e.message}`);
+        }
+    }
     // El historial registró el texto crudo (say lo anota al "enviar"): se
     // reemplaza por lo que el cliente de verdad va a ver.
     try { chatHistory.removeBotMessagesSince(jid, turnStartIso); } catch (_) { /* best-effort */ }
@@ -1182,7 +1194,10 @@ function createCartAgent(plugin) {
     }
 
     function buildUserContent(userSession, jid, text) {
-        return `ESTADO DEL PEDIDO:\n${plugin.describeState(userSession)}\n\nHISTORIAL RECIENTE (más viejo arriba):\n${describeHistory(jid)}\n\nMENSAJE NUEVO DEL CLIENTE:\n"${text}"`;
+        const pastCustomer = recentHistory(jid).filter(m => !m.fromMe).slice(-6).map(m => m.text);
+        const style = conversationStyle.detectStyle([text, ...pastCustomer]);
+        const styleLine = plugin.styleAdaptation === false ? '' : `\n\nESTILO DEL CLIENTE: ${conversationStyle.describe(style)} (Aplica a tus textos libres, como responder_breve.)`;
+        return `ESTADO DEL PEDIDO:\n${plugin.describeState(userSession)}${styleLine}\n\nHISTORIAL RECIENTE (más viejo arriba):\n${describeHistory(jid)}\n\nMENSAJE NUEVO DEL CLIENTE:\n"${text}"`;
     }
 
     /**
