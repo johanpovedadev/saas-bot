@@ -49,6 +49,7 @@ const chatHistory = require('../../lion-chat-readonly');
 const conversationStyle = require('../../services/conversationStyle');
 const customerMemory = require('../../services/customerMemory');
 const escalationPolicy = require('../../services/escalationPolicy');
+const conversationWriter = require('../../services/conversationWriter');
 const G = require('./grounding');
 
 const { norm } = G;
@@ -914,7 +915,8 @@ const CORE_EXECUTORS = {
         // pedido ("ya te quité...", "te anoté...") - los cambios solo los hace
         // una herramienta real, y su propio mensaje lo confirma. Una frase así
         // en texto libre sería una promesa sin respaldo en el carrito.
-        const claimsAction = /\b(ya\s+)?(agregu[eé]|anot[eé]|quit[eé]|elimin[eé]|borr[eé]|cambi[eé]|he\s+(quitado|agregado|anotado|eliminado|cambiado|borrado)|no\s+(agregar[eé]|pondr[eé])|qued[oó]\s+(anotad|agregad|quitad|registrad))/i;
+        const claimsAction = /\b(ya\s+)?(agregu[eé]|anot[eé]|quit[eé]|elimin[eé]|borr[eé]|cambi[eé]|ajust[eé]|modifiqu[eé]|actualic[eé]|organic[eé]|separ[eé]|puse|dej[eé]\s+(listo|anotad|los|las|lo|la)|he\s+(quitado|agregado|anotado|eliminado|cambiado|borrado|ajustado|puesto)|no\s+(agregar[eé]|pondr[eé])|qued[oó]\s+(anotad|agregad|quitad|registrad|ajustad|list))/i;
+        // Prueba real (20 nov 2026): "Ya te ajusté los sabores para que cada litro sea diferente" sin que nada cambiara.
         // UNA sola pregunta por mensaje (lo que le gustó a la dueña de Mundo Helados: el bot le seguía el hilo con una
         // pregunta corta, no con varias). Se queda la primera.
         let asked = false;
@@ -1109,6 +1111,34 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
     // reemplaza por lo que el cliente de verdad va a ver.
     try { chatHistory.removeBotMessagesSince(jid, turnStartIso); } catch (_) { /* best-effort */ }
     try { await require('../../services/bot_core').sendTypingIndicator(realSock, jid); } catch (_) { /* opcional */ }
+    // El volteo (services/conversationWriter): la IA escribe la respuesta como vendedor con los datos verdaderos del
+    // sistema; lo estructurado (resumen, total, pago, imágenes) va tal cual. Si algo no cuadra, va la versión segura.
+    if (!T.escalated && conversationWriter.enabled(plugin)) {
+        try {
+            const biz = process.env.BUSINESS_KEY;
+            const style = (T.userSession && T.userSession.estiloCliente) || 'neutral';
+            let extra = `ESTILO DEL CLIENTE: ${conversationStyle.describe(style)}`;
+            if (plugin.customerMemory !== false && biz) {
+                try {
+                    extra += `\nCLIENTE: ${customerMemory.describeCustomer(biz, jid)}`;
+                    const ex = customerMemory.ownerExamples(biz);
+                    if (ex.length) extra += `\nASÍ ESCRIBE LA DUEÑA (imita el tono, nunca copies datos): ${ex.map(e => `"${e}"`).join(' · ')}`;
+                } catch (_) { /* sin memoria: sigue */ }
+            }
+            const lastBot = [...recentHistory(jid)].reverse().find(m => m.fromMe);
+            const r = await conversationWriter.rewrite({
+                messages: final, customerText: String(T.text || ''), history: describeHistory(jid),
+                lastBotText: lastBot ? lastBot.text : '', extra, plugin,
+                businessName: (require('../../config/env.loader').business || {}).name,
+                model: ctx.__writerModel,
+                sourceTexts: outbox.filter(m => typeof m.content === 'string').map(m => m.content)
+            });
+            if (r.rewritten) final = r.messages;
+            else if (r.reason && r.reason !== 'nada que reescribir') logger.info(`[${plugin.logTag}] ${jid} respuesta segura (${r.reason})`);
+        } catch (e) {
+            logger.warn(`[${plugin.logTag}] ${jid} el redactor falló, se envía la versión segura: ${e.message}`);
+        }
+    }
     const writingMs = Number(process.env.TIME_WRITING_SIMULATION_MS || process.env.WRITING_SIMULATION_MS || 900) || 900;
     await new Promise(r => setTimeout(r, Math.min(writingMs, 1500)));
     for (const m of final) {

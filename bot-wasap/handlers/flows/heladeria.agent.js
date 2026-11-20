@@ -107,6 +107,8 @@ const NUMERIC_MENU_PHASES = new Set([
 
 function fastPathApplies(text, phase) {
     if (process.env.HELADERIA_AI_AGENT_FASTPATH === '0') return false;
+    // Los números sueltos ("3", "22", "s5") los resuelve el formulario exacto, sin gastar IA; su respuesta igual pasa por
+    // el presentador y el redactor (runWithPresentation -> flushOutbox): el cliente no ve "*1)* … Escribe el número".
     if (!NUMERIC_MENU_PHASES.has(phase)) return false;
     const t = String(text || '').trim();
     if (/^\d{1,3}$/.test(t)) return true;
@@ -492,7 +494,10 @@ function modoIsGrounded(T) {
     // unidades diferentes. Replay real (12-oct-2026, Banana Split x2): "No el
     // otro fresa vainilla y veteado de mora" se bloqueaba, los sabores nuevos
     // pisaban los de la primera unidad y el bot entraba en bucle de toppings.
-    return T.startPhase === HP.HELADO_UNITS_MODE && /\b(el|la|los|las|y|un|una) otr[oa]s?\b|^otr[oa]s?\b/.test(text);
+    if (T.startPhase === HP.HELADO_UNITS_MODE && /\b(el|la|los|las|y|un|una) otr[oa]s?\b|^otr[oa]s?\b/.test(text)) return true;
+    // "Uno de lulo, otro de maracuyá y el último de fresa" (prueba real, 20 nov 2026): repartir sabores entre las unidades
+    // es pedirlas diferentes, aunque no diga la palabra.
+    return /\b(un[oa]|el primer[oa]?)\b.*\botr[oa]s?\b/.test(text) || /\botr[oa]s?\s+(de|con)\b/.test(text) || /\bel ultim[oa]\b/.test(text);
 }
 const SABOR_NAME_IGNORE = new Set(['con']);
 function saborIsGrounded(name, T) {
@@ -1329,6 +1334,11 @@ const agent = core.createCartAgent({
     toolDescriptions: TOOL_DESCRIPTIONS,
     hooks,
     texts,
+    // El volteo (services/conversationWriter): la IA escribe la respuesta final con esta personalidad.
+    writerPersona: 'Eres quien atiende el WhatsApp de Mundo Helados, una heladería familiar en Riohacha (La Guajira). ' +
+        'Hablas como una persona costeña amable y alegre, que ayuda con gusto y vende con cariño: recomiendas, ' +
+        'resuelves dudas y haces fácil pedir. Muchos clientes son señoras, señores mayores o niños: frases cortas y ' +
+        'sencillas, nada de términos raros. Nunca haces sentir mal a nadie, aunque pregunte lo mismo varias veces.',
     // Intención de compra (ver G.classifyBuyIntent): "quiero/para pedir una X"
     // arranca X; "¿cuánto vale X?" da el precio y confirma Sí/No.
     intent: {
@@ -1349,6 +1359,7 @@ module.exports = {
     setTraceListener: agent.setTraceListener,
     // Para tests / arnés de replay:
     _internal: {
+        modoIsGrounded,
         TOOLS: agent._internal.TOOLS,
         EXECUTORS: agent._internal.EXECUTORS,
         buildSystemInstruction,
