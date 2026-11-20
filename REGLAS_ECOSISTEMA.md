@@ -78,11 +78,19 @@ Para que los repos sirvan de portafolio: commits `feat:`/`fix:`/`test:`/`docs:`,
 12. **El objetivo es cerrar el pedido.** El bot entiende la **intención** del cliente aunque escriba mal
     (personas mayores, poca lectura). Si el cliente lo pide explícito, el bot actúa. Si solo pregunta, responde y
     confirma ("¿Lo quieres? Sí / No"). Si duda, confirma. Nunca descarta en silencio lo que el cliente dijo.
-13. **Ningún chat se pierde.** Si el bot no entiende o se repite, pasa a una persona y avisa. Si el cliente deja de
+13. **Ningún chat se pierde.** Si el cliente se frustra o pide a la dueña, pasa a una persona y avisa (regla del 20 nov 2026). Si el cliente deja de
     responder, el bot le hace seguimiento y luego avisa al negocio. Ver `saas-bot/bot-wasap/docs/red_de_seguridad_y_revision_diaria.md`.
 14. **Mensajes cortos y fáciles.** Una sola pregunta por mensaje, con opciones concretas y en lenguaje del cliente.
 15. **Los avisos van a quien atiende el negocio**, en lenguaje de negocio y con el link al chat. Lo técnico va solo al
     admin de sistema. Ejemplo: en Mundo Helados los avisos van a Isa y no a Johan.
+16a. **No más parches: la IA entiende (regla del 20 nov 2026).** En todos los bots la IA entiende y conversa como
+    vendedor; el sistema solo garantiza lo que no puede fallar (precios del catálogo, armar y enviar el pedido). Cuando
+    algo sale mal, se corrige **por qué la IA no entendió** (contexto, herramienta o regla que le faltó), con la
+    conversación real como prueba; no se agrega un caso especial al formulario. Bot nuevo = núcleo del agente
+    (`bot-wasap/handlers/agent/cartAgent.core.js`) + redactor (`services/conversationWriter.js`) + tono y memoria
+    (`docs/MEMORIA_Y_TONO.md`).
+16b. **Vendedor, nunca regaño.** Si el cliente pregunta lo mismo otra vez, se le responde con gusto ("¡Claro que sí!"),
+    nunca "como te decía" o "ya te dije". Muchos clientes son mayores o niños: palabras sencillas.
 16. **No tocar un negocio que no se pidió** (ej. mascotas) sin que Johan lo diga explícitamente.
 
 ## 5. Datos y seguridad
