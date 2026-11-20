@@ -244,7 +244,7 @@ function setup(seed) {
         {
             const t = setup();
             await say(t, 'a cómo el volcán?', [{ name: 'informar_precios', args: { productos: ['Volcán de Gomitas'] } }]);
-            check(/Volcán de Gomitas\* — \$\s?15\.000/.test(t.sent.join('\n')), 'informar_precios responde con el precio real del catálogo');
+            check(/Volcán de Gomitas\* vale \*\$\s?15\.000\*/.test(t.sent.join('\n')), 'informar_precios responde con el precio real del catálogo, directo ("X vale $Y")');
         }
 
         // ---- 15c) Mismo producto que el que está en armado: no se duplica ----

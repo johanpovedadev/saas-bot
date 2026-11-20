@@ -243,7 +243,7 @@ function decisionForPendingOffer(plugin, userSession, text) {
     if (!offer) return null;
     const answer = G.classifyYesNo(text);
     if (answer === 'yes') {
-        return { calls: [{ name: plugin.intent.addTool, args: { producto: offer.producto } }], usage: {}, latencyMs: 0, model: 'offer-yes' };
+        return { calls: [{ name: plugin.intent.addTool, args: { producto: offer.producto, ...(offer.sabores ? { sabores: offer.sabores } : {}) } }], usage: {}, latencyMs: 0, model: 'offer-yes' };
     }
     if (answer === 'no') {
         return { calls: [{ name: 'responder_breve', args: { texto: plugin.intent.texts.offerDeclined } }], usage: {}, latencyMs: 0, model: 'offer-no' };
@@ -296,7 +296,7 @@ const CORE_TOOL_DECLARATIONS = {
     fijar_metodo_pago: { name: 'fijar_metodo_pago', description: 'Método de pago. Nequi/Daviplata/Bancolombia/QR = transferencia.',
         parameters: obj({ metodo: { type: 'STRING', format: 'enum', enum: ['efectivo', 'transferencia'] } }, ['metodo']) },
     informar_precios: { name: 'informar_precios', description: 'El cliente pregunta cuánto vale uno o varios productos. El sistema responde con el precio REAL del catálogo.',
-        parameters: obj({ productos: { ...SA, description: 'Nombres exactos de productos.' } }, ['productos']) },
+        parameters: obj({ productos: { ...SA, description: 'Nombres exactos de productos.' }, sabor: { ...S, description: 'Si preguntó por un sabor ("litro de fresa"), el sabor tal cual.' } }, ['productos']) },
     mostrar_menu: { name: 'mostrar_menu', description: 'Mostrar el menú porque el cliente lo pide o no sabe qué pedir.' },
     info_local: { name: 'info_local', description: 'Dirección del local y horarios de atención.' },
     responder_pregunta: { name: 'responder_pregunta', description: 'Responder una pregunta del cliente (ingredientes, qué trae un producto, horarios, domicilio, tiempos, pagos). La respuesta sale de las FAQs y el menú reales.',
@@ -723,13 +723,35 @@ const CORE_EXECUTORS = {
         }
         const unique = [...new Set(items)];
         const offer = priceOfferPlan(T, unique);
+        // Sabor que nombró ("un litro de fresa"): se confirma que existe o se dice claro que hoy no hay.
+        let flavor = null;
+        if (args.sabor && typeof T.plugin.hooks.checkFlavor === 'function') {
+            const f = T.plugin.hooks.checkFlavor(String(args.sabor).slice(0, 40), T);
+            if (f && f.name) flavor = f.name;
+            else if (f && f.missing) {
+                await say(T.sock, T.jid, `😕 Hoy no tenemos *${String(args.sabor).slice(0, 40)}*.${f.available && f.available.length ? `\nLos sabores de hoy son: ${f.available.join(', ')}.` : ''}`, T.ctx);
+            }
+        }
         if (offer && offer.kind === 'choose') {
             // Varios productos pedibles: precios numerados + "¿cuál te preparo?"
             // (un "1"/"la primera" se resuelve contra ESTA lista).
             await sendClarification(T, T.plugin.intent.texts.chooseAfterPrice, offer.items);
         } else if (unique.length) {
-            const lines = unique.map(p => `• *${nameOf(p)}* — ${money(priceOf(p))}`);
-            await say(T.sock, T.jid, `💰 Precios:\n\n${lines.join('\n')}`, T.ctx);
+            // Respuesta directa y fácil (Johan, 20 nov 2026): "el litro vale 24 mil, cualquier sabor vale lo mismo". Si
+            // vuelve a preguntar lo mismo, no quedó claro: se repite más simple, sin cambiar de tema.
+            const asked = new Set(T.userSession._pricesAsked || []);
+            const note = (p) => (typeof T.plugin.hooks.priceNote === 'function' ? T.plugin.hooks.priceNote(p) : '');
+            let msg;
+            if (unique.length === 1) {
+                const p = unique[0];
+                const again = asked.has(nameOf(p));
+                const n = note(p);
+                msg = `💰 ${again ? 'Como te decía, ' : ''}*${nameOf(p)}*${flavor ? ` de *${flavor}*` : ''} vale *${money(priceOf(p))}*${n ? ` (${n})` : ''}.`;
+            } else {
+                msg = `💰 Precios:\n\n${unique.map(p => { const n = note(p); return `• *${nameOf(p)}* — ${money(priceOf(p))}${n ? ` (${n})` : ''}`; }).join('\n')}`;
+            }
+            await say(T.sock, T.jid, msg, T.ctx);
+            T.userSession._pricesAsked = [...new Set([...asked, ...unique.map(nameOf)])].slice(-20);
             T.userSession.lastMentionedProducts = unique.map(nameOf);
         }
         if (notFound.length) await say(T.sock, T.jid, `😅 No encontré *${notFound.join(', ')}* en el menú.`, T.ctx);
@@ -740,8 +762,8 @@ const CORE_EXECUTORS = {
         } else if (offer.kind === 'confirm') {
             // Solo preguntó el precio: se confirma, nunca se deja suelto.
             const name = nameOf(offer.items[0]);
-            T.userSession._agentPendingOffer = { producto: name, at: Date.now() };
-            await say(T.sock, T.jid, T.plugin.intent.texts.confirmAfterPrice(name), T.ctx);
+            T.userSession._agentPendingOffer = { producto: name, sabores: flavor ? [flavor] : undefined, at: Date.now() };
+            await say(T.sock, T.jid, T.plugin.intent.texts.confirmAfterPrice(name, flavor), T.ctx);
             markPrompted(T);
         }
     },
