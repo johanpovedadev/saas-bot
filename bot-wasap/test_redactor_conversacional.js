@@ -169,6 +169,16 @@ const W = require('./services/conversationWriter');
             check(modoIsGrounded(T('Uno de los litros de helado de lulo, otro de maracuyá y el último que sea de fresa')), '7) "uno de lulo, otro de maracuyá y el último de fresa" = unidades diferentes');
             check(!modoIsGrounded({ text: 'quiero 3 litros', startPhase: 'x', ctx: { productsCache } }), '7) "quiero 3 litros" no dice nada del modo');
         }
+        // ---- 8) Caso real 20 nov 11:50: un "3" suelto (atajo de números) también sale conversacional ----
+        {
+            const writer = async () => '¡Listo, *3* litros! 😊 ¿Los 3 van con los mismos sabores o cada uno distinto?';
+            const c = client('573333000007@c.us', writer);
+            await c.say('quiero un litro de helado', [C('agregar_producto', { producto: 'Litros de Helado' })]);
+            await c.say('dos de lulo', [C('elegir_sabores', { sabores: ['Lulo', 'Lulo'] })]);
+            const fase = c.s().phase;
+            const out = (await c.say('3', [])).join('\n');
+            check(!/\*1\)\*|Escribe el n[uú]mero/.test(out), `8) "3" suelto en ${fase}: sin "*1)*" ni "Escribe el número" ("${out.replace(/\n/g, ' ').slice(0, 160)}")`);
+        }
     } catch (e) {
         failures++;
         console.error('Error en la prueba:', e.stack || e.message);

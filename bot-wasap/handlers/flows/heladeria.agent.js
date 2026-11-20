@@ -107,10 +107,8 @@ const NUMERIC_MENU_PHASES = new Set([
 
 function fastPathApplies(text, phase) {
     if (process.env.HELADERIA_AI_AGENT_FASTPATH === '0') return false;
-    // Con el volteo (la IA escribe la respuesta) el atajo de reglas se apaga: un "3" suelto pasaba directo al formulario
-    // y el cliente recibía "*1)* Todas iguales … Escribe el número" (prueba real, 20 nov 2026). Cuesta una llamada
-    // más de IA por mensaje corto, pero la conversación no se rompe.
-    if (process.env.HELADERIA_AI_AGENT_FASTPATH !== '1' && require('../../services/conversationWriter').active()) return false;
+    // Los números sueltos ("3", "22", "s5") los resuelve el formulario exacto, sin gastar IA; su respuesta igual pasa por
+    // el presentador y el redactor (runWithPresentation -> flushOutbox): el cliente no ve "*1)* … Escribe el número".
     if (!NUMERIC_MENU_PHASES.has(phase)) return false;
     const t = String(text || '').trim();
     if (/^\d{1,3}$/.test(t)) return true;
