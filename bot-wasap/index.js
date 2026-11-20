@@ -1,5 +1,6 @@
 'use strict';
 
+const PHASE = require('./utils/phases');
 const path = require('path');
 const fs = require('fs');
 
@@ -553,6 +554,31 @@ const startBot = async () => {
             require('./lion-leads-readonly').recordOutboundStatusUpdate(remoteJid, msg.id._serialized, ACK_NAMES[String(ack)] || String(ack));
         } catch (e) {
             logger.debug(`Lion Platform: no se pudo registrar message_ack: ${e.message}`);
+        }
+    });
+
+    // Memoria del bot (services/customerMemory): las respuestas que la DUEÑA escribe a mano cuando toma una conversación
+    // (chat escalado o silenciado) quedan como ejemplos de su tono. Se espera unos segundos y se descarta si el texto lo
+    // envió el propio bot (queda en su historial al enviar).
+    sock.on('message_create', (msg) => {
+        try {
+            if (!msg || !msg.fromMe || msg.isStatus || typeof msg.body !== 'string' || !msg.body.trim()) return;
+            const jid = msg.to;
+            if (!jid || /@g\.us$|status@broadcast/.test(jid)) return;
+            const session = ctx.sessions && ctx.sessions[jid];
+            const humanOwned = (session && session.phase === PHASE.WAITING_HUMAN) || (ctx.mutedChats && ctx.mutedChats.has(jid));
+            if (!humanOwned) return;
+            const body = msg.body;
+            setTimeout(() => {
+                try {
+                    const sentByBot = require('./lion-chat-readonly').getRecentMessages(jid)
+                        .some((m) => m.fromMe && String(m.text || '').trim() === body.trim());
+                    if (sentByBot) return;
+                    if (require('./services/customerMemory').recordOwnerReply(BUSINESS_KEY, body)) logger.info('Memoria: guardé una respuesta de la dueña como ejemplo de tono');
+                } catch (e) { logger.debug(`Memoria: no se pudo guardar la respuesta de la dueña: ${e.message}`); }
+            }, 4000);
+        } catch (e) {
+            logger.debug(`Memoria: message_create: ${e.message}`);
         }
     });
 

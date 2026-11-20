@@ -234,9 +234,10 @@ async function handlePostAddOptions(sock, jid, text, userSession, ctx) {
  * podía fallar la cantidad 2+ veces seguidas sin que el sistema se enterara.
  */
 async function checkGlobalFrustration(sock, jid, text, userSession, ctx) {
-    // Regla fija para todos los bots y fases: al 2do error consecutivo se
-    // escala a humano, sin excepciones por negocio ni por fase.
-    const frustrationThreshold = 2;
+    // Bots de reglas (sin agente de IA): al 2do error consecutivo se escala a humano.
+    // Con el agente de IA encendido, la IA decide si hay frustración (ve toda la conversación; services/escalationPolicy):
+    // 2 errores seguidos ya no pasan solos a la dueña (regla de Johan, 20 nov 2026). 4 queda como red de seguridad.
+    const frustrationThreshold = agentRegistry.active() ? 4 : 2;
     const customNotifyFlow = flowRegistry.getTenantFlowWithCapability('notifyHumanEscalation');
     if (userSession.errorCount >= frustrationThreshold && userSession.phase !== PHASE.WAITING_HUMAN) {
         logger.warn(`[${jid}] 🚨 Verificación global de frustración: errorCount=${userSession.errorCount}`);

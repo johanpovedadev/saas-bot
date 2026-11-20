@@ -47,6 +47,8 @@ const notificationService = require('../../services/notificationService');
 const agentAi = require('../../services/cartAgentAi');
 const chatHistory = require('../../lion-chat-readonly');
 const conversationStyle = require('../../services/conversationStyle');
+const customerMemory = require('../../services/customerMemory');
+const escalationPolicy = require('../../services/escalationPolicy');
 const G = require('./grounding');
 
 const { norm } = G;
@@ -149,7 +151,9 @@ async function sendClarification(T, pregunta, candidates) {
 async function escalate(T, motivo) {
     const { sock, jid, userSession, ctx } = T;
     try {
-        await notificationService.notifyAdminsAboutCustomerIssue(sock, jid, `🤖 Agente IA: ${motivo} | Cliente dijo: "${String(T.text).slice(0, 200)}"`, ctx);
+        const why = T.escalationReason ? `${escalationPolicy.REASON_TEXT[T.escalationReason] || T.escalationReason}. ` : '';
+        const last = customerTexts(T).slice(0, 3).reverse().map(t => `"${String(t).slice(0, 120)}"`).join(' → ');
+        await notificationService.notifyAdminsAboutCustomerIssue(sock, jid, `🤖 Agente IA: ${why}${motivo} | Últimos mensajes del cliente: ${last}`, ctx);
     } catch (e) { logger.error(`[${T.plugin.logTag}] error notificando escalamiento: ${e.message}`); }
     userSession.waitingForHuman = true;
     userSession.phase = PHASE.WAITING_HUMAN;
@@ -302,7 +306,7 @@ const CORE_TOOL_DECLARATIONS = {
             pregunta: { ...S, description: 'Pregunta corta y cálida, SIN precios.' },
             opciones: { ...SA, description: 'Nombres exactos del catálogo entre los que debe elegir (el sistema agrega los precios reales).' }
         }, ['pregunta']) },
-    escalar_a_humano: { name: 'escalar_a_humano', description: 'Pasar el chat a una persona del equipo: el cliente la pide, reclama por un pedido/pago, o nada de lo disponible resuelve lo que necesita.',
+    escalar_a_humano: { name: 'escalar_a_humano', description: 'Pasar el chat a la dueña SOLO si el cliente pide hablar con una persona/la dueña, o si se nota frustrado o a punto de irse (queja, enojo, demora, reclamo de pago). Una pregunta que no sabes NO es motivo: usa responder_pregunta.',
         parameters: obj({ motivo: S }, ['motivo']) },
     cancelar_pedido: { name: 'cancelar_pedido', description: 'El cliente quiere cancelar TODO el pedido (vaciar carrito y datos).' },
     saludar: { name: 'saludar', description: 'El cliente saluda.' },
@@ -353,6 +357,15 @@ const CORE_TOOL_EFFECTS = {
  * cliente en vez de guardar un dato que él no dio).
  */
 const CORE_GROUNDS = {
+    // Regla de Johan (20 nov 2026): a la dueña SOLO si el cliente la pide o se nota frustrado / a punto de irse. Lo demás
+    // lo sigue atendiendo el bot y la pregunta le llega a la dueña en su informe (services/escalationPolicy).
+    escalar_a_humano(args, T) {
+        if (T.plugin.escalationPolicy === false) return { ok: true };
+        const d = escalationPolicy.shouldEscalate(customerTexts(T));
+        if (d.ok) return { ok: true, args: { ...args, razon: d.reason } };
+        try { unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, T.jid, String(T.text).slice(0, 300), `Sin escalar: ${String(args.motivo || '').slice(0, 120)}`); } catch (_) { /* best-effort */ }
+        return { ok: false, reason: 'sin frustración ni pedido de persona: el bot sigue atendiendo', reply: (T.plugin.texts && T.plugin.texts.noEscalation) || 'Eso no lo resuelvo por aquí, pero ya le dejé la nota a la dueña para que lo revise 🙏 ¿Te ayudo con algo más mientras tanto?' };
+    },
     fijar_nombre(args, T) {
         return G.nameGrounded(args.nombre, customerTexts(T)) ? { ok: true } : { ok: false, reason: `nombre "${args.nombre}" no escrito por el cliente` };
     },
@@ -827,6 +840,7 @@ const CORE_EXECUTORS = {
     },
 
     async escalar_a_humano(args, T) {
+        T.escalationReason = args.razon || null;
         await escalate(T, String(args.motivo || 'El cliente necesita a una persona').slice(0, 200));
     },
 
@@ -878,8 +892,13 @@ const CORE_EXECUTORS = {
         // una herramienta real, y su propio mensaje lo confirma. Una frase así
         // en texto libre sería una promesa sin respaldo en el carrito.
         const claimsAction = /\b(ya\s+)?(agregu[eé]|anot[eé]|quit[eé]|elimin[eé]|borr[eé]|cambi[eé]|he\s+(quitado|agregado|anotado|eliminado|cambiado|borrado)|no\s+(agregar[eé]|pondr[eé])|qued[oó]\s+(anotad|agregad|quitad|registrad))/i;
+        // UNA sola pregunta por mensaje (lo que le gustó a la dueña de Mundo Helados: el bot le seguía el hilo con una
+        // pregunta corta, no con varias). Se queda la primera.
+        let asked = false;
         const texto = G.sanitizeFreeText(args.texto, 300)
-            .split(/(?<=[.!?])\s+/).filter(s => !claimsAction.test(s)).join(' ').trim();
+            .split(/(?<=[.!?])\s+/).filter(s => !claimsAction.test(s))
+            .filter(s => { if (!/\?\s*\S{0,3}$/.test(s)) return true; if (asked) return false; asked = true; return true; })
+            .join(' ').trim();
         if (!texto) return;
         await say(T.sock, T.jid, texto, T.ctx);
     }
@@ -1057,7 +1076,7 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
         try {
             const style = conversationStyle.detectStyle(customerTexts(T));
             if (T.userSession) T.userSession.estiloCliente = style;
-            const adapted = conversationStyle.adaptMessages(final, style);
+            const adapted = conversationStyle.adaptMessages(final, style, { customerText: T.text });
             if (Array.isArray(adapted) && adapted.length) final = adapted;
         } catch (e) {
             logger.warn(`[${plugin.logTag}] ${jid} no se pudo ajustar el tono, se envía tal cual: ${e.message}`);
@@ -1193,11 +1212,27 @@ function createCartAgent(plugin) {
         } catch (_) { /* nunca romper el turno por una traza */ }
     }
 
+    /** Ficha del cliente y ejemplos de la dueña (services/customerMemory): unas líneas, una lectura SQLite. */
+    function memoryLines(jid) {
+        if (plugin.customerMemory === false || !process.env.BUSINESS_KEY) return '';
+        try {
+            const biz = process.env.BUSINESS_KEY;
+            const examples = customerMemory.ownerExamples(biz);
+            const ex = examples.length
+                ? `\n\nASÍ RESPONDE LA DUEÑA (ejemplos reales: imita el TONO en tus textos libres, nunca copies datos):\n${examples.map(e => `- "${e}"`).join('\n')}`
+                : '';
+            return `\n\nCLIENTE: ${customerMemory.describeCustomer(biz, jid)}${ex}`;
+        } catch (e) {
+            logger.warn(`[${plugin.logTag}] memoria del cliente no disponible: ${e.message}`);
+            return '';
+        }
+    }
+
     function buildUserContent(userSession, jid, text) {
         const pastCustomer = recentHistory(jid).filter(m => !m.fromMe).slice(-6).map(m => m.text);
         const style = conversationStyle.detectStyle([text, ...pastCustomer]);
         const styleLine = plugin.styleAdaptation === false ? '' : `\n\nESTILO DEL CLIENTE: ${conversationStyle.describe(style)} (Aplica a tus textos libres, como responder_breve.)`;
-        return `ESTADO DEL PEDIDO:\n${plugin.describeState(userSession)}${styleLine}\n\nHISTORIAL RECIENTE (más viejo arriba):\n${describeHistory(jid)}\n\nMENSAJE NUEVO DEL CLIENTE:\n"${text}"`;
+        return `ESTADO DEL PEDIDO:\n${plugin.describeState(userSession)}${styleLine}${memoryLines(jid)}\n\nHISTORIAL RECIENTE (más viejo arriba):\n${describeHistory(jid)}\n\nMENSAJE NUEVO DEL CLIENTE:\n"${text}"`;
     }
 
     /**
@@ -1368,6 +1403,19 @@ function createCartAgent(plugin) {
             if (buffering) await flushOutbox(T, sock, outbox, turnStartIso);
         }
 
+        // Memoria del cliente (sin su texto): estilo y cómo quedó la conversación. Después de responder: no demora nada.
+        if (plugin.customerMemory !== false && process.env.BUSINESS_KEY) {
+            try {
+                const ok = (n) => executed.includes(n);
+                const outcome = T.escalated ? 'escalado'
+                    : (ok('confirmar_pedido') && userSession.phase !== phase && !(userSession.carrito || []).length) ? 'pidio'
+                        : (executed.length && executed.every(n => /^(responder_pregunta|informar_precios|saludar|responder_breve)/.test(n))) ? 'pregunto'
+                            : 'conversando';
+                customerMemory.recordTurn(process.env.BUSINESS_KEY, jid, { style: userSession.estiloCliente, outcome });
+            } catch (e) {
+                logger.warn(`[${plugin.logTag}] ${jid} no se pudo guardar la memoria del cliente: ${e.message}`);
+            }
+        }
         if (!T.clarified) userSession._agentClarifyStreak = 0;
         if (!T.escalated && !T.notFound) userSession.errorCount = 0;
         if (T.notFound && !T.prompted) userSession.errorCount = (userSession.errorCount || 0) + 1;
