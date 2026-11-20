@@ -193,7 +193,7 @@ function setup(seed) {
         {
             const t = setup();
             await run(t, 'cuánto el pan de queso', [{ name: 'informar_precios', args: { productos: ['Pan de Queso'] } }]);
-            check(/Pan de Queso\* — \$\s?4\.500/.test(t.sent.join('\n')), 'informar_precios (genérica) responde con el precio real del catálogo del tenant');
+            check(/Pan de Queso\* vale \*\$\s?4\.500\*/.test(t.sent.join('\n')), 'informar_precios (genérica) responde con el precio real del catálogo del tenant, directo ("X vale $Y")');
             t.sent.length = 0;
             await run(t, 'un pan', [{ name: 'preguntar_aclaracion', args: { pregunta: '¿Cuál? El integral vale $1.000', opciones: ['Pan Integral', 'Pan de Queso'] } }]);
             const out = t.sent.join('\n');
