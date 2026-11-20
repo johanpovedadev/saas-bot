@@ -118,7 +118,7 @@ function client(jid) {
             check(/¿Te preparo \*Litros de Helado\* de \*Ron con pasas\*\?/.test(out) && !/elige \*2 sabores/.test(out), '3) pregunta si se lo prepara de ese sabor (no salta a "elige 2 sabores")');
             // 4) Vuelve a preguntar el valor -> se repite simple, sin regañar
             const again = (await c.say('y cuánto vale el litro?', [C('informar_precios', { productos: ['Litros de Helado'] })])).join('\n');
-            check(/Como te decía, \*Litros de Helado\* vale \*\$\s?24\.000\* \(cualquier sabor, el mismo precio\)/.test(again), `4) pregunta otra vez: se le repite claro ("${again.split('\n')[0]}")`);
+            check(/¡Claro que sí! 😊 \*Litros de Helado\* vale \*\$\s?24\.000\* \(cualquier sabor, el mismo precio\)/.test(again) && !/como te dec[ií]a|ya te dije/i.test(again), `4) pregunta otra vez: se le repite amable, sin regañar ("${again.split('\n')[0]}")`);
         }
         // 5) Dice "sí" a la oferta con sabor -> arranca el litro con ese sabor ya puesto
         {

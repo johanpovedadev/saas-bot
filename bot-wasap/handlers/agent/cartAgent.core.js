@@ -738,7 +738,8 @@ const CORE_EXECUTORS = {
             await sendClarification(T, T.plugin.intent.texts.chooseAfterPrice, offer.items);
         } else if (unique.length) {
             // Respuesta directa y fácil (Johan, 20 nov 2026): "el litro vale 24 mil, cualquier sabor vale lo mismo". Si
-            // vuelve a preguntar lo mismo, no quedó claro: se repite más simple, sin cambiar de tema.
+            // vuelve a preguntar lo mismo, no quedó claro: se repite con amabilidad ("¡Claro que sí!"), nunca "como te decía",
+            // que suena a regaño (Johan: el bot es vendedor y ayuda, no hace sentir mal a nadie).
             const asked = new Set(T.userSession._pricesAsked || []);
             const note = (p) => (typeof T.plugin.hooks.priceNote === 'function' ? T.plugin.hooks.priceNote(p) : '');
             let msg;
@@ -746,7 +747,7 @@ const CORE_EXECUTORS = {
                 const p = unique[0];
                 const again = asked.has(nameOf(p));
                 const n = note(p);
-                msg = `💰 ${again ? 'Como te decía, ' : ''}*${nameOf(p)}*${flavor ? ` de *${flavor}*` : ''} vale *${money(priceOf(p))}*${n ? ` (${n})` : ''}.`;
+                msg = `💰 ${again ? '¡Claro que sí! 😊 ' : ''}*${nameOf(p)}*${flavor ? ` de *${flavor}*` : ''} vale *${money(priceOf(p))}*${n ? ` (${n})` : ''}.`;
             } else {
                 msg = `💰 Precios:\n\n${unique.map(p => { const n = note(p); return `• *${nameOf(p)}* — ${money(priceOf(p))}${n ? ` (${n})` : ''}`; }).join('\n')}`;
             }
