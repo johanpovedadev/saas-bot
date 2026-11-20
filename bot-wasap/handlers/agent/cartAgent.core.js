@@ -252,6 +252,14 @@ function decisionForPendingOffer(plugin, userSession, text) {
     return null;
 }
 
+/** "Nombre | $precio" de todo el catálogo cargado (productos, sabores, toppings): fuente de cifras del redactor. */
+function catalogLines(plugin, ctx) {
+    try {
+        const acc = G.catalogAccessors(plugin.fields);
+        return (ctx && Array.isArray(ctx.productsCache) ? ctx.productsCache : []).map(p => `${acc.nameOf(p)} | $${acc.priceOf(p)}`);
+    } catch (_) { return []; }
+}
+
 /** Registro para la revisión diaria (services/safetyNet.js; no hace nada con SAFETY_NET apagada). Nunca lanza. */
 function safetyEvent(type, jid, phase, detail) {
     try { require('../../services/safetyNet').recordEvent(type, jid, phase, detail); } catch (_) { /* best-effort */ }
@@ -1131,7 +1139,13 @@ async function flushOutbox(T, realSock, outbox, turnStartIso) {
                 lastBotText: lastBot ? lastBot.text : '', extra, plugin,
                 businessName: (require('../../config/env.loader').business || {}).name,
                 model: ctx.__writerModel,
-                sourceTexts: outbox.filter(m => typeof m.content === 'string').map(m => m.content)
+                // Fuente de verdad para las cifras: lo que dijo el sistema en este turno + el catálogo completo
+                // (precios de productos y toppings). Prueba real 20 nov: "La Copa Unicornio ($13.000) trae…" se
+                // descartaba solo porque ese precio no salió en este turno, aunque es el del catálogo.
+                sourceTexts: [
+                    ...outbox.filter(m => typeof m.content === 'string').map(m => m.content),
+                    ...catalogLines(plugin, ctx)
+                ]
             });
             if (r.rewritten) final = r.messages;
             else if (r.reason && r.reason !== 'nada que reescribir') logger.info(`[${plugin.logTag}] ${jid} respuesta segura (${r.reason})`);
