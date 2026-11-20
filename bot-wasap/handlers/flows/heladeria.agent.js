@@ -207,6 +207,8 @@ REGLAS:
 7. SABORES: "todos de fresa" para un producto de N sabores = repetir "Fresa" N veces. "2 de vainilla y 1 de lulo" = ["Vainilla","Vainilla","Lulo"] (usando nombres exactos). Los sabores se pueden repetir.
 8. TOPPINGS / ADICIONES: "con adición de queso" -> elegir_toppings(["<topping exacto de queso>"]). "sin adición"/"sin topping"/"quítale X": si el producto en armado ya tiene toppings elegidos -> quitar_topping (si tiene UNO solo y el cliente no dice cuál, es ese; si tiene varios y no dice cuál -> preguntar_aclaracion). Si aún no tiene ninguno y el bot está preguntando toppings -> sin_toppings. "sin X" donde X NO es un topping (ej: "sin fruta") -> notas en agregar_producto o elegir_toppings no aplica: usa responder_breve para confirmar que lo anotas SOLO si hay producto en armado; si no, ignóralo.
 9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte). Si el producto YA está en el pedido y el cliente corrige o repite cuántos quiere ("son 2, no 3", "2 jugos no 1", "mejor solo uno") -> cambiar_cantidad_en_pedido con la cantidad TOTAL (nunca quitar + agregar). Si el cliente elige una opción de una aclaración ("leche" después de "¿agua o leche?"), pasa la cantidad que había dicho antes en agregar_producto.
+10b. "¿Qué sabores tienen?" / "¿y los sabores de helado?" en cualquier momento -> listar_sabores (NO mostrar_opciones_del_paso: eso muestra el paso actual, no los sabores). Cambiar CUALQUIER cosa de algo que YA está en el pedido (sabores, toppings, nota) -> editar_producto_del_pedido. Cada helado tiene SUS sabores y SUS toppings: si hay varios del mismo producto, di cuál (cual=1,2…) o marca solo_una_unidad si el cambio es solo para uno de una línea con varias.
+10c. VARIAS COSAS EN UN MENSAJE: si el cliente pide varias cosas a la vez (otro producto + cambiar algo del pedido), llama TODAS las herramientas, cada una con lo suyo, en el orden en que lo dijo. Personas distintas ("para mí", "para el niño") = productos distintos: nunca le pongas a uno lo que es del otro. Varios helados distintos en un mensaje ("dos copas: una de fresa con oreo y otra de chocolate con gomitas") -> un agregar_producto POR CADA helado, cantidad 1, cada uno con SUS sabores y SUS toppings. Más unidades de algo que ya está en el pedido pero con OTROS sabores ("otra copa pero de chocolate", "dos copas de sabores diferentes") -> agregar_producto con los sabores de la nueva, no cambiar_cantidad_en_pedido (que copia los mismos sabores).
 10a. SABORES: "¿qué tienen de lulo?", "¿qué hay con fresa?", "algo de maracuyá" -> productos_con_sabor (el sistema dice en qué productos va, qué traen y cuánto valen). "¿Cuánto vale un litro de fresa?" -> informar_precios con productos=["Litros de Helado"] y sabor="Fresa" (el sistema explica que cualquier sabor vale lo mismo y le pregunta si se lo prepara de ese sabor).
 10. PREGUNTAS (ingredientes, qué trae un producto, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
 11. HUMANO (regla de la casa): escalar_a_humano SOLO si (a) el cliente pide hablar con una persona o con la dueña, o (b) se nota frustrado o a punto de perderse (queja, enojo, demora, "me voy", reclamo de un pedido o un pago). Una duda que no sabes, o algo que ninguna herramienta hace, NO se escala: responder_pregunta (la dueña la ve en su informe). Nunca escales por dudas normales del menú.
@@ -350,6 +352,19 @@ const DECL = {
     elegir_modo_unidades: { name: 'elegir_modo_unidades', description: 'Varias unidades: todas iguales o cada una diferente.',
         parameters: obj({ modo: { type: 'STRING', format: 'enum', enum: ['iguales', 'diferentes'] } }, ['modo']) },
     mostrar_opciones_del_paso: { name: 'mostrar_opciones_del_paso', description: 'El cliente pide ver la lista de sabores o toppings disponibles ("lista", "qué sabores hay", "cuáles toppings tienen") mientras arma un producto.' },
+    listar_sabores: { name: 'listar_sabores', description: 'El cliente pregunta qué sabores de helado hay ("qué sabores tienen", "¿y los sabores?"), en CUALQUIER momento. Muestra los sabores de hoy sin tocar el pedido.' },
+    editar_producto_del_pedido: { name: 'editar_producto_del_pedido', description: 'Cambia algo de un producto que YA está en el pedido: sus sabores, sus toppings o su nota. Cada helado tiene SUS sabores y SUS toppings: si hay varios iguales, di cuál (1, 2, 3…) o marca solo_una_unidad. Para el producto que se está armando usa elegir_sabores / elegir_toppings.',
+        parameters: obj({
+            producto: { ...S, description: 'Nombre del producto del pedido.' },
+            cual: { ...INT, description: 'Si hay varios de ese producto en el pedido: cuál (1 = el primero que pidió).' },
+            solo_una_unidad: { type: 'BOOLEAN', description: 'true si la línea tiene varias unidades y el cambio es SOLO para una (se separa en su propia línea).' },
+            sabores: { ...SA, description: 'TODOS los sabores nuevos, repetidos si aplica (reemplaza los anteriores).' },
+            toppings: { ...SA, description: 'TODOS los toppings nuevos (reemplaza los anteriores).' },
+            agregar_toppings: { ...SA, description: 'Toppings a sumar a los que ya tiene.' },
+            quitar_toppings: { ...SA, description: 'Toppings a quitar.' },
+            sin_toppings: { type: 'BOOLEAN', description: 'true si ahora no quiere ningún topping.' },
+            notas: { ...S, description: 'Nota nueva (ej: "sin chantilly", "para el niño").' }
+        }, ['producto']) },
     productos_con_sabor: { name: 'productos_con_sabor', description: 'El cliente pregunta qué productos hay con un sabor ("qué tienen de lulo", "qué hay con fresa", "algo de maracuyá"). El sistema responde en qué productos va ese sabor, qué traen y cuánto valen (o le dice que hoy no hay y cuáles sí).',
         parameters: obj({ sabor: { ...S, description: 'El sabor que nombró el cliente, tal cual.' } }, ['sabor']) },
     pedido_por_encargo: { name: 'pedido_por_encargo', description: 'SOLO cuando el cliente elige la opción 2 del menú inicial o pide textualmente un pedido "por encargo". Litros, cajas de helado o pedidos grandes para un evento NO usan esto: son productos del menú (agregar_producto) o preguntas (responder_pregunta).' }
@@ -361,7 +376,7 @@ const TOOL_ORDER = [
     'agregar_producto', 'elegir_sabores', 'elegir_toppings', 'sin_toppings', 'quitar_topping', 'fijar_cantidad',
     'elegir_modo_unidades', 'quitar_producto_del_carrito', 'cambiar_cantidad_en_pedido', 'seguir_comprando', 'ir_a_pagar', 'confirmar_pedido',
     'editar_pedido', 'ver_carrito', 'fijar_direccion', 'fijar_recogida_en_local', 'fijar_nombre', 'fijar_telefono',
-    'fijar_metodo_pago', 'informar_precios', 'productos_con_sabor', 'mostrar_opciones_del_paso', 'mostrar_menu', 'info_local',
+    'fijar_metodo_pago', 'informar_precios', 'productos_con_sabor', 'listar_sabores', 'editar_producto_del_pedido', 'mostrar_opciones_del_paso', 'mostrar_menu', 'info_local',
     'pedido_por_encargo', 'responder_pregunta', 'preguntar_aclaracion', 'escalar_a_humano', 'cancelar_pedido',
     'saludar', 'responder_breve'
 ];
@@ -780,7 +795,116 @@ Los sabores de hoy son: ${flavorNames(ctx).join(', ')}.
     markPrompted(T);
 }
 
+
+/** "¿Qué sabores tienen?" en cualquier momento: los sabores de hoy, sin tocar el pedido (antes mostraba el paso actual). */
+async function listarSabores(args, T) {
+    const { sock, jid, userSession, ctx } = T;
+    const names = flavorNames(ctx);
+    const building = userSession.heladoFlow && userSession.heladoFlow.product;
+    const cierre = building
+        ? `¿Cuál${I.getCounts(building).sabores > 1 ? 'es' : ''} le pongo a tu *${nameOf(building)}*?`
+        : '¿Para qué producto los quieres? 😊';
+    await say(sock, jid, `🍦 *Sabores de helado de hoy:*\n${names.join(', ')}.\n\n${cierre}`, ctx);
+    markPrompted(T);
+}
+
+/** Topping del catálogo que nombró el cliente, o null. */
+function findTopping(ctx, raw) {
+    const { toppings } = optionLists(ctx);
+    const r = resolveIn(toppings, raw);
+    if (r.item) return r.item;
+    const n = norm(raw);
+    return n.length >= 3 ? (toppings.find(t => norm(nameOf(t)).includes(n) || n.includes(norm(nameOf(t)))) || null) : null;
+}
+
+function describeLine(it) {
+    const sab = (it.sabores || []).map(s => (s && (s.NombreProducto || s.nombre)) || s).filter(Boolean);
+    const tops = (it.toppings || []).map(t => (t && (t.nombre || t.NombreProducto)) || t).filter(Boolean);
+    return `${sab.length ? `sabores *${sab.join(', ')}*` : 'sin sabores'}${tops.length ? ` · toppings *${tops.join(', ')}*` : ' · sin toppings'}`;
+}
+
+/**
+ * Cambia cualquier cosa de un producto que YA está en el pedido (Johan, 20 nov 2026: "no solo sabores, cualquier cosa del
+ * pedido; si son dos helados cada uno tiene sus toppings y sus sabores"). Cada línea del carrito es un helado (o varios
+ * iguales): se edita esa línea, o se separa una unidad en su propia línea si el cambio es solo para una. El precio se
+ * recalcula con el catálogo: base del producto + sus toppings.
+ */
+async function editarProductoDelPedido(args, T) {
+    const { sock, jid, userSession, ctx } = T;
+    const carrito = userSession.carrito || [];
+    const wanted = norm(args.producto || '');
+    const lines = carrito.filter(it => wanted && (norm(it.nombre).includes(wanted) || wanted.includes(norm(it.nombre))));
+    const ask = async (text) => { await say(sock, jid, text, ctx); markPrompted(T); };
+    if (!lines.length) return ask(`😊 No encuentro *${String(args.producto || '').slice(0, 40)}* en tu pedido. ¿Cuál producto quieres cambiar?`);
+    let item;
+    if (lines.length > 1) {
+        const n = Number(args.cual);
+        if (!Number.isInteger(n) || n < 1 || n > lines.length) {
+            return ask(`🍦 Tienes ${lines.length} *${lines[0].nombre}*:\n${lines.map((it, k) => `${k + 1}. ${describeLine(it)}`).join('\n')}\n\n¿A cuál le hago el cambio?`);
+        }
+        item = lines[n - 1];
+    } else {
+        item = lines[0];
+    }
+    const product = orderableProducts(ctx).find(p => norm(nameOf(p)) === norm(item.nombre));
+    const counts = product ? I.getCounts(product) : { sabores: (item.sabores || []).length, toppings: 0 };
+
+    // Sabores (reemplazo completo)
+    let sabores = null;
+    if (Array.isArray(args.sabores) && args.sabores.length) {
+        const found = []; const missing = [];
+        for (const raw of args.sabores) { const f = findFlavor(ctx, raw); f ? found.push(nameOf(f)) : missing.push(String(raw).slice(0, 30)); }
+        if (missing.length) return ask(`😕 Hoy no tenemos *${missing.join(', ')}*.\nLos sabores de hoy son: ${flavorNames(ctx).join(', ')}.`);
+        if (counts.sabores && found.length !== counts.sabores) return ask(`🍦 La *${item.nombre}* lleva *${counts.sabores} sabor${counts.sabores > 1 ? 'es' : ''}*. ¿Cuál${counts.sabores > 1 ? 'es' : ''} le pongo?`);
+        sabores = found;
+    }
+    // Toppings (reemplazo, sumar o quitar)
+    const toTop = (t) => ({ nombre: nameOf(t), precio: priceOf(t) });
+    let toppings = null;
+    const resolveTops = (list) => {
+        const found = []; const missing = [];
+        for (const raw of list || []) { const t = findTopping(ctx, raw); t ? found.push(toTop(t)) : missing.push(String(raw).slice(0, 30)); }
+        return { found, missing };
+    };
+    if (args.sin_toppings) toppings = [];
+    else if (Array.isArray(args.toppings) && args.toppings.length) {
+        const r = resolveTops(args.toppings);
+        if (r.missing.length) return ask(`😕 No tenemos el topping *${r.missing.join(', ')}*. ¿Te pongo otro?`);
+        toppings = r.found;
+    }
+    if (Array.isArray(args.agregar_toppings) && args.agregar_toppings.length) {
+        const r = resolveTops(args.agregar_toppings);
+        if (r.missing.length) return ask(`😕 No tenemos el topping *${r.missing.join(', ')}*. ¿Te pongo otro?`);
+        toppings = [...(toppings || item.toppings || []), ...r.found];
+    }
+    if (Array.isArray(args.quitar_toppings) && args.quitar_toppings.length) {
+        const fuera = args.quitar_toppings.map(norm);
+        toppings = (toppings || item.toppings || []).filter(t => !fuera.some(f => norm(t.nombre).includes(f) || f.includes(norm(t.nombre))));
+    }
+    if (toppings && counts.toppings && toppings.length > counts.toppings) return ask(`🍦 La *${item.nombre}* admite hasta *${counts.toppings}* toppings. ¿Cuáles dejamos?`);
+    const notas = typeof args.notas === 'string' && args.notas.trim() ? args.notas.trim().slice(0, 120) : null;
+    if (!sabores && !toppings && !notas) return ask(`😊 ¿Qué le cambio a tu *${item.nombre}*: los sabores, los toppings o una nota?`);
+
+    // Solo una unidad de una línea con varias: se separa en su propia línea.
+    if (args.solo_una_unidad && (Number(item.cantidad) || 1) > 1) {
+        item.cantidad = (Number(item.cantidad) || 1) - 1;
+        item.subtotal = item.precio * item.cantidad;
+        const copia = { ...item, codigo: `${item.codigo}-u${Date.now() % 100000}`, cantidad: 1, sabores: [...(item.sabores || [])], toppings: [...(item.toppings || [])] };
+        carrito.splice(carrito.indexOf(item) + 1, 0, copia);
+        item = copia;
+    }
+    if (sabores) item.sabores = sabores;
+    if (toppings) item.toppings = toppings;
+    if (notas) item.observaciones = notas;
+    const base = product ? priceOf(product) : (item.precio - (item.toppings || []).reduce((a, t) => a + (Number(t.precio) || 0), 0));
+    item.precio = base + (item.toppings || []).reduce((a, t) => a + (Number(t.precio) || 0), 0);
+    item.subtotal = item.precio * (Number(item.cantidad) || 1);
+    await say(sock, jid, `✅ Listo, tu *${item.nombre}*${(Number(item.cantidad) || 1) > 1 ? ` (x${item.cantidad})` : ''}: ${describeLine(item)}${notas ? ` · nota: _${notas}_` : ''} — *${money(item.subtotal)}*`, ctx);
+}
+
 const EXECUTORS = {
+    listar_sabores: listarSabores,
+    editar_producto_del_pedido: editarProductoDelPedido,
     productos_con_sabor: productosConSabor,
     async agregar_producto(args, T) {
         const { sock, jid, userSession, ctx } = T;
@@ -1192,7 +1316,7 @@ const TOOL_EFFECTS = {
     fijar_cantidad: ['money', 'order_state'],
     elegir_modo_unidades: ['money', 'order_state'],
     elegir_sabores: ['order_state'], sin_toppings: ['order_state'], quitar_topping: ['order_state'],
-    mostrar_opciones_del_paso: [], pedido_por_encargo: [], productos_con_sabor: []
+    mostrar_opciones_del_paso: [], pedido_por_encargo: [], productos_con_sabor: [], listar_sabores: [], editar_producto_del_pedido: ['order_state']
 };
 const TOOL_GROUNDS = {
     agregar_producto(args, T) {
@@ -1224,7 +1348,7 @@ const TOOL_EXEC_ORDER = {
     quitar_topping: 5,
     agregar_producto: 6,
     elegir_sabores: 7, elegir_toppings: 7, sin_toppings: 7, fijar_cantidad: 7, elegir_modo_unidades: 7,
-    mostrar_opciones_del_paso: 8, pedido_por_encargo: 8, productos_con_sabor: 3
+    mostrar_opciones_del_paso: 8, pedido_por_encargo: 8, productos_con_sabor: 3, listar_sabores: 3, editar_producto_del_pedido: 4
 };
 
 // ---------------------------------------------------------------------------
