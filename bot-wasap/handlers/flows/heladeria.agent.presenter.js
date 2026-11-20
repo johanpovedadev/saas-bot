@@ -181,6 +181,8 @@ function stripInstructions(text) {
         .replace(/Escribe el \*número\* del producto que deseas \*quitar\*\./, '¿Cuál quieres quitar?')
         .replace(/\n*_?Escribe el número de la opción[^\n]*_?/g, '')
         .replace(/\n*_Tip:[^\n]*_/g, '')
+        // "Ejemplo: s2 s2" son códigos: con el agente el cliente escribe el sabor como habla.
+        .replace(/\s*_?Los sabores pueden repetirse o ser distintos\. Ejemplo:[^\n]*_?/g, '')
         .replace(/ ?Escribe \*men[uú]\* para (ver|empezar)[^.\n]*\.?/gi, ' Si quieres te muestro el menú 🍦')
         .replace(/ ?¿Deseas pedirlo\? Escribe \*1\* para agregarlo/g, ' ¿Te lo agrego?')
         .replace(/ Escribe el nombre del producto\./g, '')

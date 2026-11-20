@@ -205,7 +205,8 @@ REGLAS:
 7. SABORES: "todos de fresa" para un producto de N sabores = repetir "Fresa" N veces. "2 de vainilla y 1 de lulo" = ["Vainilla","Vainilla","Lulo"] (usando nombres exactos). Los sabores se pueden repetir.
 8. TOPPINGS / ADICIONES: "con adición de queso" -> elegir_toppings(["<topping exacto de queso>"]). "sin adición"/"sin topping"/"quítale X": si el producto en armado ya tiene toppings elegidos -> quitar_topping (si tiene UNO solo y el cliente no dice cuál, es ese; si tiene varios y no dice cuál -> preguntar_aclaracion). Si aún no tiene ninguno y el bot está preguntando toppings -> sin_toppings. "sin X" donde X NO es un topping (ej: "sin fruta") -> notas en agregar_producto o elegir_toppings no aplica: usa responder_breve para confirmar que lo anotas SOLO si hay producto en armado; si no, ignóralo.
 9. CANTIDAD: solo si el cliente dice un número de unidades explícito ("2 volcanes", "dos", "quiero 3"). "un"/"una" como artículo NO es cantidad explícita (deja que el bot pregunte). Si el producto YA está en el pedido y el cliente corrige o repite cuántos quiere ("son 2, no 3", "2 jugos no 1", "mejor solo uno") -> cambiar_cantidad_en_pedido con la cantidad TOTAL (nunca quitar + agregar). Si el cliente elige una opción de una aclaración ("leche" después de "¿agua o leche?"), pasa la cantidad que había dicho antes en agregar_producto.
-10. PREGUNTAS (ingredientes, qué trae un producto, qué productos tienen X, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
+10a. SABORES: "¿qué tienen de lulo?", "¿qué hay con fresa?", "algo de maracuyá" -> productos_con_sabor (el sistema dice en qué productos va, qué traen y cuánto valen). "¿Cuánto vale un litro de fresa?" -> informar_precios con productos=["Litros de Helado"] y sabor="Fresa" (el sistema explica que cualquier sabor vale lo mismo y le pregunta si se lo prepara de ese sabor).
+10. PREGUNTAS (ingredientes, qué trae un producto, precio de domicilio, tiempo de entrega, métodos de pago, fiado, sugerencias para un evento) -> responder_pregunta con la pregunta tal cual. PRECIO de un producto/topping -> informar_precios (nunca lo digas tú). Si SOLO pregunta el precio NO llames agregar_producto: el sistema da el precio y le pregunta si lo quiere (Sí/No). Si dice que lo quiere o lo va a pedir ("quiero", "para pedir", "dame") el sistema lo arranca solo. "Lista"/"qué sabores hay"/"qué toppings tienen" mientras arma un producto -> mostrar_opciones_del_paso. Si además pidió algo, llama también esas herramientas.
 11. HUMANO (regla de la casa): escalar_a_humano SOLO si (a) el cliente pide hablar con una persona o con la dueña, o (b) se nota frustrado o a punto de perderse (queja, enojo, demora, "me voy", reclamo de un pedido o un pago). Una duda que no sabes, o algo que ninguna herramienta hace, NO se escala: responder_pregunta (la dueña la ve en su informe). Nunca escales por dudas normales del menú.
 12. Datos de entrega: dirección, nombre, teléfono y método de pago pueden llegar en cualquier fase y en cualquier orden, incluso todos en un solo mensaje separados por comas -> llama cada fijar_* que corresponda. Nequi/Daviplata/Bancolombia/QR = "transferencia".
 13. confirmar_pedido en FINALIZE_ORDER ENVÍA el pedido real al negocio: úsalo solo si el cliente confirma claramente ese resumen final.
@@ -213,6 +214,7 @@ REGLAS:
 15. Charla, agradecimientos, o algo que no requiere acción -> responder_breve (con el tono del ESTILO DEL CLIENTE del estado: de afán = corto; formal = de usted; en confianza = cercano; normal = cálido y costeño; SIN precios, SIN afirmar datos del negocio como horarios, precios, productos o tiempos: para eso están las otras herramientas). En responder_breve NUNCA digas que agregaste, quitaste o cambiaste algo del pedido: eso solo lo hacen las otras herramientas. Si el cliente pide quitar/cambiar algo, usa la herramienta correspondiente (quitar_topping, quitar_producto_del_carrito, elegir_sabores...), aunque no estés seguro de que exista: el sistema le responde con la verdad.
 16. Un mensaje que no tiene nada que ver con la heladería -> responder_breve redirigiendo amablemente al pedido.
 16c. MEMORIA: el estado trae "CLIENTE:" (si ya ha escrito antes, qué pidió, cómo suele hablar) y a veces "ASÍ RESPONDE LA DUEÑA" (ejemplos reales). Úsalos para el TONO de tus textos libres: a un cliente que vuelve trátalo como a un conocido ("¡Holi de nuevo!"), en confianza devuélvele su energía, y escribe como la dueña. Nunca inventes datos del cliente que no estén ahí, nunca lo llames por un nombre que él no haya dado, y nunca copies números de los ejemplos.
+16e. CLARIDAD: muchos clientes son personas mayores o niños. Responde PRIMERO exactamente lo que preguntaron, en palabras sencillas, antes de pedir cualquier otro dato. Si vuelven a preguntar lo mismo, es que no quedó claro: usa la misma herramienta otra vez (el sistema lo repite con amabilidad). Nunca digas "como te decía", "ya te dije" ni nada que haga sentir mal: eres un vendedor que ayuda con gusto.
 16d. MENSAJES CORTOS: la gente no lee textos largos. En responder_breve: máximo 2 frases y UNA sola pregunta. No ofrezcas productos o temas que el cliente no pidió, y no insistas si no responde.
 16b. pedido_por_encargo SOLO si el cliente elige la opción 2 del menú inicial o pide explícitamente un pedido "por encargo". Litros, cajas de helado y cualquier producto del menú se piden con agregar_producto aunque sean muchos o para un evento; si pregunta qué le recomiendas para X personas -> responder_pregunta.
 17. Productos sin personalización que tienen variantes de sabor (jugos, limonadas, granizados, nevados, malteadas): el sabor que diga el cliente va en "notas" de agregar_producto (ej: jugo de fresa en agua -> agregar_producto("Jugos Naturales Agua", notas: "fresa")). "Jugo de fresa" NO es "Fresas con Crema". Si no dijo si el jugo es en agua o en leche, pregúntalo con preguntar_aclaracion.
@@ -346,6 +348,8 @@ const DECL = {
     elegir_modo_unidades: { name: 'elegir_modo_unidades', description: 'Varias unidades: todas iguales o cada una diferente.',
         parameters: obj({ modo: { type: 'STRING', format: 'enum', enum: ['iguales', 'diferentes'] } }, ['modo']) },
     mostrar_opciones_del_paso: { name: 'mostrar_opciones_del_paso', description: 'El cliente pide ver la lista de sabores o toppings disponibles ("lista", "qué sabores hay", "cuáles toppings tienen") mientras arma un producto.' },
+    productos_con_sabor: { name: 'productos_con_sabor', description: 'El cliente pregunta qué productos hay con un sabor ("qué tienen de lulo", "qué hay con fresa", "algo de maracuyá"). El sistema responde en qué productos va ese sabor, qué traen y cuánto valen (o le dice que hoy no hay y cuáles sí).',
+        parameters: obj({ sabor: { ...S, description: 'El sabor que nombró el cliente, tal cual.' } }, ['sabor']) },
     pedido_por_encargo: { name: 'pedido_por_encargo', description: 'SOLO cuando el cliente elige la opción 2 del menú inicial o pide textualmente un pedido "por encargo". Litros, cajas de helado o pedidos grandes para un evento NO usan esto: son productos del menú (agregar_producto) o preguntas (responder_pregunta).' }
 };
 
@@ -355,7 +359,7 @@ const TOOL_ORDER = [
     'agregar_producto', 'elegir_sabores', 'elegir_toppings', 'sin_toppings', 'quitar_topping', 'fijar_cantidad',
     'elegir_modo_unidades', 'quitar_producto_del_carrito', 'cambiar_cantidad_en_pedido', 'seguir_comprando', 'ir_a_pagar', 'confirmar_pedido',
     'editar_pedido', 'ver_carrito', 'fijar_direccion', 'fijar_recogida_en_local', 'fijar_nombre', 'fijar_telefono',
-    'fijar_metodo_pago', 'informar_precios', 'mostrar_opciones_del_paso', 'mostrar_menu', 'info_local',
+    'fijar_metodo_pago', 'informar_precios', 'productos_con_sabor', 'mostrar_opciones_del_paso', 'mostrar_menu', 'info_local',
     'pedido_por_encargo', 'responder_pregunta', 'preguntar_aclaracion', 'escalar_a_humano', 'cancelar_pedido',
     'saludar', 'responder_breve'
 ];
@@ -701,7 +705,78 @@ function resolveProductArg(T, raw) {
 // Ejecutores propios de heladería
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// Sabores: "¿qué tienen de lulo?" y "¿cuánto vale un litro de fresa?" (Johan, 20 nov 2026: la prueba con una señora
+// mayor mostró que la gente pregunta por SABOR y que el bot debe responder exactamente eso, claro y corto)
+// ---------------------------------------------------------------------------
+
+/** El sabor del catálogo que nombró el cliente, o null. */
+function findFlavor(ctx, raw) {
+    const { sabores } = optionLists(ctx);
+    const r = resolveIn(sabores, raw);
+    if (r.item) return r.item;
+    const n = norm(raw);
+    if (n.length < 3) return null;
+    return sabores.find(sb => norm(nameOf(sb)).includes(n) || n.includes(norm(nameOf(sb)))) || null;
+}
+
+function flavorNames(ctx) { return optionLists(ctx).sabores.map(nameOf); }
+
+/** "(1 sabor)" / "(elige 3 sabores)" */
+function flavorCountText(p) {
+    const c = I.getCounts(p);
+    return c.sabores > 0 ? `${c.sabores} sabor${c.sabores > 1 ? 'es' : ''}` : '';
+}
+
+/** Hook del núcleo (informar_precios): nota que evita la pregunta de siempre. */
+function priceNote(p) {
+    return I.getCounts(p).sabores > 0 ? 'cualquier sabor, el mismo precio' : '';
+}
+
+/** Hook del núcleo (informar_precios con sabor): el sabor existe o no. */
+function checkFlavor(raw, T) {
+    const f = findFlavor(T.ctx, raw);
+    return f ? { name: nameOf(f) } : { missing: true, available: flavorNames(T.ctx) };
+}
+
+async function productosConSabor(args, T) {
+    const { sock, jid, userSession, ctx } = T;
+    const raw = String(args.sabor || '').slice(0, 40);
+    const flavor = findFlavor(ctx, raw);
+    const rawN = norm(flavor ? nameOf(flavor) : raw);
+    // Bebidas o productos SIN sabores de helado que llevan ese sabor en el nombre o la descripción (jugo de lulo).
+    const conNombre = orderableProducts(ctx).filter(p => I.getCounts(p).sabores === 0 && rawN.length >= 3 &&
+        (norm(nameOf(p)).includes(rawN) || norm(p.Descripcion || p.descripcion || '').includes(rawN)));
+    const conSabores = flavor ? orderableProducts(ctx).filter(p => I.getCounts(p).sabores > 0) : [];
+    // Uno de cada categoría primero (conos, copas, litros, cajas, bebidas...) y luego el resto, hasta 10: que no se
+    // queden por fuera los litros o el jugo solo porque hay muchas copas.
+    const todos = [...conNombre, ...conSabores].sort((a, b) => priceOf(a) - priceOf(b));
+    const porCategoria = [];
+    const vistas = new Set();
+    for (const p of todos) { const cat = String(p.Categoria || ''); if (!vistas.has(cat)) { vistas.add(cat); porCategoria.push(p); } }
+    const lista = [...porCategoria, ...todos.filter(p => !porCategoria.includes(p))].slice(0, 10).sort((a, b) => priceOf(a) - priceOf(b));
+    if (!flavor && !conNombre.length) {
+        await say(sock, jid, `😕 Hoy no tenemos *${raw}*.
+Los sabores de hoy son: ${flavorNames(ctx).join(', ')}.
+¿Te provoca alguno?`, ctx);
+        markPrompted(T);
+        return;
+    }
+    const lines = lista.map(p => {
+        const desc = String(p.Descripcion || p.descripcion || '').replace(/\s+/g, ' ').trim();
+        const cuenta = flavorCountText(p);
+        return `• *${nameOf(p)}* — ${money(priceOf(p))}${cuenta ? ` (${cuenta})` : ''}${desc ? `\n   _${desc.slice(0, 80)}${desc.length > 80 ? '…' : ''}_` : ''}`;
+    });
+    const titulo = flavor ? `🍦 *${nameOf(flavor)}* sí lo tenemos. Va en:` : `🍦 Con *${raw}* tenemos:`;
+    await say(sock, jid, `${titulo}\n\n${lines.join('\n')}\n\n¿Cuál te provoca? 😊`, ctx);
+    userSession.lastMentionedProducts = lista.map(nameOf);
+    if (flavor) userSession._agentLastFlavor = { name: nameOf(flavor), at: Date.now() };
+    markPrompted(T);
+}
+
 const EXECUTORS = {
+    productos_con_sabor: productosConSabor,
     async agregar_producto(args, T) {
         const { sock, jid, userSession, ctx } = T;
         const r = resolveProductArg(T, args.producto);
@@ -1112,7 +1187,7 @@ const TOOL_EFFECTS = {
     fijar_cantidad: ['money', 'order_state'],
     elegir_modo_unidades: ['money', 'order_state'],
     elegir_sabores: ['order_state'], sin_toppings: ['order_state'], quitar_topping: ['order_state'],
-    mostrar_opciones_del_paso: [], pedido_por_encargo: []
+    mostrar_opciones_del_paso: [], pedido_por_encargo: [], productos_con_sabor: []
 };
 const TOOL_GROUNDS = {
     agregar_producto(args, T) {
@@ -1144,7 +1219,7 @@ const TOOL_EXEC_ORDER = {
     quitar_topping: 5,
     agregar_producto: 6,
     elegir_sabores: 7, elegir_toppings: 7, sin_toppings: 7, fijar_cantidad: 7, elegir_modo_unidades: 7,
-    mostrar_opciones_del_paso: 8, pedido_por_encargo: 8
+    mostrar_opciones_del_paso: 8, pedido_por_encargo: 8, productos_con_sabor: 3
 };
 
 // ---------------------------------------------------------------------------
@@ -1157,6 +1232,8 @@ function clearInProgress(userSession) {
 }
 
 const hooks = {
+    priceNote,
+    checkFlavor,
     hasItemInProgress: (userSession) => !!userSession.heladoFlow,
     itemInProgressName: (userSession) => {
         const flow = userSession.heladoFlow;
@@ -1257,7 +1334,7 @@ const agent = core.createCartAgent({
     intent: {
         addTool: 'agregar_producto',
         texts: {
-            confirmAfterPrice: (name) => `🍦 ¿Quieres pedir *${name}*? Responde *Sí* o *No* 😊`,
+            confirmAfterPrice: (name, sabor) => (sabor ? `🍦 ¿Te preparo *${name}* de *${sabor}*? Responde *Sí* o *No* 😊` : `🍦 ¿Quieres pedir *${name}*? Responde *Sí* o *No* 😊`),
             chooseAfterPrice: '💰 Estos son los precios. ¿Cuál te preparo? 😊',
             offerDeclined: 'Listo 👍 Cuando quieras me dices qué te provoca, o te muestro el *menú* 🍦'
         }
