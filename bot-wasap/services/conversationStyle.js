@@ -150,15 +150,40 @@ function adaptText(text, style) {
     return text;
 }
 
+// Saludos estirados del cliente ("Holiiii", "holaaa", "holis"): en confianza el bot le devuelve el MISMO saludo
+// (como el bot de mayo 2026 que le gustó a Isa: "Holiiiii 🤪" -> "¡Qué nota… me encanta la energía 🔥").
+const RE_STRETCHED_GREETING = /^\s*(h+o+l+(?:a+|i+s*|u+)+)\b/i;
+const RE_BOT_GREETING = /^¡?Hol(?:a|i)+!?\s*(☺️|😊|😋)?/;
+
+function echoGreeting(text, customerText) {
+    const m = String(customerText || '').match(RE_STRETCHED_GREETING);
+    if (!m || !RE_BOT_GREETING.test(text)) return text;
+    const word = m[1].toLowerCase();
+    if (!/(a{2,}|i{2,}|u{2,}|is)$/.test(word)) return text; // "hola" normal: el saludo de siempre
+    const echo = `¡${word.charAt(0).toUpperCase()}${word.slice(1, 12)}! 😋`;
+    return text.replace(RE_BOT_GREETING, echo);
+}
+
 /**
  * @param {Array<{content: any, opts?: Object}>} messages
  * @param {string} style
+ * @param {{customerText?: string}} [context]
  */
-function adaptMessages(messages, style) {
-    if (!Array.isArray(messages) || style === 'neutral' || style === 'confianza') return messages;
+function adaptMessages(messages, style, context = {}) {
+    if (!Array.isArray(messages) || style === 'neutral') return messages;
+    if (style === 'confianza') {
+        let echoed = false;
+        return messages.map((m) => {
+            if (echoed || typeof m.content !== 'string') return m;
+            const content = echoGreeting(m.content, context.customerText);
+            if (content === m.content) return m;
+            echoed = true;
+            return { ...m, content };
+        });
+    }
     return messages
         .map((m) => (typeof m.content === 'string' ? { ...m, content: adaptText(m.content, style) } : m))
         .filter((m) => typeof m.content !== 'string' || m.content.trim());
 }
 
-module.exports = { STYLES, detectStyle, describe, adaptText, adaptMessages, scoreText };
+module.exports = { STYLES, detectStyle, describe, adaptText, adaptMessages, echoGreeting, scoreText };
