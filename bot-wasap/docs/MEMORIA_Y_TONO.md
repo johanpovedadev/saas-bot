@@ -9,12 +9,13 @@ sonaba como si la conociera, porque aprende del historial del chat. Esto lo hace
 | Una pregunta | `cartAgent.core` → `responder_breve` | Los textos libres de la IA llevan UNA sola pregunta | 0 |
 | Ficha del cliente | `services/customerMemory.js` (`customer_memory`) | Cuántas veces escribió, última vez, cómo habla, cómo terminó la última conversación + lo que pidió (perfil). La IA la lee como "CLIENTE:". **No guarda mensajes** | ~200 B por cliente, 1 lectura SQLite |
 | Cómo responde la dueña | `services/customerMemory.js` (`owner_examples`) | Lo que la dueña escribe a mano en un chat escalado o silenciado (`index.js`, `message_create`). Sin números ni datos sensibles; máx. 15; la IA ve 4 | ~3 KB por negocio |
-| Paso a la dueña | `services/escalationPolicy.js` | Solo si el cliente la pide o se nota frustrado / a punto de irse. Lo demás: el bot sigue y la pregunta va al informe | 0 |
+| Paso a la dueña | `services/escalationPolicy.js` | Solo si el cliente la pide, se nota frustrado / a punto de irse, o el bot **no le entendió 2 veces seguidas** (repite la misma pregunta, no encuentra lo que pidió, algo que no resuelve, una herramienta falla). Lo demás: el bot sigue y la pregunta va al informe | 0 |
 
 - Se registra **después** de responder: no demora la respuesta.
 - "Borra mis datos" borra perfil, historial y ficha.
 - Un negocio apaga cada pieza en su plugin: `styleAdaptation: false`, `customerMemory: false`, `escalationPolicy: false`.
 - Bots de reglas (sin agente): siguen escalando al 2.º error seguido. Con agente: la IA decide y 4 errores seguidos quedan como red de seguridad.
+- "No le entendió 2 veces seguidas" (23 nov 2026): un bucle hace que el cliente se vaya y el negocio cancele. Cualquier turno en que el bot avanza reinicia el contador; un negocio cambia el límite con `missesBeforeOwner`.
 - Datos sensibles (tarjeta, clave) escalan siempre: es seguridad.
 
 Pruebas (IA simulada): `test_conversacion_estilo.js`, `test_memoria_y_escalamiento.js`.

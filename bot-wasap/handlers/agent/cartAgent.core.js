@@ -161,11 +161,31 @@ async function escalate(T, motivo) {
     userSession.frustrationReason = `Agente IA: ${motivo}`;
     userSession.frustrationTimestamp = Date.now();
     userSession.errorCount = 0;
+    userSession._agentMissStreak = 0;
     waitingHumanStore.markWaiting(process.env.BUSINESS_KEY, jid, userSession.frustrationReason);
     try { unansweredQuestionsStore.recordUnanswered(process.env.BUSINESS_KEY, jid, String(T.text).slice(0, 300), userSession.frustrationReason); } catch (_) { /* best-effort */ }
     await say(sock, jid, T.plugin.texts.escalated, ctx);
     T.escalated = true;
     T.ended = true;
+}
+
+/**
+ * Red de seguridad (services/escalationPolicy): un turno en el que el bot NO le entendió al cliente. Cuenta una vez por
+ * turno; al llegar al límite (2 seguidos por defecto) devuelve true y la conversación pasa a la dueña.
+ */
+function noteMiss(T, why) {
+    if (T.plugin.escalationPolicy === false) return false;
+    if (!T.missWhy) {
+        T.missWhy = why;
+        T.userSession._agentMissStreak = (T.userSession._agentMissStreak || 0) + 1;
+    }
+    return T.userSession._agentMissStreak >= escalationPolicy.missLimit(T.plugin);
+}
+
+async function escalateForMisses(T) {
+    const n = T.userSession._agentMissStreak;
+    T.escalationReason = 'no_entiende';
+    await escalate(T, `No le entendió ${n} veces seguidas (la última: ${T.missWhy})`);
 }
 
 /** Historial reciente para la IA (resolver "sí"/"el otro" contra lo que preguntó el bot). */
@@ -858,6 +878,11 @@ const CORE_EXECUTORS = {
             if (!item) item = { NombreProducto: G.sanitizeFreeText(String(o), 60), _soloTexto: true };
             if (!opts.some(x => norm(nameOf(x)) === norm(nameOf(item)))) opts.push(item);
         }
+        // Volver a hacer la MISMA pregunta = el bot no le entendió la respuesta (el bucle que hace cancelar).
+        if (escalationPolicy.isRepeatedQuestion(args.pregunta, lastBotText(T)) && noteMiss(T, 'volvió a hacer la misma pregunta')) {
+            await escalateForMisses(T);
+            return;
+        }
         // Nivel 2 automático: 4 turnos seguidos de aclaraciones sin que el
         // cliente pueda avanzar = algo que la IA no está logrando resolver.
         if (!T.countedClarify) {
@@ -1453,6 +1478,11 @@ function createCartAgent(plugin) {
                 if (g && g.ok === false) {
                     logger.warn(`[${plugin.logTag}] ${jid} ${c.name} BLOQUEADA por grounding (${(EFFECTS[c.name] || []).join('/')}): ${g.reason}`);
                     safetyEvent('grounding_blocked', jid, phase, c.name);
+                    if (c.name === 'escalar_a_humano' && noteMiss(T, 'pidió algo que el bot no resuelve')) {
+                        await escalateForMisses(T);
+                        executed.push(`${c.name}!no_entiende`);
+                        continue;
+                    }
                     if (g.reply) await sendClarification(T, g.reply, null);
                     executed.push(`${c.name}!blocked`);
                     continue;
@@ -1462,7 +1492,13 @@ function createCartAgent(plugin) {
             } catch (e) {
                 logger.error(`[${plugin.logTag}] ${jid} herramienta ${c.name} falló: ${e.stack || e.message}`);
                 executed.push(`${c.name}!error`);
+                if (!T.ended && noteMiss(T, `falló ${c.name}`)) await escalateForMisses(T);
             }
+        }
+        // No encontró lo que pidió por segunda vez seguida: en vez de otro "no lo encuentro", pasa a la dueña.
+        if (T.notFound && !T.ended && noteMiss(T, 'no encontró lo que el cliente pidió')) {
+            if (buffering) outbox.length = 0;
+            await escalateForMisses(T);
         }
         try {
             await closeTurn(T);
@@ -1484,6 +1520,7 @@ function createCartAgent(plugin) {
             }
         }
         if (!T.clarified) userSession._agentClarifyStreak = 0;
+        if (!T.missWhy && !T.escalated) userSession._agentMissStreak = 0;
         if (!T.escalated && !T.notFound) userSession.errorCount = 0;
         if (T.notFound && !T.prompted) userSession.errorCount = (userSession.errorCount || 0) + 1;
 

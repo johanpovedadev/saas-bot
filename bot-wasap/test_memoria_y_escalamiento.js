@@ -162,6 +162,44 @@ const userContent = (jid, text) => agent._internal.buildUserContent({ phase: PHA
             await c.say('llevo una hora esperando el pedido, qué mal servicio, me voy a otra parte', [C('escalar_a_humano', { motivo: 'cliente molesto por demora' })]);
             check(c.s().phase === PHASE.WAITING_HUMAN, '3) frustrado / a punto de irse: se le pasa');
         }
+
+        // ---- Red de seguridad: si no le entiende dos veces seguidas, pasa a la dueña (Johan, 23 nov 2026) ----
+        const Q = '¿Cuántos litros de helado quieres?';
+        {
+            const c = client('573111000007@c.us');
+            await c.say('quiero helado de litro', [C('preguntar_aclaracion', { pregunta: Q })]);
+            check(c.s().phase !== PHASE.WAITING_HUMAN, '4) la primera pregunta normal: el bot sigue');
+            await c.say('3 litros', [C('preguntar_aclaracion', { pregunta: Q })]);
+            check(c.s().phase !== PHASE.WAITING_HUMAN && c.s()._agentMissStreak === 1, '4) repite la pregunta una vez: todavía sigue (1 de 2)');
+            const sent = await c.say('ya te dije 3 de litro de fresa', [C('preguntar_aclaracion', { pregunta: Q })]);
+            check(c.s().phase === PHASE.WAITING_HUMAN, '4) la repite por segunda vez: pasa a la dueña en vez de seguir el bucle');
+            check(!sent.some(t => /Cuántos litros/.test(t)) && /te escriben por aquí/.test(sent.join(' ')), '4) el cliente ya no ve la pregunta repetida, ve que lo atiende una persona');
+        }
+        {
+            const c = client('573111000008@c.us');
+            await c.say('quiero helado de litro', [C('preguntar_aclaracion', { pregunta: Q })]);
+            await c.say('3', [C('preguntar_aclaracion', { pregunta: Q })]);
+            await c.say('cuánto vale la copa osito?', [C('informar_precios', { producto: 'Copa Osito' })]);
+            check(c.s()._agentMissStreak === 0, '4) un turno en que el bot sí avanza pone el contador en cero');
+            await c.say('quiero un litro', [C('preguntar_aclaracion', { pregunta: '¿De qué sabores quieres el litro?' })]);
+            await c.say('fresa', [C('preguntar_aclaracion', { pregunta: '¿De qué sabores quieres el litro?' })]);
+            check(c.s().phase !== PHASE.WAITING_HUMAN, '4) un solo tropiezo después de avanzar: no se pasa');
+        }
+        {
+            const c = client('573111000009@c.us');
+            await c.say('ustedes hacen factura electrónica?', [C('escalar_a_humano', { motivo: 'factura' })]);
+            await c.say('y mandan a Maicao?', [C('escalar_a_humano', { motivo: 'domicilio fuera de zona' })]);
+            check(c.s().phase === PHASE.WAITING_HUMAN, '4) dos cosas seguidas que el bot no resuelve: pasa a la dueña');
+        }
+        {
+            const c = client('573111000010@c.us');
+            await c.say('quiero un helado de mango biche', [C('agregar_producto', { producto: 'helado de mango biche' })]);
+            check(c.s().phase !== PHASE.WAITING_HUMAN, '4) no encuentra el producto una vez: ofrece opciones');
+            const sent = await c.say('el de mango biche con sal', [C('agregar_producto', { producto: 'mango biche con sal' })]);
+            check(c.s().phase === PHASE.WAITING_HUMAN && !sent.some(t => /No encontré/.test(t)), '4) no lo encuentra por segunda vez: pasa a la dueña sin otro "no encontré"');
+        }
+        check(policy.missLimit({ missesBeforeOwner: 3 }) === 3 && policy.missLimit({}) === 2, '4) cada negocio puede cambiar el límite (por defecto 2)');
+        check(/no le entendió/.test(policy.REASON_TEXT.no_entiende), '4) a la dueña le llega el motivo: "no le entendió dos veces seguidas"');
     } catch (e) {
         failures++;
         console.error('Error en la prueba:', e.stack || e.message);
