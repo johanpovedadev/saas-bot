@@ -13,6 +13,15 @@
  * sigue atendiendo y la pregunta le llega a la dueña en su informe (preguntas sin respuesta).
  *
  * Los datos sensibles (tarjeta, clave) siguen escalando siempre: es seguridad, no servicio (handler/escalateIfSensitive).
+ *
+ * Red de seguridad (Johan, 23 nov 2026: "si se traba se pegan de ahí y lo cancelan"): si el bot NO LE ENTIENDE al cliente
+ * dos veces seguidas, también pasa la conversación (es "posible pérdida del cliente"). Cuenta como "no entendió":
+ *  - vuelve a hacer la MISMA pregunta que ya había hecho (el bucle de "¿cuántos litros?" otra vez),
+ *  - no encuentra lo que el cliente pidió,
+ *  - el cliente pidió algo que el bot no resuelve (la IA quiso pasarlo y la regla de arriba lo frenó),
+ *  - una herramienta falló.
+ * Cualquier turno en el que el bot sí avanza pone el contador en cero. El negocio puede cambiar el número con
+ * `missesBeforeOwner` en su plugin (por defecto 2).
  */
 
 function normalize(text) {
@@ -59,6 +68,26 @@ function shouldEscalate(texts) {
 const REASON_TEXT = {
     pide_persona: 'pidió hablar contigo',
     frustracion: 'se nota molesto o a punto de irse',
+    no_entiende: 'el bot no le entendió dos veces seguidas',
 };
 
-module.exports = { signals, shouldEscalate, REASON_TEXT };
+const MISS_LIMIT = 2;
+
+/** Cuántos turnos seguidos sin entender antes de pasar la conversación (plugin.missesBeforeOwner, por defecto 2). */
+function missLimit(plugin) {
+    const n = Number(plugin && plugin.missesBeforeOwner);
+    return Number.isInteger(n) && n >= 1 ? n : MISS_LIMIT;
+}
+
+/** ¿El bot está por hacer la misma pregunta que ya hizo? (parecido de palabras >= 0.6, sin contar las cortas). */
+function isRepeatedQuestion(question, lastBotText) {
+    const words = (t) => new Set(normalize(t).replace(/[^a-z0-9ñ\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2));
+    const a = words(question);
+    const b = words(lastBotText);
+    if (a.size < 2 || !b.size) return false;
+    let inter = 0;
+    for (const w of a) if (b.has(w)) inter++;
+    return inter / Math.min(a.size, b.size) >= 0.6;
+}
+
+module.exports = { signals, shouldEscalate, missLimit, isRepeatedQuestion, REASON_TEXT, MISS_LIMIT };
