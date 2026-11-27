@@ -1,0 +1,14 @@
+{
+  "_nota": "Demo de la Recepcionista v2 (27 nov 2026): cualquier negocio con ficha. Avisos a Johan. Ficha: config/fichas/demo-recepcionista.json. .env: BUSINESS_KEY=demo-recepcionista, RECEPCIONISTA_AI_AGENT=1",
+  "business_name": "Panadería La Espiga (demo)",
+  "business_type": "RECEPCIONISTA",
+  "flow_module": "recepcionista.flow.js",
+  "business_admin_jids": ["573138777115@c.us"],
+  "system_admin_jids": ["573138777115@c.us"],
+  "orders_admin_jids": ["573138777115@c.us"],
+  "contact_phone": "+57 313 877 7115",
+  "contact_whatsapp": "+573138777115",
+  "city": "Bogota",
+  "timezone": "America/Bogota",
+  "currency": "COP"
+}
