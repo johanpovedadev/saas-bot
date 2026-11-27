@@ -44,3 +44,27 @@ La lista vive en `ecosystem.oracle.config.js` (`MUDAR`). Toma todo lo demás del
   debería pasar.
 - Antes de arrancar algo, revisar que el puerto esté libre (regla del ecosistema):
   `ss -ltnp | grep <puerto>`.
+
+## Actualización automática (desde el 27 nov 2026)
+
+**En fácil:** cada 10 minutos el servidor mira si hay un cambio nuevo aprobado en GitHub (rama `develop`). Si lo hay, se
+lo baja, revisa que no tenga errores, lo pone, reinicia el bot y mira que haya quedado vivo. Si no arranca, vuelve solo
+a la versión anterior. Siempre avisa por Telegram (Jarvis). Ya no hace falta el PC ni el doble clic al `.bat`.
+
+| Qué | Dónde en el servidor | Cómo se reinicia |
+|---|---|---|
+| Bot de la heladería (y Django si cambió Python) | `~/lion-stack/saas-bot` | `docker compose restart heladeria-bot` |
+| Leo | `~/saas-bot` | `pm2 restart bot-finance-telegram` |
+| AGentVents | `~/agentvents` | su instalador (`instalar_agentvents.sh`), conservando `.env` y `data/` |
+
+**Nunca toca:** `.env`, `bot-wasap/data/` (sesión de WhatsApp, bases), `node_modules`.
+**No se sube solo:** código con errores de escritura, o un cambio de dependencias (`package-lock.json`): avisa para instalarlo a mano.
+
+**Términos:** *cron* = el despertador de Linux que lo corre cada 10 minutos · *SHA* = la huella de cada versión en
+GitHub · *tarball* = el código de una versión en un solo archivo · *rollback* = volver a la versión anterior ·
+*flock* = candado para que nunca corran dos a la vez.
+
+- Instalar (una vez): `curl -fsSL https://raw.githubusercontent.com/johanpovedadev/saas-bot/develop/deploy/oracle/instalar_auto_actualizar.sh | bash`
+- Registro: `~/lion-stack/auto/auto.log` · Huellas aplicadas: `~/lion-stack/auto/estado/`
+- Apagarlo: `crontab -l | grep -v auto_actualizar | crontab -`
+- Prueba sin internet ni servidor: `node bot-wasap/test_auto_actualizar.js`
