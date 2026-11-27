@@ -8,7 +8,8 @@
 # Así ya no hace falta el PC ni el doble clic al .bat para subir un arreglo.
 #
 # TÉRMINOS:
-#  - cron: el "despertador" de Linux que corre este script cada 10 minutos (lo instala instalar_auto_actualizar.sh).
+#  - temporizador de systemd (systemd timer): el "despertador" de Linux que corre este script cada 10 minutos
+#    (lo instala instalar_auto_actualizar.sh; es como cron, pero viene siempre instalado).
 #  - SHA: la "huella" de cada versión en GitHub. Si la huella de develop cambió, hay algo nuevo.
 #  - tarball: el código de esa versión empacado en un solo archivo .tar.gz (los repos son públicos: no hay claves).
 #  - rollback: volver a la versión anterior si la nueva no arranca.
