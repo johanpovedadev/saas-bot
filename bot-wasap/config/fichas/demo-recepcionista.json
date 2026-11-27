@@ -1,0 +1,27 @@
+{
+  "_nota": "FICHA DE EJEMPLO (negocio inventado) para la Recepcionista v2. Copiarla como <BUSINESS_KEY>.json y cambiar los datos. Todo lo que no esté aquí, el bot NO lo sabe y se lo pasa al dueño.",
+  "negocio": "Panadería La Espiga",
+  "tipo": "Panadería y pastelería",
+  "ciudad": "Bogotá",
+  "direccion": "Calle 104 # 15-20",
+  "barrio": "Santa Bárbara",
+  "horario": "Lunes a sábado de 6:00 a. m. a 8:00 p. m.; domingos y festivos de 7:00 a. m. a 2:00 p. m.",
+  "tono": "cercano y respetuoso, de usted",
+  "domicilios": { "hace": true, "zonas": "Usaquén, Santa Bárbara y Chicó", "costo": 5000, "minimo": 20000, "tiempo": "30 a 45 minutos" },
+  "pagos": ["Efectivo", "Nequi", "Daviplata", "Tarjeta en el local"],
+  "encargos": { "acepta": true, "anticipacion": "tortas con un día de anticipación", "nota": "el dueño confirma cada encargo" },
+  "productos": [
+    { "nombre": "Pan francés", "precio": 1000, "categoria": "Panes" },
+    { "nombre": "Pan de bono", "precio": 2500, "categoria": "Panes" },
+    { "nombre": "Almojábana", "precio": 2500, "categoria": "Panes" },
+    { "nombre": "Croissant de mantequilla", "precio": 4500, "categoria": "Hojaldres" },
+    { "nombre": "Torta de chocolate (porción)", "precio": 7000, "categoria": "Tortas" },
+    { "nombre": "Torta de chocolate entera (20 porciones)", "precio": 120000, "categoria": "Tortas", "nota": "por encargo" },
+    { "nombre": "Café tinto", "precio": 2000, "categoria": "Bebidas" },
+    { "nombre": "Chocolate caliente", "precio": 4000, "categoria": "Bebidas" }
+  ],
+  "preguntas_frecuentes": [
+    { "pregunta": "¿Tienen productos sin azúcar?", "respuesta": "Sí, pan integral los martes y viernes; pregunte disponibilidad." },
+    { "pregunta": "¿Hacen tortas personalizadas?", "respuesta": "Sí, con un día de anticipación; el valor depende del diseño y lo confirma el dueño." }
+  ]
+}
