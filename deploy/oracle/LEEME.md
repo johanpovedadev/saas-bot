@@ -60,11 +60,11 @@ a la versión anterior. Siempre avisa por Telegram (Jarvis). Ya no hace falta el
 **Nunca toca:** `.env`, `bot-wasap/data/` (sesión de WhatsApp, bases), `node_modules`.
 **No se sube solo:** código con errores de escritura, o un cambio de dependencias (`package-lock.json`): avisa para instalarlo a mano.
 
-**Términos:** *cron* = el despertador de Linux que lo corre cada 10 minutos · *SHA* = la huella de cada versión en
+**Términos:** *temporizador de systemd* (*systemd timer*) = el despertador de Linux que lo corre cada 10 minutos (es como *cron*, pero viene siempre instalado) · *SHA* = la huella de cada versión en
 GitHub · *tarball* = el código de una versión en un solo archivo · *rollback* = volver a la versión anterior ·
 *flock* = candado para que nunca corran dos a la vez.
 
 - Instalar (una vez): `curl -fsSL https://raw.githubusercontent.com/johanpovedadev/saas-bot/develop/deploy/oracle/instalar_auto_actualizar.sh | bash`
 - Registro: `~/lion-stack/auto/auto.log` · Huellas aplicadas: `~/lion-stack/auto/estado/`
-- Apagarlo: `crontab -l | grep -v auto_actualizar | crontab -`
+- Ver cuándo corre: `systemctl list-timers auto-actualizar.timer` · Apagarlo: `sudo systemctl disable --now auto-actualizar.timer`
 - Prueba sin internet ni servidor: `node bot-wasap/test_auto_actualizar.js`
